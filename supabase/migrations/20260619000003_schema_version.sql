@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS schema_info (
+    id SERIAL PRIMARY KEY,
+    version VARCHAR(50) NOT NULL UNIQUE,
+    applied_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+INSERT INTO schema_info (version) VALUES ('v3.0.0') ON CONFLICT DO NOTHING;

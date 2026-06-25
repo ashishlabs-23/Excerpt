@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "video_id": { "type": "string" },
+    "event": { "type": "string" },
+    "primary_story": { "type": "string" },
+    "secondary_story": { "type": "string" },
+    "ideal_start": { "type": "number" },
+    "ideal_end": { "type": "number" },
+    "human_editor_score": { "type": "number" },
+    "editor_score": { "type": "number" },
+    "editor_reasons": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "publish_worthy": { "type": "boolean" },
+    "editorial_components": {
+      "type": "object",
+      "properties": {
+        "buildup": { "type": "boolean" },
+        "trigger": { "type": "boolean" },
+        "climax": { "type": "boolean" },
+        "reaction": { "type": "boolean" },
+        "scoreboard_context": { "type": "boolean" },
+        "crowd_context": { "type": "boolean" }
+      },
+      "required": ["buildup", "trigger", "climax", "reaction"]
+    },
+    "why_editor_chose_this": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "disagreement_category": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "boundary_policy_target": {
+      "type": "object",
+      "properties": {
+        "policy": { "type": "string" },
+        "ideal_pre_context": { "type": "number" },
+        "ideal_post_context": { "type": "number" },
+        "minimum_pre_context": { "type": "number" },
+        "minimum_post_context": { "type": "number" },
+        "requires_scoreboard": { "type": "boolean" },
+        "requires_reaction": { "type": "boolean" }
+      },
+      "required": ["policy", "ideal_pre_context", "ideal_post_context"]
+    },
+    "opus": {
+      "type": "object",
+      "properties": {
+        "start": { "type": "number" },
+        "end": { "type": "number" },
+        "story": { "type": "string" }
+      },
+      "required": ["start", "end", "story"]
+    },
+    "excerpt": {
+      "type": "object",
+      "properties": {
+        "start": { "type": "number" },
+        "end": { "type": "number" },
+        "story": { "type": "string" }
+      },
+      "required": ["start", "end", "story"]
+    }
+  },
+  "required": [
+    "video_id", "event", "primary_story", "ideal_start", "ideal_end", "human_editor_score", "completeness", "opus", "excerpt"
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "competitors": {
+    "current_production": 1215,
+    "narrative_editor": 1184,
+    "viral_editor": 1217,
+    "broadcast_editor": 1184
+  },
+  "history": [
+    {
+      "timestamp": "2026-06-16T06:04:50.194310",
+      "winner": "current_production",
+      "loser": "narrative_editor",
+      "winner_elo_change": 16,
+      "loser_elo_change": -16
+    },
+    {
+      "timestamp": "2026-06-16T06:04:50.195430",
+      "winner": "viral_editor",
+      "loser": "current_production",
+      "winner_elo_change": 17,
+      "loser_elo_change": -17
+    },
+    {
+      "timestamp": "2026-06-16T06:04:50.196080",
+      "winner": "current_production",
+      "loser": "broadcast_editor",
+      "winner_elo_change": 16,
+      "loser_elo_change": -16
+    }
+  ],
+  "matchups": []
+}

@@ -1,0 +1,47 @@
+[
+  {
+    "id": "match_1_clip_1",
+    "start": 523.1,
+    "end": 535.5,
+    "focus": "player",
+    "zoom": "tight",
+    "story": "player_focus",
+    "predicted_editor_style": "tiktok"
+  },
+  {
+    "id": "match_1_clip_2",
+    "start": 120.0,
+    "end": 155.0,
+    "focus": "tactical",
+    "zoom": "wide",
+    "story": "counterattack",
+    "predicted_editor_style": "analyst"
+  },
+  {
+    "id": "match_1_clip_3",
+    "start": 890.2,
+    "end": 915.0,
+    "focus": "story",
+    "zoom": "normal",
+    "story": "late_game_drama",
+    "predicted_editor_style": "broadcaster"
+  },
+  {
+    "id": "match_1_clip_4",
+    "start": 2100.5,
+    "end": 2118.0,
+    "focus": "goal",
+    "zoom": "medium",
+    "story": "crowd_emotion",
+    "predicted_editor_style": "highlight_channel"
+  },
+  {
+    "id": "match_1_clip_5",
+    "start": 3410.0,
+    "end": 3422.5,
+    "focus": "celebration",
+    "zoom": "tight",
+    "story": "rivalry_drama",
+    "predicted_editor_style": "retention_maximizer"
+  }
+]

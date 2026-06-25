@@ -1,0 +1,22 @@
+{
+  "late_game_winner_crowd_eruption": {
+    "pattern_id": "late_game_winner_crowd_eruption",
+    "story_archetype": "late_game_winner",
+    "reaction_profile": {
+      "crowd": 0.95,
+      "bench": 0.8,
+      "player": 0.9
+    },
+    "scoreboard_context": {
+      "minute": 90,
+      "score_diff": 1
+    },
+    "editor_win_rate": 0.9,
+    "sample_count": 110,
+    "wins": 99,
+    "confidence": 0.95,
+    "stability": 0.998165137614679,
+    "last_seen": "2026-06-16T05:41:46.081762",
+    "promotion_status": "production_prior"
+  }
+}

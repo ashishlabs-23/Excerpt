@@ -1,0 +1,28 @@
+{
+  "name": "excerpt-monorepo",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently --names web,api,worker,render --prefix-colors blue,green,yellow,magenta \"npm run dev -w apps/web\" \"npm run dev -w apps/api > api_v8.log 2>&1\" \"npx tsx apps/api/src/workers/videoWorker.ts > worker_v8.log 2>&1\" \"npx tsx apps/api/src/workers/renderWorker.ts > render_v8.log 2>&1\"",
+    "api": "npm run dev -w apps/api",
+    "worker": "npx tsx apps/api/src/workers/videoWorker.ts",
+    "render-worker": "npx tsx apps/api/src/workers/renderWorker.ts",
+    "build": "npm run build -w apps/web",
+    "test": "npm run test -w apps/api",
+    "preflight": "npx tsx apps/api/scripts/preflight.ts",
+    "evidence": "npx tsx apps/api/scripts/evidence_harness.ts",
+    "benchmark-clips": "npx tsx apps/api/scripts/benchmark.ts"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "fluent-ffmpeg": "^2.1.3",
+    "ytdl-core": "^4.11.5"
+  },
+  "dependencies": {
+    "@types/pg": "^8.20.0",
+    "pg": "^8.22.0"
+  }
+}

@@ -1,0 +1,207 @@
+[
+  {
+    "video_id": "vid_001",
+    "event": "goal",
+    "primary_story": "late_game_winner",
+    "secondary_story": "crowd_eruption",
+    "ideal_start": 523.1,
+    "ideal_end": 547.2,
+    "human_editor_score": 1.0,
+    "editor_score": 0.98,
+    "editor_reasons": ["crowd_reaction", "bench_reaction", "goal_importance"],
+    "publish_worthy": true,
+    "editorial_components": {
+      "buildup": true,
+      "trigger": true,
+      "climax": true,
+      "reaction": true,
+      "scoreboard_context": true,
+      "crowd_context": true
+    },
+    "why_editor_chose_this": ["crowd_reaction", "scoreline_context", "buildup_attack"],
+    "disagreement_category": ["missing_buildup", "reaction_too_short"],
+    "boundary_policy_target": {
+      "policy": "late_game_winner",
+      "ideal_pre_context": 14.2,
+      "ideal_post_context": 8.7,
+      "minimum_pre_context": 8.0,
+      "minimum_post_context": 4.0,
+      "requires_scoreboard": true,
+      "requires_reaction": true
+    },
+    "opus": {
+      "start": 527.4,
+      "end": 544.0,
+      "story": "counterattack_finish"
+    },
+    "excerpt": {
+      "start": 528.0,
+      "end": 545.0,
+      "story": "late_game_winner"
+    }
+  },
+  {
+    "video_id": "vid_002",
+    "event": "save",
+    "primary_story": "goalkeeper_heroics",
+    "secondary_story": "near_miss",
+    "ideal_start": 105.0,
+    "ideal_end": 130.5,
+    "human_editor_score": 1.0,
+    "editor_score": 0.92,
+    "editor_reasons": ["athleticism_display", "manager_reaction"],
+    "publish_worthy": true,
+    "editorial_components": {
+      "buildup": true,
+      "trigger": true,
+      "climax": true,
+      "reaction": true,
+      "scoreboard_context": false,
+      "crowd_context": true
+    },
+    "why_editor_chose_this": ["athleticism_display", "manager_reaction", "momentum_shift"],
+    "disagreement_category": ["reaction_too_short", "missed_manager_shot"],
+    "boundary_policy_target": {
+      "policy": "goalkeeper_heroics",
+      "ideal_pre_context": 10.0,
+      "ideal_post_context": 15.0,
+      "minimum_pre_context": 5.0,
+      "minimum_post_context": 8.0,
+      "requires_scoreboard": false,
+      "requires_reaction": true
+    },
+    "opus": {
+      "start": 110.0,
+      "end": 125.0,
+      "story": "goalkeeper_heroics"
+    },
+    "excerpt": {
+      "start": 106.0,
+      "end": 124.0,
+      "story": "goalkeeper_heroics"
+    }
+  },
+  {
+    "video_id": "vid_003",
+    "event": "var_review",
+    "primary_story": "controversial_decision",
+    "secondary_story": "manager_fury",
+    "ideal_start": 800.0,
+    "ideal_end": 845.0,
+    "human_editor_score": 1.0,
+    "editor_score": 0.85,
+    "editor_reasons": ["high_tension_buildup", "crowd_boos"],
+    "publish_worthy": true,
+    "editorial_components": {
+      "buildup": true,
+      "trigger": true,
+      "climax": true,
+      "reaction": true,
+      "scoreboard_context": true,
+      "crowd_context": true
+    },
+    "why_editor_chose_this": ["high_tension_buildup", "referee_monitor_walk", "crowd_boos"],
+    "disagreement_category": ["missing_buildup", "missed_referee_monitor"],
+    "boundary_policy_target": {
+      "policy": "controversial_decision",
+      "ideal_pre_context": 25.0,
+      "ideal_post_context": 12.0,
+      "minimum_pre_context": 15.0,
+      "minimum_post_context": 8.0,
+      "requires_scoreboard": true,
+      "requires_reaction": true
+    },
+    "opus": {
+      "start": 810.0,
+      "end": 830.0,
+      "story": "controversial_decision"
+    },
+    "excerpt": {
+      "start": 808.0,
+      "end": 835.0,
+      "story": "controversial_decision"
+    }
+  },
+  {
+    "video_id": "vid_004",
+    "event": "miss",
+    "primary_story": "missed_penalty",
+    "secondary_story": "goalkeeper_heroics",
+    "ideal_start": 210.0,
+    "ideal_end": 235.0,
+    "human_editor_score": 1.0,
+    "editor_score": 0.95,
+    "editor_reasons": ["spot_placement_tension", "player_face_focus"],
+    "publish_worthy": true,
+    "editorial_components": {
+      "buildup": true,
+      "trigger": true,
+      "climax": true,
+      "reaction": true,
+      "scoreboard_context": true,
+      "crowd_context": true
+    },
+    "why_editor_chose_this": ["spot_placement_tension", "player_face_focus", "bench_reaction"],
+    "disagreement_category": ["missing_spot_placement"],
+    "boundary_policy_target": {
+      "policy": "missed_penalty",
+      "ideal_pre_context": 18.0,
+      "ideal_post_context": 10.0,
+      "minimum_pre_context": 10.0,
+      "minimum_post_context": 6.0,
+      "requires_scoreboard": true,
+      "requires_reaction": true
+    },
+    "opus": {
+      "start": 215.0,
+      "end": 230.0,
+      "story": "missed_penalty"
+    },
+    "excerpt": {
+      "start": 218.0,
+      "end": 232.0,
+      "story": "missed_penalty"
+    }
+  },
+  {
+    "video_id": "vid_005",
+    "event": "foul",
+    "primary_story": "red_card",
+    "secondary_story": "rivalry_incident",
+    "ideal_start": 415.5,
+    "ideal_end": 445.0,
+    "human_editor_score": 1.0,
+    "editor_score": 0.40,
+    "editor_reasons": ["poor_lighting", "boring_match"],
+    "publish_worthy": false,
+    "editorial_components": {
+      "buildup": true,
+      "trigger": true,
+      "climax": true,
+      "reaction": true,
+      "scoreboard_context": false,
+      "crowd_context": true
+    },
+    "why_editor_chose_this": ["reckless_challenge", "player_scuffle", "card_presentation"],
+    "disagreement_category": ["cut_before_scuffle_resolved"],
+    "boundary_policy_target": {
+      "policy": "red_card",
+      "ideal_pre_context": 8.0,
+      "ideal_post_context": 20.0,
+      "minimum_pre_context": 4.0,
+      "minimum_post_context": 12.0,
+      "requires_scoreboard": false,
+      "requires_reaction": true
+    },
+    "opus": {
+      "start": 420.0,
+      "end": 435.0,
+      "story": "red_card"
+    },
+    "excerpt": {
+      "start": 416.0,
+      "end": 438.0,
+      "story": "red_card"
+    }
+  }
+]

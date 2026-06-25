@@ -1,0 +1,21 @@
+[
+  {
+    "story_id": "story_1088",
+    "story_type": "goalkeeper_heroics",
+    "failure_category": "missing_reaction",
+    "why_human_won": "Human clip included the crowd chanting the keeper's name during the stoppage.",
+    "dna_features": {
+      "tension_peak": 0.81,
+      "crowd_reaction": 0.45,
+      "pre_context": 8,
+      "post_context": 3
+    },
+    "editor_confidence": 0.95,
+    "missing_components": [
+      "reaction",
+      "extended_post_context"
+    ],
+    "suggested_annotation_priority": "HIGH",
+    "timestamp": "2026-06-16T05:53:17.275Z"
+  }
+]

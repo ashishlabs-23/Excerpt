@@ -1,0 +1,33 @@
+{
+  "name": "projects/13194884443124485003",
+  "projectId": "13194884443124485003",
+  "title": "Excerpt - Video to Viral Clips",
+  "visibility": "PRIVATE",
+  "projectType": "PROJECT_DESIGN",
+  "origin": "STITCH",
+  "deviceType": "DESKTOP",
+  "designTheme": {
+    "colorMode": "DARK",
+    "font": "INTER",
+    "roundness": "ROUND_TWELVE",
+    "customColor": "#6366f1",
+    "saturation": 3
+  },
+  "screens": {
+    "index": {
+      "id": "818d39aa0ce54dc9b2b2596bed9cee80",
+      "title": "Excerpt Landing Page",
+      "path": "index.html"
+    },
+    "dashboard": {
+      "id": "7957523f00c94d3893a648521a803674",
+      "title": "Excerpt Dashboard",
+      "path": "dashboard.html"
+    },
+    "editor": {
+      "id": "fe07d775f9054b49a8f43bec6f931d3a",
+      "title": "Excerpt Editor",
+      "path": "editor.html"
+    }
+  }
+}

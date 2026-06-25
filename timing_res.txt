@@ -1,0 +1,512 @@
+
+--- TEST: FORCED AUDIO FAILURE ---
+--- Starting: Input (Stage 0) ---
+Input:
+* url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+--- Processing ---
+Output:
+* video_path: temp/nexus_test_pipeline\video.mp4
+* url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+Execution Time: 0.02ms
+Status: success
+--- Finished: Input (Stage 0) ---
+
+--- Starting: Transcript Module (Stage 1) ---
+Input:
+* video_path: temp/nexus_test_pipeline\video.mp4
+--- Processing ---
+Output:
+* transcript_len: 95
+Execution Time: 0.01ms
+Status: success
+--- Finished: Transcript Module (Stage 1) ---
+
+--- Starting: Hook Intelligence (Stage 2) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Output:
+* hook_score: 0.85
+* needs_rewrite: True
+Execution Time: 0.01ms
+Status: success
+--- Finished: Hook Intelligence (Stage 2) ---
+
+--- Starting: Segment Generation (Stage 3) ---
+Input:
+* video_path: temp/nexus_test_pipeline\video.mp4
+--- Processing ---
+Output:
+* total_segments: 5
+* segment_ids: ['seg_01', 'seg_02', 'seg_03', 'seg_04', 'seg_05']
+Execution Time: 0.02ms
+Status: success
+--- Finished: Segment Generation (Stage 3) ---
+
+--- Starting: Audio Analysis (Stage 4) ---
+Input:
+* segments: None
+--- Processing ---
+Error: Forced Audio Module Failure
+Execution Time: 0.01ms
+Status: failed
+--- Finished: Audio Analysis (Stage 4) ---
+
+--- Starting: Visual Analysis (Stage 5) ---
+Input:
+* segments: None
+--- Processing ---
+Output:
+* segments_with_faces: 3
+* highest_motion_segment: seg_04
+* visual_scores: [0.6, 0.4, 0.85]
+Execution Time: 0.01ms
+Status: success
+--- Finished: Visual Analysis (Stage 5) ---
+
+--- Starting: Ranking (Stage 6) ---
+Input:
+* audio_lead: None
+--- Processing ---
+Output:
+* top_segment_id: seg_05
+* top_segment_score: 40.0
+* score_breakdown: {"original_score": 40.0, "audio_score": 40.0, "visual_score": 40.0, "hook_score": 40.0}
+* weights_used: {"original": 0.1, "audio": 0.3, "visual": 0.3, "hook": 0.3}
+* reason_for_selection: Selected due to high 'audio' weight influence and peak performance in that category.
+Execution Time: 0.08ms
+Status: success
+--- Finished: Ranking (Stage 6) ---
+
+--- Starting: Thumbnail Module (Stage 7) ---
+Input:
+* top_segment: None
+--- Processing ---
+Output:
+* thumbnail_path: temp/nexus_test_pipeline\thumb_01.jpg
+* selected_timestamp: 15.42
+* reason: Peak emotional intensity and high image contrast selected for high CTR.
+Execution Time: 0.02ms
+Status: success
+--- Finished: Thumbnail Module (Stage 7) ---
+
+--- Starting: Hook Rewrite (Stage 8) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Error: Expecting value: line 1 column 1 (char 0)
+Execution Time: 18333.65ms
+Status: failed
+--- Finished: Hook Rewrite (Stage 8) ---
+
+--- Starting: Metadata Module (Stage 9) ---
+Input:
+* title: None
+--- Processing ---
+Error: Expecting value: line 1 column 1 (char 0)
+Output:
+* hashtag_count: 3
+* caption_length: 50
+* hashtags: ['#viral', '#ai']
+* caption: Fallback caption.
+Execution Time: 17425.93ms
+Status: success
+--- Finished: Metadata Module (Stage 9) ---
+
+--- Starting: Quality Check (Stage 10) ---
+Input:
+* final_score: None
+--- Processing ---
+Output:
+* verdict: Verified Viral Ready
+* issues_detected: []
+* is_rejected: False
+Execution Time: 0.03ms
+Status: success
+--- Finished: Quality Check (Stage 10) ---
+
+--- Starting: Final Output (Stage 11) ---
+Input:
+* verdict: None
+--- Processing ---
+Output:
+* clip_duration: 28.5
+* resolution: 1080x1920
+* cached: True
+Execution Time: 0.02ms
+Status: success
+--- Finished: Final Output (Stage 11) ---
+
+--- Starting: Learning Module (Stage 12) ---
+Input:
+* history_count: 0
+--- Processing ---
+Output:
+* best_signal: no change recommended
+* confidence_level: 0.3
+* reason: Insufficient historical data for reliable learning.
+Execution Time: 0.01ms
+Status: success
+--- Finished: Learning Module (Stage 12) ---
+
+
+--- TIMING PERFORMANCE REPORT ---
+Total Pipeline Time: 35759.82ms
+Average Stage Time: 2750.76ms
+Slowest Stage: Stage 8 (Hook Rewrite) at 18333.65ms
+
+Stage Breakdown:
+* Stage 0 (Input): 0.02ms 
+* Stage 1 (Transcript): 0.01ms 
+* Stage 2 (Hook Intel): 0.01ms 
+* Stage 3 (Segments): 0.02ms 
+* Stage 4 (Audio): 0.01ms 
+* Stage 5 (Visual): 0.01ms 
+* Stage 6 (Ranking): 0.08ms 
+* Stage 7 (Thumbnail): 0.02ms 
+CRASH: Audio test encountered an error: 'charmap' codec can't encode characters in position 37-38: character maps to <undefined>
+
+--- TEST: FORCED VISUAL FAILURE ---
+--- Starting: Input (Stage 0) ---
+Input:
+* url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+--- Processing ---
+Output:
+* video_path: temp/nexus_test_pipeline\video.mp4
+* url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+Execution Time: 0.03ms
+Status: success
+--- Finished: Input (Stage 0) ---
+
+--- Starting: Transcript Module (Stage 1) ---
+Input:
+* video_path: temp/nexus_test_pipeline\video.mp4
+--- Processing ---
+Output:
+* transcript_len: 95
+Execution Time: 0.01ms
+Status: success
+--- Finished: Transcript Module (Stage 1) ---
+
+--- Starting: Hook Intelligence (Stage 2) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Output:
+* hook_score: 0.85
+* needs_rewrite: True
+Execution Time: 0.01ms
+Status: success
+--- Finished: Hook Intelligence (Stage 2) ---
+
+--- Starting: Segment Generation (Stage 3) ---
+Input:
+* video_path: temp/nexus_test_pipeline\video.mp4
+--- Processing ---
+Output:
+* total_segments: 5
+* segment_ids: ['seg_01', 'seg_02', 'seg_03', 'seg_04', 'seg_05']
+Execution Time: 0.02ms
+Status: success
+--- Finished: Segment Generation (Stage 3) ---
+
+--- Starting: Audio Analysis (Stage 4) ---
+Input:
+* segments: None
+--- Processing ---
+Output:
+* average_audio_score: 0.82
+* top_audio_segment: seg_03
+* audio_scores: [0.8, 0.7, 0.9]
+Execution Time: 0.02ms
+Status: success
+--- Finished: Audio Analysis (Stage 4) ---
+
+--- Starting: Visual Analysis (Stage 5) ---
+Input:
+* segments: None
+--- Processing ---
+Error: Forced Visual Module Failure
+Execution Time: 0.01ms
+Status: failed
+--- Finished: Visual Analysis (Stage 5) ---
+
+--- Starting: Ranking (Stage 6) ---
+Input:
+* audio_lead: None
+--- Processing ---
+Output:
+* top_segment_id: seg_05
+* top_segment_score: 40.0
+* score_breakdown: {"original_score": 40.0, "audio_score": 40.0, "visual_score": 40.0, "hook_score": 40.0}
+* weights_used: {"original": 0.1, "audio": 0.3, "visual": 0.3, "hook": 0.3}
+* reason_for_selection: Selected due to high 'audio' weight influence and peak performance in that category.
+Execution Time: 0.09ms
+Status: success
+--- Finished: Ranking (Stage 6) ---
+
+--- Starting: Thumbnail Module (Stage 7) ---
+Input:
+* top_segment: None
+--- Processing ---
+Output:
+* thumbnail_path: temp/nexus_test_pipeline\thumb_01.jpg
+* selected_timestamp: 15.42
+* reason: Peak emotional intensity and high image contrast selected for high CTR.
+Execution Time: 0.02ms
+Status: success
+--- Finished: Thumbnail Module (Stage 7) ---
+
+--- Starting: Hook Rewrite (Stage 8) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Error: Expecting value: line 1 column 1 (char 0)
+Execution Time: 22049.64ms
+Status: failed
+--- Finished: Hook Rewrite (Stage 8) ---
+
+--- Starting: Metadata Module (Stage 9) ---
+Input:
+* title: None
+--- Processing ---
+Error: Expecting value: line 1 column 1 (char 0)
+Output:
+* hashtag_count: 3
+* caption_length: 50
+* hashtags: ['#viral', '#ai']
+* caption: Fallback caption.
+Execution Time: 16107.76ms
+Status: success
+--- Finished: Metadata Module (Stage 9) ---
+
+--- Starting: Quality Check (Stage 10) ---
+Input:
+* final_score: None
+--- Processing ---
+Output:
+* verdict: Verified Viral Ready
+* issues_detected: []
+* is_rejected: False
+Execution Time: 0.02ms
+Status: success
+--- Finished: Quality Check (Stage 10) ---
+
+--- Starting: Final Output (Stage 11) ---
+Input:
+* verdict: None
+--- Processing ---
+Output:
+* clip_duration: 28.5
+* resolution: 1080x1920
+* cached: True
+Execution Time: 0.02ms
+Status: success
+--- Finished: Final Output (Stage 11) ---
+
+--- Starting: Learning Module (Stage 12) ---
+Input:
+* history_count: 0
+--- Processing ---
+Output:
+* best_signal: no change recommended
+* confidence_level: 0.3
+* reason: Insufficient historical data for reliable learning.
+Execution Time: 1.26ms
+Status: success
+--- Finished: Learning Module (Stage 12) ---
+
+
+--- TIMING PERFORMANCE REPORT ---
+Total Pipeline Time: 38158.91ms
+Average Stage Time: 2935.30ms
+Slowest Stage: Stage 8 (Hook Rewrite) at 22049.64ms
+
+Stage Breakdown:
+* Stage 0 (Input): 0.03ms 
+* Stage 1 (Transcript): 0.01ms 
+* Stage 2 (Hook Intel): 0.01ms 
+* Stage 3 (Segments): 0.02ms 
+* Stage 4 (Audio): 0.02ms 
+* Stage 5 (Visual): 0.01ms 
+* Stage 6 (Ranking): 0.09ms 
+* Stage 7 (Thumbnail): 0.02ms 
+CRASH: Visual test encountered an error: 'charmap' codec can't encode characters in position 37-38: character maps to <undefined>
+
+--- TEST: FORCED OLLAMA JSON CORRUPTION ---
+--- Starting: Input (Stage 0) ---
+Input:
+* url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+--- Processing ---
+Output:
+* video_path: temp/nexus_test_pipeline\video.mp4
+* url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+Execution Time: 0.02ms
+Status: success
+--- Finished: Input (Stage 0) ---
+
+--- Starting: Transcript Module (Stage 1) ---
+Input:
+* video_path: temp/nexus_test_pipeline\video.mp4
+--- Processing ---
+Output:
+* transcript_len: 95
+Execution Time: 0.01ms
+Status: success
+--- Finished: Transcript Module (Stage 1) ---
+
+--- Starting: Hook Intelligence (Stage 2) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Output:
+* hook_score: 0.85
+* needs_rewrite: True
+Execution Time: 0.01ms
+Status: success
+--- Finished: Hook Intelligence (Stage 2) ---
+
+--- Starting: Segment Generation (Stage 3) ---
+Input:
+* video_path: temp/nexus_test_pipeline\video.mp4
+--- Processing ---
+Output:
+* total_segments: 5
+* segment_ids: ['seg_01', 'seg_02', 'seg_03', 'seg_04', 'seg_05']
+Execution Time: 0.01ms
+Status: success
+--- Finished: Segment Generation (Stage 3) ---
+
+--- Starting: Audio Analysis (Stage 4) ---
+Input:
+* segments: None
+--- Processing ---
+Output:
+* average_audio_score: 0.82
+* top_audio_segment: seg_03
+* audio_scores: [0.8, 0.7, 0.9]
+Execution Time: 0.02ms
+Status: success
+--- Finished: Audio Analysis (Stage 4) ---
+
+--- Starting: Visual Analysis (Stage 5) ---
+Input:
+* segments: None
+--- Processing ---
+Output:
+* segments_with_faces: 3
+* highest_motion_segment: seg_04
+* visual_scores: [0.6, 0.4, 0.85]
+Execution Time: 0.01ms
+Status: success
+--- Finished: Visual Analysis (Stage 5) ---
+
+--- Starting: Ranking (Stage 6) ---
+Input:
+* audio_lead: None
+--- Processing ---
+Output:
+* top_segment_id: seg_05
+* top_segment_score: 40.0
+* score_breakdown: {"original_score": 40.0, "audio_score": 40.0, "visual_score": 40.0, "hook_score": 40.0}
+* weights_used: {"original": 0.1, "audio": 0.3, "visual": 0.3, "hook": 0.3}
+* reason_for_selection: Selected due to high 'audio' weight influence and peak performance in that category.
+Execution Time: 0.1ms
+Status: success
+--- Finished: Ranking (Stage 6) ---
+
+--- Starting: Thumbnail Module (Stage 7) ---
+Input:
+* top_segment: None
+--- Processing ---
+Output:
+* thumbnail_path: temp/nexus_test_pipeline\thumb_01.jpg
+* selected_timestamp: 15.42
+* reason: Peak emotional intensity and high image contrast selected for high CTR.
+Execution Time: 0.02ms
+Status: success
+--- Finished: Thumbnail Module (Stage 7) ---
+
+--- Starting: Hook Rewrite (Stage 8) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Error: Expecting value: line 1 column 1 (char 0)
+Execution Time: 23085.77ms
+Status: failed
+--- Finished: Hook Rewrite (Stage 8) ---
+
+--- Starting: Metadata Module (Stage 9) ---
+Input:
+* title: None
+--- Processing ---
+Output:
+* hashtag_count: 3
+* caption_length: 156
+* hashtags: ['#OvercomingChallenges', '#VictoryJourneys', '#InspirationStation']
+Error: 'charmap' codec can't encode character '\u2728' in position 11: character maps to <undefined>
+Output:
+* hashtag_count: 3
+* caption_length: 50
+* hashtags: ['#viral', '#ai']
+* caption: Fallback caption.
+Execution Time: 16986.77ms
+Status: success
+--- Finished: Metadata Module (Stage 9) ---
+
+--- Starting: Quality Check (Stage 10) ---
+Input:
+* final_score: None
+--- Processing ---
+Output:
+* verdict: Verified Viral Ready
+* issues_detected: []
+* is_rejected: False
+Execution Time: 0.02ms
+Status: success
+--- Finished: Quality Check (Stage 10) ---
+
+--- Starting: Final Output (Stage 11) ---
+Input:
+* verdict: None
+--- Processing ---
+Output:
+* clip_duration: 28.5
+* resolution: 1080x1920
+* cached: True
+Execution Time: 0.01ms
+Status: success
+--- Finished: Final Output (Stage 11) ---
+
+--- Starting: Learning Module (Stage 12) ---
+Input:
+* history_count: 0
+--- Processing ---
+Output:
+* best_signal: no change recommended
+* confidence_level: 0.3
+* reason: Insufficient historical data for reliable learning.
+Execution Time: 0.01ms
+Status: success
+--- Finished: Learning Module (Stage 12) ---
+
+
+--- TIMING PERFORMANCE REPORT ---
+Total Pipeline Time: 40072.78ms
+Average Stage Time: 3082.52ms
+Slowest Stage: Stage 8 (Hook Rewrite) at 23085.77ms
+
+Stage Breakdown:
+* Stage 0 (Input): 0.02ms 
+* Stage 1 (Transcript): 0.01ms 
+* Stage 2 (Hook Intel): 0.01ms 
+* Stage 3 (Segments): 0.01ms 
+* Stage 4 (Audio): 0.02ms 
+* Stage 5 (Visual): 0.01ms 
+* Stage 6 (Ranking): 0.10ms 
+* Stage 7 (Thumbnail): 0.02ms 
+CRASH: Ollama test encountered an error: 'charmap' codec can't encode characters in position 37-38: character maps to <undefined>
+
+========================================
+ENHANCED RESILIENCE VERIFICATION COMPLETE
+========================================

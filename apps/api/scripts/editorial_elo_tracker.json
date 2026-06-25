@@ -1,0 +1,58 @@
+{
+  "competitors": {
+    "human_editor": 2500,
+    "current_production": 2197,
+    "experimental_a": 2270,
+    "experimental_b": 2200,
+    "memory_disabled": 1950,
+    "policy_disabled": 1850,
+    "story_dna_disabled": 2000,
+    "legacy_baseline": 1800,
+    "narrative_editor": 2450,
+    "broadcast_editor": 2400,
+    "viral_editor": 2350,
+    "tiktok_editor": 2300,
+    "analyst_editor": 2380,
+    "documentary_editor": 2420
+  },
+  "history": [
+    {
+      "week": 1,
+      "human_editor": 2500,
+      "current_production": 1820,
+      "experimental_a": 1810,
+      "experimental_b": 1800,
+      "legacy_baseline": 1800
+    },
+    {
+      "week": 2,
+      "human_editor": 2500,
+      "current_production": 1880,
+      "experimental_a": 1840,
+      "experimental_b": 1810,
+      "legacy_baseline": 1800
+    },
+    {
+      "week": 3,
+      "human_editor": 2500,
+      "current_production": 1945,
+      "experimental_a": 1910,
+      "experimental_b": 1850,
+      "legacy_baseline": 1800
+    }
+  ],
+  "matchups": [
+    {
+      "story_id": "story_1042",
+      "winner": "experimental_a",
+      "loser": "current_production",
+      "reason": [
+        "better_buildup",
+        "stronger_reaction",
+        "better_context"
+      ],
+      "confidence": 0.93,
+      "timestamp": "2026-06-16T05:47:36.287Z"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "nodes": [
+    {
+      "id": "late_game_winner",
+      "type": "archetype",
+      "description": "A goal scored in the final minutes to take the lead"
+    },
+    {
+      "id": "crowd_eruption",
+      "type": "reaction",
+      "description": "High intensity positive crowd audio and visual"
+    },
+    {
+      "id": "bench_explosion",
+      "type": "reaction",
+      "description": "Coaching staff and substitutes celebrating"
+    },
+    {
+      "id": "90_plus_minute",
+      "type": "time_factor",
+      "description": "Occurs in stoppage time"
+    }
+  ],
+  "edges": [
+    {
+      "source": "late_game_winner",
+      "target": "crowd_eruption",
+      "weight": 0.91
+    },
+    {
+      "source": "late_game_winner",
+      "target": "bench_explosion",
+      "weight": 0.85
+    },
+    {
+      "source": "late_game_winner",
+      "target": "90_plus_minute",
+      "weight": 0.99
+    }
+  ]
+}

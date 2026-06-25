@@ -1,0 +1,603 @@
+==================================================
+STARTING PIEPLINE SCALING VERIFICATION
+==================================================
+
+>>> RUNNING SCENARIO: Short (30s)
+--- Starting: Input (Stage 0) ---
+Input:
+* url: https://example.com/video.mp4
+* duration: 30
+--- Processing ---
+Output:
+* video_path: temp/scaling_test_short\video.mp4
+* url: https://example.com/video.mp4
+* duration_sec: 30
+Execution Time: 0.02ms
+Status: success
+--- Finished: Input (Stage 0) ---
+
+--- Starting: Transcript Module (Stage 1) ---
+Input:
+* video_path: temp/scaling_test_short\video.mp4
+--- Processing ---
+Output:
+* transcript_len: 95
+Execution Time: 0.01ms
+Status: success
+--- Finished: Transcript Module (Stage 1) ---
+
+--- Starting: Hook Intelligence (Stage 2) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Output:
+* hook_score: 0.85
+* needs_rewrite: True
+Execution Time: 0.01ms
+Status: success
+--- Finished: Hook Intelligence (Stage 2) ---
+
+--- Starting: Segment Generation (Stage 3) ---
+Input:
+* video_path: temp/scaling_test_short\video.mp4
+* duration: 30
+--- Processing ---
+Output:
+* total_segments: 1
+* segment_ids: ['seg_01']
+Execution Time: 0.01ms
+Status: success
+--- Finished: Segment Generation (Stage 3) ---
+
+--- Starting: Audio Analysis (Stage 4) ---
+Input:
+* segments: count=0
+--- Processing ---
+Output:
+* average_audio_score: 0
+* top_audio_segment: None
+* audio_scores: {}
+Execution Time: 0.03ms
+Status: success
+--- Finished: Audio Analysis (Stage 4) ---
+
+--- Starting: Visual Analysis (Stage 5) ---
+Input:
+* segments: count=0
+--- Processing ---
+Output:
+* segments_with_faces: 0
+* highest_motion_segment: None
+* visual_scores: {}
+Execution Time: 0.05ms
+Status: success
+--- Finished: Visual Analysis (Stage 5) ---
+
+--- Starting: Ranking (Stage 6) ---
+Input:
+* total_segments: 0
+--- Processing ---
+Output:
+* top_segment_id: none
+* top_segment_score: 0
+* score_breakdown: {}
+* weights_used: {"original": 0.1, "audio": 0.3, "visual": 0.3, "hook": 0.3}
+* reason_for_selection: Selected due to high 'audio' weight influence and peak performance in that category.
+Execution Time: 0.02ms
+Status: success
+--- Finished: Ranking (Stage 6) ---
+
+--- Starting: Thumbnail Module (Stage 7) ---
+Input:
+* top_segment: None
+--- Processing ---
+Output:
+* thumbnail_path: temp/scaling_test_short\thumb_01.jpg
+* selected_timestamp: 15.42
+* reason: Peak emotional intensity and high image contrast selected for high CTR.
+Execution Time: 0.01ms
+Status: success
+--- Finished: Thumbnail Module (Stage 7) ---
+
+--- Starting: Hook Rewrite (Stage 8) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Output:
+* original_hook_score: 0.62
+* new_title: Transform Your Skillset into Superpowers: A Viral Breakthrough!
+* improvement_reason: This hook creates a sense of intrigue and wonder, enticing listeners to want to know more about how skills can be transformed into superpowers.
+* viral_hook: Imagine if you could turn any skill into a superpower... It's about to happen!
+Execution Time: 21444.77ms
+Status: success
+--- Finished: Hook Rewrite (Stage 8) ---
+
+--- Starting: Metadata Module (Stage 9) ---
+Input:
+* title: None
+--- Processing ---
+Error: Expecting value: line 1 column 1 (char 0)
+Execution Time: 17500.3ms
+Status: failed
+--- Finished: Metadata Module (Stage 9) ---
+
+--- Starting: Quality Check (Stage 10) ---
+Input:
+* final_score: None
+--- Processing ---
+Output:
+* verdict: Verified Viral Ready
+* issues_detected: []
+* is_rejected: False
+Execution Time: 0.02ms
+Status: success
+--- Finished: Quality Check (Stage 10) ---
+
+--- Starting: Final Output (Stage 11) ---
+Input:
+* verdict: None
+--- Processing ---
+Output:
+* clip_duration: 28.5
+* resolution: 1080x1920
+* cached: True
+* video_path: temp/scaling_test_short\clip.mp4
+* subtitle_path: temp/scaling_test_short\clip.srt
+Execution Time: 0.46ms
+Status: success
+--- Finished: Final Output (Stage 11) ---
+
+--- Starting: Quality Audit (Stage 13) ---
+Input:
+* video: temp/scaling_test_short\clip.mp4
+--- Processing ---
+
+ΓÜá∩╕Å QUALITY AUDIT WARNINGS FOUND:
+  * Thumbnail file (.jpg) missing.
+Output:
+* passed: False
+* warnings_count: 1
+* warnings: ['Thumbnail file (.jpg) missing.']
+* audit_timestamp: 2026-04-07T17:18:04Z
+Execution Time: 0.52ms
+Status: success
+--- Finished: Quality Audit (Stage 13) ---
+
+--- Starting: Learning Module (Stage 12) ---
+Input:
+* history_count: 0
+--- Processing ---
+Output:
+* best_signal: no change recommended
+* confidence_level: 0.3
+* reason: Insufficient historical data for reliable learning.
+Execution Time: 0.01ms
+Status: success
+--- Finished: Learning Module (Stage 12) ---
+
+
+--- TIMING PERFORMANCE REPORT ---
+Total Pipeline Time: 38946.24ms
+Average Stage Time: 2781.87ms
+Slowest Stage: Stage 8 (Hook Rewrite) at 21444.77ms
+
+ΓÜá∩╕Å  FINAL QUALITY VERDICT: ATTENTION REQUIRED
+
+Stage Breakdown:
+* Stage 0 (Input): 0.02ms 
+* Stage 1 (Transcript): 0.01ms 
+* Stage 2 (Hook Intel): 0.01ms 
+* Stage 3 (Segments): 0.01ms 
+* Stage 4 (Audio): 0.03ms 
+* Stage 5 (Visual): 0.05ms 
+* Stage 6 (Ranking): 0.02ms 
+* Stage 7 (Thumbnail): 0.01ms 
+* Stage 8 (Hook Rewrite): 21444.77ms ΓÜá∩╕Å  [SLOW > 2s]
+* Stage 9 (Metadata): 17500.30ms ΓÜá∩╕Å  [SLOW > 2s]
+* Stage 10 (Quality Guard): 0.02ms 
+* Stage 11 (Persistence): 0.46ms 
+* Stage 12 (Learning): 0.01ms 
+* Stage 13 (Quality Audit): 0.52ms 
+------------------------
+
+>>> RUNNING SCENARIO: Medium (120s)
+--- Starting: Input (Stage 0) ---
+Input:
+* url: https://example.com/video.mp4
+* duration: 120
+--- Processing ---
+Output:
+* video_path: temp/scaling_test_medium\video.mp4
+* url: https://example.com/video.mp4
+* duration_sec: 120
+Execution Time: 0.04ms
+Status: success
+--- Finished: Input (Stage 0) ---
+
+--- Starting: Transcript Module (Stage 1) ---
+Input:
+* video_path: temp/scaling_test_medium\video.mp4
+--- Processing ---
+Output:
+* transcript_len: 95
+Execution Time: 0.01ms
+Status: success
+--- Finished: Transcript Module (Stage 1) ---
+
+--- Starting: Hook Intelligence (Stage 2) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Output:
+* hook_score: 0.85
+* needs_rewrite: True
+Execution Time: 0.02ms
+Status: success
+--- Finished: Hook Intelligence (Stage 2) ---
+
+--- Starting: Segment Generation (Stage 3) ---
+Input:
+* video_path: temp/scaling_test_medium\video.mp4
+* duration: 120
+--- Processing ---
+Output:
+* total_segments: 4
+* segment_ids: ['seg_01', 'seg_02', 'seg_03', 'seg_04']
+Execution Time: 0.04ms
+Status: success
+--- Finished: Segment Generation (Stage 3) ---
+
+--- Starting: Audio Analysis (Stage 4) ---
+Input:
+* segments: count=0
+--- Processing ---
+Output:
+* average_audio_score: 0
+* top_audio_segment: None
+* audio_scores: {}
+Execution Time: 0.06ms
+Status: success
+--- Finished: Audio Analysis (Stage 4) ---
+
+--- Starting: Visual Analysis (Stage 5) ---
+Input:
+* segments: count=0
+--- Processing ---
+Output:
+* segments_with_faces: 0
+* highest_motion_segment: None
+* visual_scores: {}
+Execution Time: 0.03ms
+Status: success
+--- Finished: Visual Analysis (Stage 5) ---
+
+--- Starting: Ranking (Stage 6) ---
+Input:
+* total_segments: 0
+--- Processing ---
+Output:
+* top_segment_id: none
+* top_segment_score: 0
+* score_breakdown: {}
+* weights_used: {"original": 0.1, "audio": 0.3, "visual": 0.3, "hook": 0.3}
+* reason_for_selection: Selected due to high 'audio' weight influence and peak performance in that category.
+Execution Time: 0.21ms
+Status: success
+--- Finished: Ranking (Stage 6) ---
+
+--- Starting: Thumbnail Module (Stage 7) ---
+Input:
+* top_segment: None
+--- Processing ---
+Output:
+* thumbnail_path: temp/scaling_test_medium\thumb_01.jpg
+* selected_timestamp: 15.42
+* reason: Peak emotional intensity and high image contrast selected for high CTR.
+Execution Time: 0.03ms
+Status: success
+--- Finished: Thumbnail Module (Stage 7) ---
+
+--- Starting: Hook Rewrite (Stage 8) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Error: Expecting value: line 1 column 1 (char 0)
+Execution Time: 23944.48ms
+Status: failed
+--- Finished: Hook Rewrite (Stage 8) ---
+
+--- Starting: Metadata Module (Stage 9) ---
+Input:
+* title: None
+--- Processing ---
+Output:
+* hashtag_count: 5
+* caption_length: 143
+* hashtags: ['#MotivationMonday', '#RealSuccessStories', '#OvercomingChallenges', '#AchievementUnlocked', '#BeInspired']
+* caption: ≡ƒîƒ Just when you thought it was over, hereΓÇÖs a story of someone who turned their dreams into reality. What inspired you today? #SuccessStories ≡ƒîƒ
+Execution Time: 19532.37ms
+Status: success
+--- Finished: Metadata Module (Stage 9) ---
+
+--- Starting: Quality Check (Stage 10) ---
+Input:
+* final_score: None
+--- Processing ---
+Output:
+* verdict: Verified Viral Ready
+* issues_detected: []
+* is_rejected: False
+Execution Time: 0.15ms
+Status: success
+--- Finished: Quality Check (Stage 10) ---
+
+--- Starting: Final Output (Stage 11) ---
+Input:
+* verdict: None
+--- Processing ---
+Output:
+* clip_duration: 28.5
+* resolution: 1080x1920
+* cached: True
+* video_path: temp/scaling_test_medium\clip.mp4
+* subtitle_path: temp/scaling_test_medium\clip.srt
+Execution Time: 0.57ms
+Status: success
+--- Finished: Final Output (Stage 11) ---
+
+--- Starting: Quality Audit (Stage 13) ---
+Input:
+* video: temp/scaling_test_medium\clip.mp4
+--- Processing ---
+
+ΓÜá∩╕Å QUALITY AUDIT WARNINGS FOUND:
+  * Thumbnail file (.jpg) missing.
+Output:
+* passed: False
+* warnings_count: 1
+* warnings: ['Thumbnail file (.jpg) missing.']
+* audit_timestamp: 2026-04-07T17:18:48Z
+Execution Time: 0.52ms
+Status: success
+--- Finished: Quality Audit (Stage 13) ---
+
+--- Starting: Learning Module (Stage 12) ---
+Input:
+* history_count: 0
+--- Processing ---
+Output:
+* best_signal: no change recommended
+* confidence_level: 0.3
+* reason: Insufficient historical data for reliable learning.
+Execution Time: 0.01ms
+Status: success
+--- Finished: Learning Module (Stage 12) ---
+
+
+--- TIMING PERFORMANCE REPORT ---
+Total Pipeline Time: 43478.54ms
+Average Stage Time: 3105.61ms
+Slowest Stage: Stage 8 (Hook Rewrite) at 23944.48ms
+
+ΓÜá∩╕Å  FINAL QUALITY VERDICT: ATTENTION REQUIRED
+
+Stage Breakdown:
+* Stage 0 (Input): 0.04ms 
+* Stage 1 (Transcript): 0.01ms 
+* Stage 2 (Hook Intel): 0.02ms 
+* Stage 3 (Segments): 0.04ms 
+* Stage 4 (Audio): 0.06ms 
+* Stage 5 (Visual): 0.03ms 
+* Stage 6 (Ranking): 0.21ms 
+* Stage 7 (Thumbnail): 0.03ms 
+* Stage 8 (Hook Rewrite): 23944.48ms ΓÜá∩╕Å  [SLOW > 2s]
+* Stage 9 (Metadata): 19532.37ms ΓÜá∩╕Å  [SLOW > 2s]
+* Stage 10 (Quality Guard): 0.15ms 
+* Stage 11 (Persistence): 0.57ms 
+* Stage 12 (Learning): 0.01ms 
+* Stage 13 (Quality Audit): 0.52ms 
+------------------------
+
+>>> RUNNING SCENARIO: Long (300s)
+--- Starting: Input (Stage 0) ---
+Input:
+* url: https://example.com/video.mp4
+* duration: 300
+--- Processing ---
+Output:
+* video_path: temp/scaling_test_long\video.mp4
+* url: https://example.com/video.mp4
+* duration_sec: 300
+Execution Time: 0.04ms
+Status: success
+--- Finished: Input (Stage 0) ---
+
+--- Starting: Transcript Module (Stage 1) ---
+Input:
+* video_path: temp/scaling_test_long\video.mp4
+--- Processing ---
+Output:
+* transcript_len: 95
+Execution Time: 0.01ms
+Status: success
+--- Finished: Transcript Module (Stage 1) ---
+
+--- Starting: Hook Intelligence (Stage 2) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Output:
+* hook_score: 0.85
+* needs_rewrite: True
+Execution Time: 0.01ms
+Status: success
+--- Finished: Hook Intelligence (Stage 2) ---
+
+--- Starting: Segment Generation (Stage 3) ---
+Input:
+* video_path: temp/scaling_test_long\video.mp4
+* duration: 300
+--- Processing ---
+Output:
+* total_segments: 10
+* segment_ids: ['seg_01', 'seg_02', 'seg_03', 'seg_04', 'seg_05', 'seg_06', 'seg_07', 'seg_08', 'seg_09', 'seg_10']
+Execution Time: 0.03ms
+Status: success
+--- Finished: Segment Generation (Stage 3) ---
+
+--- Starting: Audio Analysis (Stage 4) ---
+Input:
+* segments: count=0
+--- Processing ---
+Output:
+* average_audio_score: 0
+* top_audio_segment: None
+* audio_scores: {}
+Execution Time: 0.03ms
+Status: success
+--- Finished: Audio Analysis (Stage 4) ---
+
+--- Starting: Visual Analysis (Stage 5) ---
+Input:
+* segments: count=0
+--- Processing ---
+Output:
+* segments_with_faces: 0
+* highest_motion_segment: None
+* visual_scores: {}
+Execution Time: 0.02ms
+Status: success
+--- Finished: Visual Analysis (Stage 5) ---
+
+--- Starting: Ranking (Stage 6) ---
+Input:
+* total_segments: 0
+--- Processing ---
+Output:
+* top_segment_id: none
+* top_segment_score: 0
+* score_breakdown: {}
+* weights_used: {"original": 0.1, "audio": 0.3, "visual": 0.3, "hook": 0.3}
+* reason_for_selection: Selected due to high 'audio' weight influence and peak performance in that category.
+Execution Time: 0.06ms
+Status: success
+--- Finished: Ranking (Stage 6) ---
+
+--- Starting: Thumbnail Module (Stage 7) ---
+Input:
+* top_segment: None
+--- Processing ---
+Output:
+* thumbnail_path: temp/scaling_test_long\thumb_01.jpg
+* selected_timestamp: 15.42
+* reason: Peak emotional intensity and high image contrast selected for high CTR.
+Execution Time: 0.01ms
+Status: success
+--- Finished: Thumbnail Module (Stage 7) ---
+
+--- Starting: Hook Rewrite (Stage 8) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Error: Expecting value: line 1 column 1 (char 0)
+Execution Time: 26217.56ms
+Status: failed
+--- Finished: Hook Rewrite (Stage 8) ---
+
+--- Starting: Metadata Module (Stage 9) ---
+Input:
+* title: None
+--- Processing ---
+Error: Expecting value: line 1 column 1 (char 0)
+Execution Time: 15998.87ms
+Status: failed
+--- Finished: Metadata Module (Stage 9) ---
+
+--- Starting: Quality Check (Stage 10) ---
+Input:
+* final_score: None
+--- Processing ---
+Output:
+* verdict: Verified Viral Ready
+* issues_detected: []
+* is_rejected: False
+Execution Time: 0.02ms
+Status: success
+--- Finished: Quality Check (Stage 10) ---
+
+--- Starting: Final Output (Stage 11) ---
+Input:
+* verdict: None
+--- Processing ---
+Output:
+* clip_duration: 28.5
+* resolution: 1080x1920
+* cached: True
+* video_path: temp/scaling_test_long\clip.mp4
+* subtitle_path: temp/scaling_test_long\clip.srt
+Execution Time: 0.55ms
+Status: success
+--- Finished: Final Output (Stage 11) ---
+
+--- Starting: Quality Audit (Stage 13) ---
+Input:
+* video: temp/scaling_test_long\clip.mp4
+--- Processing ---
+
+ΓÜá∩╕Å QUALITY AUDIT WARNINGS FOUND:
+  * Thumbnail file (.jpg) missing.
+Output:
+* passed: False
+* warnings_count: 1
+* warnings: ['Thumbnail file (.jpg) missing.']
+* audit_timestamp: 2026-04-07T17:19:30Z
+Execution Time: 0.66ms
+Status: success
+--- Finished: Quality Audit (Stage 13) ---
+
+--- Starting: Learning Module (Stage 12) ---
+Input:
+* history_count: 0
+--- Processing ---
+Output:
+* best_signal: no change recommended
+* confidence_level: 0.3
+* reason: Insufficient historical data for reliable learning.
+Execution Time: 0.01ms
+Status: success
+--- Finished: Learning Module (Stage 12) ---
+
+
+--- TIMING PERFORMANCE REPORT ---
+Total Pipeline Time: 42217.88ms
+Average Stage Time: 3015.56ms
+Slowest Stage: Stage 8 (Hook Rewrite) at 26217.56ms
+
+ΓÜá∩╕Å  FINAL QUALITY VERDICT: ATTENTION REQUIRED
+
+Stage Breakdown:
+* Stage 0 (Input): 0.04ms 
+* Stage 1 (Transcript): 0.01ms 
+* Stage 2 (Hook Intel): 0.01ms 
+* Stage 3 (Segments): 0.03ms 
+* Stage 4 (Audio): 0.03ms 
+* Stage 5 (Visual): 0.02ms 
+* Stage 6 (Ranking): 0.06ms 
+* Stage 7 (Thumbnail): 0.01ms 
+* Stage 8 (Hook Rewrite): 26217.56ms ΓÜá∩╕Å  [SLOW > 2s]
+* Stage 9 (Metadata): 15998.87ms ΓÜá∩╕Å  [SLOW > 2s]
+* Stage 10 (Quality Guard): 0.02ms 
+* Stage 11 (Persistence): 0.55ms 
+* Stage 12 (Learning): 0.01ms 
+* Stage 13 (Quality Audit): 0.66ms 
+------------------------
+
+==================================================
+FINAL SCALING PERFORMANCE COMPARISON
+==================================================
+| Scenario | Duration | Segments | Total Time | Avg/Stage | Slowest Stage |
+|---|---|---|---|---|---|
+| Short | 30s | 1 | 38946.2ms | 2781.9ms | Hook Rewrite (21444.8ms) |
+| Medium | 120s | 4 | 43478.5ms | 3105.6ms | Hook Rewrite (23944.5ms) |
+| Long | 300s | 10 | 42217.9ms | 3015.6ms | Hook Rewrite (26217.6ms) |
+==================================================

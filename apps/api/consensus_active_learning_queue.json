@@ -1,0 +1,12 @@
+[
+  {
+    "story_id": "story_002",
+    "total_votes": 4,
+    "vote_distribution": {
+      "A": 2,
+      "B": 2
+    },
+    "agreement_rate": 0.5,
+    "consensus_strength": "weak"
+  }
+]

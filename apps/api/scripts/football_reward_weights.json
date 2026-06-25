@@ -1,0 +1,15 @@
+{
+  "duration": 0.05,
+  "caption_density": 0.10,
+  "avg_zoom": 0.10,
+  "speaker_changes": 0.10,
+  "emotion_peak": 0.25,
+  "motion_peak": 0.15,
+  "story_completeness": 0.20,
+  "hook_strength": 0.10,
+  "ball_visibility": 0.15,
+  "goal_importance": 0.15,
+  "commentary_hype": 0.30,
+  "possession_shift": 0.10,
+  "scoreboard_visibility": 0.10
+}

@@ -1,0 +1,17 @@
+{
+  "testDate": "2026-06-11T07:52:28.202Z",
+  "videoUrl": "https://youtu.be/FyZCa50d4zE?si=B6p_pwmQlw5LlOzq",
+  "orchestrationSuccess": true,
+  "totalExecutionTimeMs": 17882,
+  "qualityMetrics": {
+    "transcription": "success",
+    "tracking": "success",
+    "cropping": "success",
+    "captions": "success",
+    "story": "success",
+    "editorAgent": "success",
+    "critic": "success",
+    "rewardScore": "success"
+  },
+  "enginesEvaluated": 25
+}

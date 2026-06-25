@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Viewer Outcome Event",
+  "type": "object",
+  "properties": {
+    "story_id": {
+      "type": "string"
+    },
+    "watch_time": {
+      "type": "number",
+      "description": "Total seconds watched"
+    },
+    "completion_rate": {
+      "type": "number",
+      "description": "Percentage of clip watched"
+    },
+    "rewatch_rate": {
+      "type": "number",
+      "description": "Percentage of viewers who rewatched the clip"
+    },
+    "dropoff_curve": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "description": "Viewer retention mapped over the duration of the clip"
+    },
+    "avg_view_duration": {
+      "type": "number",
+      "description": "Average view duration in seconds"
+    },
+    "shares": {
+      "type": "integer"
+    },
+    "likes": {
+      "type": "integer"
+    },
+    "comments": {
+      "type": "integer"
+    },
+    "saves": {
+      "type": "integer"
+    }
+  },
+  "required": ["story_id", "watch_time", "completion_rate"]
+}

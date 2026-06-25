@@ -1,0 +1,100 @@
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":13}
+excerpt-api  | [yt-dlp]: [download]  38.5% of   25.09MiB at    9.00MiB/s ETA 00:01
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":13}
+excerpt-api  | [yt-dlp]: [download]  38.5% of   25.09MiB at  Unknown B/s ETA Unknown
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":13}
+excerpt-api  | [yt-dlp]: [download]  38.5% of   25.09MiB at    1.56MiB/s ETA 00:09
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":13}
+excerpt-api  | [yt-dlp]: [download]  38.6% of   25.09MiB at    2.16MiB/s ETA 00:07
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":13}
+excerpt-api  | [yt-dlp]: [download]  38.6% of   25.09MiB at    2.86MiB/s ETA 00:05
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":13}
+excerpt-api  | [yt-dlp]: [download]  38.6% of   25.09MiB at    4.20MiB/s ETA 00:03
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":13}
+excerpt-api  | [yt-dlp]: [download]  38.8% of   25.09MiB at  600.38KiB/s ETA 00:26
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":13}
+excerpt-api  | [yt-dlp]: [download]  39.0% of   25.09MiB at  603.45KiB/s ETA 00:25
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":13}
+excerpt-api  | [yt-dlp]: [download]  39.5% of   25.09MiB at  810.59KiB/s ETA 00:19
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":14}
+excerpt-api  | [yt-dlp]: [download]  40.5% of   25.09MiB at  983.35KiB/s ETA 00:15
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":14}
+excerpt-api  | [yt-dlp]: [download]  42.5% of   25.09MiB at    1.61MiB/s ETA 00:08
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":14}
+excerpt-api  | [yt-dlp]: [download]  46.5% of   25.09MiB at    2.74MiB/s ETA 00:04
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":15}
+excerpt-api  | [yt-dlp]: [download]  54.5% of   25.09MiB at    4.52MiB/s ETA 00:02
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":17}
+excerpt-api  | [yt-dlp]: [download]  70.4% of   25.09MiB at    7.54MiB/s ETA 00:00
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":17}
+excerpt-api  | [yt-dlp]: [download]  76.8% of   25.09MiB at    7.78MiB/s ETA 00:00
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":17}
+excerpt-api  | [yt-dlp]: [download]  76.8% of   25.09MiB at   71.71KiB/s ETA 01:23
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":17}
+excerpt-api  | [yt-dlp]: [download]  76.8% of   25.09MiB at  199.98KiB/s ETA 00:29
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":17}
+excerpt-api  | [yt-dlp]: [download]  76.8% of   25.09MiB at  452.10KiB/s ETA 00:13
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":17}
+excerpt-api  | [yt-dlp]: [download]  76.8% of   25.09MiB at  941.69KiB/s ETA 00:06
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":17}
+excerpt-api  | [yt-dlp]: [download]  76.9% of   25.09MiB at  967.33KiB/s ETA 00:06
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":17}
+excerpt-api  | [yt-dlp]: [download]  77.0% of   25.09MiB at    1.08MiB/s ETA 00:05
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":17}
+excerpt-api  | [yt-dlp]: [download]  77.3% of   25.09MiB at    1.36MiB/s ETA 00:04
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":17}
+excerpt-api  | [yt-dlp]: [download]  77.8% of   25.09MiB at    1.78MiB/s ETA 00:03
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":17}
+excerpt-api  | [yt-dlp]: [download]  78.8% of   25.09MiB at    2.17MiB/s ETA 00:02
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":18}
+excerpt-api  | [yt-dlp]: [download]  80.7% of   25.09MiB at    3.42MiB/s ETA 00:01
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":18}
+excerpt-api  | [yt-dlp]: [download]  84.7% of   25.09MiB at    4.84MiB/s ETA 00:00
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":19}
+excerpt-api  | [yt-dlp]: [download]  92.7% of   25.09MiB at    5.53MiB/s ETA 00:00
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":20}
+excerpt-api  | [yt-dlp]: [download] 100.0% of   25.09MiB at    6.59MiB/s ETA 00:00
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":20}
+excerpt-api  | [yt-dlp]: [download] 100% of   25.09MiB in 00:00:04 at 5.77MiB/s
+excerpt-api  | [VideoProcessor]: Download complete
+excerpt-api  | [Worker]: 🗄️ Source cached for future Neural Remixes.
+excerpt-api  | [Worker]: Vector data ready: 102.48 MB
+excerpt-api  | [Worker]: Source duration: 1625.40 seconds
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":20,"status":"transcribing"}
+excerpt-api  | [Worker]: 🌩️ Groq / Neural Decode START...
+excerpt-api  | [TranscriptionService]: 🎙️ Extracting 'Neural Slim' (16kbps) audio...
+excerpt-api  | [VideoProcessor]: Extracting audio with ffmpeg -> /app/temp/2b9611c4-119d-4f43-8cc7-386badd9e27a/input_audio.mp3
+excerpt-api  | [VideoProcessor]: Audio extraction complete
+excerpt-api  | [TranscriptionService]: Audio weight: 3.10 MB
+excerpt-api  | [Worker]: Transcription state synchronized with DB.
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":50,"status":"detecting_clips"}
+excerpt-api  | [SYNC] Llama-3.3 / AI Detection START -> Finding viral moments (Burst Sequence)...
+excerpt-api  | [AIService]: Initiating Burst-Sequence Decode for 2 moments...
+excerpt-api  | [AIService]: Processing Burst 1/1 (2 clips)...
+excerpt-api  | [Worker]: AI Detection jitter detected. Attempting transcript-guided fallback...
+excerpt-api  | [AIService]: Burst 1 SUCCESS via Groq -> Found 2 segments.
+excerpt-api  | [AIService]: Sequence synchronization complete. Validating 2 protocol segments...
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"status":"recovering","progress":55,"generationMode":"heuristic","recoveryReason":"AI returned only low-quality or invalid clip windows."}
+excerpt-api  | [Worker]: Heuristic fallback active. Generated 2 transcript-guided clip plans.
+excerpt-api  | [SYNC] Llama-3.3 / AI Detection DONE -> Successfully decoded 2 viral segments.
+excerpt-api  | [SYNC] FFmpeg / Clipping START -> Cutting 2 segments...
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":60,"status":"cutting"}
+excerpt-api  | [Worker]: Cutting and cropping 2 clips...
+excerpt-api  | [SYNC] FFmpeg Clip 1/2 START -> "First things first, let's actually address some deep lore from the book to help explain Dune's setting. 10,000 years before Dune, humans revolted against thinking machines, so by the time..."
+excerpt-api  | [VideoProcessor]: Smart crop mode -> dynamic smart crop across 4 focus points with face tracking (5 face hits)
+excerpt-api  | [VideoProcessor]: Cutting clip with ffmpeg at 102.44s -> /app/temp/2b9611c4-119d-4f43-8cc7-386badd9e27a/raw-clip-d38172b3-503b-406a-8b31-b3ec06e21cf1.mp4
+excerpt-api  | [VideoProcessor]: Clip processing complete
+excerpt-api  | [SYNC] FFmpeg Captions 1/2 START...
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":65,"status":"captioning"}
+excerpt-api  | [SYNC] FFmpeg Clip 1/2 DONE -> Generated segment with captions.
+excerpt-api  | [Worker]: Uploading clip 1 to B2...
+excerpt-api  | An error was encountered in a non-retryable streaming request.
+excerpt-api  | [StorageService]: B2 upload failed: . Falling back to local storage.
+excerpt-api  | [StorageService]: Local Godmode -> /app/temp/clips/2b9611c4-119d-4f43-8cc7-386badd9e27a/d38172b3-503b-406a-8b31-b3ec06e21cf1.mp4
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":75}
+excerpt-api  | [SYNC] FFmpeg Clip 2/2 START -> "Johnny turns to Paul and says, this is only the beginning, and we see a flash of Paul's visions coming true. If you have any remaining questions, though, feel free to leave them in the co..."
+excerpt-api  | [VideoProcessor]: Smart crop mode -> dynamic smart crop across 4 focus points with face tracking (10 face hits)
+excerpt-api  | [VideoProcessor]: Cutting clip with ffmpeg at 1570.14s -> /app/temp/2b9611c4-119d-4f43-8cc7-386badd9e27a/raw-clip-5b053e16-b1fc-4456-8a40-2eaca32f4636.mp4
+excerpt-api  | [VideoProcessor]: Clip processing complete
+excerpt-api  | [SYNC] FFmpeg Captions 2/2 START...
+excerpt-api  | [JobState]: Updated 2b9611c4-119d-4f43-8cc7-386badd9e27a -> {"progress":80,"status":"captioning"}

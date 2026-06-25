@@ -1,0 +1,71 @@
+{
+  "description": "Excerpt Football Gold Benchmark Dataset Ground Truth",
+  "version": "1.0",
+  "metadata": {
+    "total_clips": 300,
+    "categories": {
+      "goals": 100,
+      "counterattacks": 50,
+      "penalties": 50,
+      "red_cards": 50,
+      "var_reviews": 50
+    }
+  },
+  "clips": [
+    {
+      "video_id": "vid_goal_01",
+      "ideal_start": 120.5,
+      "ideal_end": 142.0,
+      "event": "goal",
+      "event_time": 132.5,
+      "ideal_crop": "wide",
+      "ideal_zoom": 1.1,
+      "ideal_focus": "ball",
+      "description": "Late match equalizer with full crowd celebration"
+    },
+    {
+      "video_id": "vid_counter_01",
+      "ideal_start": 345.0,
+      "ideal_end": 372.5,
+      "event": "counterattack",
+      "event_time": 370.0,
+      "ideal_crop": "wide",
+      "ideal_zoom": 1.15,
+      "ideal_focus": "ball",
+      "description": "Midfield turnover leading to direct scoring chance"
+    },
+    {
+      "video_id": "vid_penalty_01",
+      "ideal_start": 510.2,
+      "ideal_end": 532.0,
+      "event": "penalty",
+      "event_time": 528.0,
+      "ideal_crop": "wide",
+      "ideal_zoom": 1.05,
+      "ideal_focus": "ball",
+      "description": "Penalty run-up and conversion"
+    },
+    {
+      "video_id": "vid_card_01",
+      "ideal_start": 820.0,
+      "ideal_end": 845.0,
+      "event": "red_card",
+      "event_time": 832.0,
+      "ideal_crop": "tight",
+      "ideal_zoom": 1.2,
+      "ideal_focus": "player",
+      "description": "Slide tackle slide and referee warning sequence"
+    },
+    {
+      "video_id": "vid_var_01",
+      "ideal_start": 1040.5,
+      "ideal_end": 1090.0,
+      "event": "var_review",
+      "event_time": 1065.5,
+      "ideal_crop": "tactical",
+      "ideal_zoom": 1.0,
+      "ideal_focus": "referee",
+      "description": "VAR penalty check and final referee box check"
+    }
+  ]
+}

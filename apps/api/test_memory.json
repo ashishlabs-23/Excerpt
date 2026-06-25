@@ -1,0 +1,18 @@
+{
+  "late_game_winner_crowd_eruption": {
+    "pattern_id": "late_game_winner_crowd_eruption",
+    "story_archetype": "late_game_winner",
+    "reaction_profile": {
+      "crowd": 0.92,
+      "bench": 0.71,
+      "player": 0.88
+    },
+    "scoreboard_context": {
+      "minute": 94,
+      "score_diff": 1
+    },
+    "editor_win_rate": 0.9,
+    "sample_count": 10,
+    "wins": 9
+  }
+}

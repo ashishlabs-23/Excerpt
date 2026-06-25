@@ -1,0 +1,70 @@
+============================================================
+STARTING VIRAL PIPELINE TEST
+Video URL: https://youtu.be/DJWtXcafOH8?si=HEURb5sUO2Xm7rmH
+============================================================
+Running: Input (Stage 0)
+Running: Transcript Module (Stage 1)
+Running: Hook Intelligence (Stage 2)
+Running: Face Tracking (Stage 3)
+Running: Visual Activity (Stage 4)
+Running: AI Analyzer (Stage 5)
+Running: Cross-Correlation (Stage 6)
+Running: Thumbnail Module (Stage 7)
+Running: Hook Rewrite (Stage 8 - Ollama)
+Running: Metadata Module (Stage 9 - Ollama)
+Running: Quality Guard (Stage 10)
+Running: Persistence (Stage 11)
+Running: Learning Module (Stage 12 - Ollama)
+
+[Running: Stage 0]
+Output Keys: ['video_path', 'url']
+
+[Running: Stage 1]
+Output Keys: ['transcript']
+
+[Running: Stage 10]
+Output Keys: ['status', 'is_rejected']
+
+[Running: Stage 11]
+Output Keys: ['cached', 'hash']
+
+[Running: Stage 12]
+Output Keys: ['viral_velocity', 'trending_topics']
+
+[Running: Stage 2]
+Output Keys: ['hook_score', 'needs_rewrite']
+
+[Running: Stage 3]
+Output Keys: ['face_detected', 'face_confidence']
+
+[Running: Stage 4]
+Output Keys: ['motion_score', 'scene_changes']
+
+[Running: Stage 5]
+Output Keys: ['base_viral_score']
+
+[Running: Stage 6]
+Output Keys: ['final_merged_score']
+
+[Running: Stage 7]
+Output Keys: ['thumbnail_path', 'sharpness']
+
+[Running: Stage 8]
+Output Keys: ['viral_hook']
+Data: {
+  "viral_hook": "Get ready for an event that will change your perspective on reality as we know it. Stay tuned!"
+}
+
+[Running: Stage 9]
+Output Keys: ['title', 'description']
+Data: {
+  "title": "The AI Revolution",
+  "description": "Viral clip of the day!"
+}
+
+
+============================================================
+PIPELINE TEST COMPLETE
+Status: complete
+Final Output Files: temp/nexus_test_pipeline\thumb_01.jpg
+============================================================

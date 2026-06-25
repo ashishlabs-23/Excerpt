@@ -1,0 +1,19 @@
+[
+  {
+    "story_id": "story_001",
+    "story_archetype": "late_game_winner",
+    "secondary_archetype": "crowd_eruption",
+    "minute": 94,
+    "score_diff": 0,
+    "tension_peak": 0.95,
+    "tension_area": 0.88,
+    "crowd_reaction": 0.91,
+    "player_reaction": 0.86,
+    "bench_reaction": 0.93,
+    "pre_context": 14.2,
+    "post_context": 8.4,
+    "publish_probability": 0.92,
+    "editor_score": 0.96,
+    "winner": true
+  }
+]

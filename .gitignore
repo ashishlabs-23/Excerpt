@@ -1,0 +1,47 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Dependency directories
+node_modules/
+node_modules_old/
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# dotenv environment variables file
+.env
+.env.test
+.env.local
+
+# Next.js build output
+.next
+
+# Build directory
+dist
+build
+out
+
+# Temporary files
+.DS_Store
+*.pem
+temp/
+scratch/
+__pycache__/
+
+# yt-dlp cookie files
+cookies/
+cookies.txt
+*.cookie
+yt-dlp-cookies-*.txt
+
+# Local Netlify folder
+.netlify

@@ -1,0 +1,191 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 349 19% 15%;
+  --foreground: 30 20% 95%;
+  --card: 349 19% 15%;
+  --card-foreground: 30 20% 95%;
+  --popover: 349 19% 15%;
+  --popover-foreground: 30 20% 95%;
+  --primary: 24 55% 52%;
+  --primary-foreground: 30 10% 10%;
+  --secondary: 349 15% 20%;
+  --secondary-foreground: 30 20% 95%;
+  --muted: 349 15% 20%;
+  --muted-foreground: 30 10% 60%;
+  --accent: 24 55% 52%;
+  --accent-foreground: 349 19% 15%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 349 15% 25%;
+  --input: 349 15% 25%;
+  --ring: 24 55% 52%;
+  --radius: 1rem;
+}
+
+@layer base {
+  html,
+  body {
+    min-height: 100%;
+    width: 100%;
+    overflow-x: hidden;
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    background-image: 
+      radial-gradient(at 0% 0%, hsla(24, 55%, 52%, 0.1) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, hsla(349, 19%, 30%, 0.1) 0px, transparent 50%),
+      radial-gradient(at 100% 100%, hsla(24, 55%, 52%, 0.05) 0px, transparent 50%),
+      radial-gradient(at 0% 100%, hsla(349, 19%, 30%, 0.05) 0px, transparent 50%);
+    background-attachment: fixed;
+    overflow-x: hidden;
+  }
+}
+
+.glass-card {
+  @apply bg-white/[0.03] backdrop-blur-xl border border-white/[0.08] shadow-2xl;
+}
+
+.neon-border {
+  @apply border-primary/50 shadow-[0_0_15px_-3px_rgba(200,119,64,0.3)];
+}
+
+.text-gradient {
+  @apply bg-clip-text text-transparent bg-gradient-to-r from-white via-white to-white/50;
+}
+
+.animate-glow {
+  animation: glow 4s infinite alternate;
+}
+
+@keyframes glow {
+  from {
+    box-shadow: 0 0 10px -2px rgba(200, 119, 64, 0.2);
+  }
+  to {
+    box-shadow: 0 0 20px 2px rgba(200, 119, 64, 0.4);
+  }
+}
+
+.cyber-grid {
+  background-image: linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes pulse-gentle {
+  0%, 100% { opacity: 0.85; filter: brightness(1); }
+  50% { opacity: 1; filter: brightness(1.2) drop-shadow(0 0 8px rgba(16, 185, 129, 0.2)); }
+}
+
+.animate-pulse-gentle {
+  animation: pulse-gentle 3s ease-in-out infinite;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* Elite iPhone Mockup & Social UI */
+.iphone-mockup {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  aspect-ratio: 9 / 19.5;
+  background: #111827;
+  border-radius: 60px;
+  padding: 12px;
+  box-shadow: 
+    0 0 0 4px #1f2937,
+    0 40px 100px -20px rgba(0, 0, 0, 0.8),
+    inset 0 0 20px rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.iphone-bezel {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: black;
+  border-radius: 48px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.iphone-notch {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 120px;
+  height: 32px;
+  background: black;
+  border-bottom-left-radius: 18px;
+  border-bottom-right-radius: 18px;
+  z-index: 20;
+}
+
+.social-ui-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 24px;
+  background: linear-gradient(0deg, rgba(0,0,0,0.4) 0%, transparent 40%);
+}
+
+.social-action-column {
+  position: absolute;
+  right: 12px;
+  bottom: 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  align-items: center;
+}
+
+.social-action-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: white;
+}

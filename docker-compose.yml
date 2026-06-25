@@ -1,0 +1,256 @@
+services:
+  redis:
+    image: redis:alpine
+    container_name: excerpt-redis
+    ports:
+      - "127.0.0.1:6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - excerpt-net
+
+  redis-insight:
+    image: redislabs/redisinsight:latest
+    container_name: excerpt-redis-insight
+    ports:
+      - "127.0.0.1:8005:8001"
+    depends_on:
+      - redis
+    networks:
+      - excerpt-net
+
+  api:
+    build:
+      context: .
+      target: api-prod
+    container_name: excerpt-api
+    cpus: "${API_CPUS:-0.5}"
+    mem_limit: "${API_MEMORY_LIMIT:-512m}"
+    pids_limit: 256
+    ports:
+      - "127.0.0.1:8010:8007"
+    environment:
+      - PORT=8007
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GOOGLE_AI_API_KEY=${GOOGLE_AI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_TTS_API_KEY=${GOOGLE_TTS_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - EXCERPT_VOICEOVER_ENABLED=${EXCERPT_VOICEOVER_ENABLED}
+      - VOICEOVER_PRIMARY_PROVIDER=${VOICEOVER_PRIMARY_PROVIDER}
+      - VOICEOVER_FALLBACK_PROVIDER=${VOICEOVER_FALLBACK_PROVIDER}
+      - EXCERPT_NEXUS_AUDIO=${EXCERPT_NEXUS_AUDIO}
+      - EXCERPT_NEXUS_FACE=${EXCERPT_NEXUS_FACE}
+      - EXCERPT_NEXUS_VISUAL=${EXCERPT_NEXUS_VISUAL}
+      - EXCERPT_NEXUS_THUMBNAIL=${EXCERPT_NEXUS_THUMBNAIL}
+      - EXCERPT_NEXUS_SCORE_MERGE=${EXCERPT_NEXUS_SCORE_MERGE}
+      - OLLAMA_MODEL=${OLLAMA_MODEL}
+      - SUPABASE_URL=http://host.docker.internal:54321
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - B2_KEY_ID=${B2_KEY_ID}
+      - B2_APPLICATION_KEY=${B2_APPLICATION_KEY}
+      - B2_ENDPOINT=${B2_ENDPOINT:-https://s3.us-west-004.backblazeb2.com}
+      - B2_REGION=${B2_REGION:-us-west-004}
+      - B2_BUCKET_NAME=${B2_BUCKET_NAME:-excerpt-clips}
+      - OLLAMA_URL=http://host.docker.internal:11434/api/generate
+      - EXCERPT_JOB_SUBMISSION_TOKEN=${EXCERPT_JOB_SUBMISSION_TOKEN}
+      - STORAGE_SIGNED_URL_TTL_SECONDS=${STORAGE_SIGNED_URL_TTL_SECONDS:-3600}
+      - YTDLP_COOKIES_DIR=${YTDLP_COOKIES_DIR:-/app/cookies}
+      - YTDLP_COOKIES_B64=${YTDLP_COOKIES_B64}
+      - DISABLE_OWNERSHIP_CHECKS=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8007/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - excerpt_temp:/app/temp
+    networks:
+      - excerpt-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  worker:
+    build:
+      context: .
+      target: worker-prod
+    container_name: excerpt-worker
+    cpus: "${WORKER_CPUS:-1.0}"
+    mem_limit: "${WORKER_MEMORY_LIMIT:-1g}"
+    pids_limit: 512
+    environment:
+      - NODE_ENV=production
+      - RENDER_MODE=draft
+      - REDIS_URL=redis://redis:6379
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GOOGLE_AI_API_KEY=${GOOGLE_AI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_TTS_API_KEY=${GOOGLE_TTS_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - EXCERPT_VOICEOVER_ENABLED=${EXCERPT_VOICEOVER_ENABLED}
+      - VOICEOVER_PRIMARY_PROVIDER=${VOICEOVER_PRIMARY_PROVIDER}
+      - VOICEOVER_FALLBACK_PROVIDER=${VOICEOVER_FALLBACK_PROVIDER}
+      - EXCERPT_NEXUS_AUDIO=${EXCERPT_NEXUS_AUDIO}
+      - EXCERPT_NEXUS_FACE=${EXCERPT_NEXUS_FACE}
+      - EXCERPT_NEXUS_VISUAL=${EXCERPT_NEXUS_VISUAL}
+      - EXCERPT_NEXUS_THUMBNAIL=${EXCERPT_NEXUS_THUMBNAIL}
+      - EXCERPT_NEXUS_SCORE_MERGE=${EXCERPT_NEXUS_SCORE_MERGE}
+      - OLLAMA_MODEL=${OLLAMA_MODEL}
+      - SUPABASE_URL=http://host.docker.internal:54321
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - B2_KEY_ID=${B2_KEY_ID}
+      - B2_APPLICATION_KEY=${B2_APPLICATION_KEY}
+      - B2_ENDPOINT=${B2_ENDPOINT:-https://s3.us-west-004.backblazeb2.com}
+      - B2_REGION=${B2_REGION:-us-west-004}
+      - B2_BUCKET_NAME=${B2_BUCKET_NAME:-excerpt-clips}
+      - OLLAMA_URL=http://host.docker.internal:11434/api/generate
+      - EXCERPT_FFMPEG_THREADS=${EXCERPT_FFMPEG_THREADS:-2}
+      - STORAGE_SIGNED_URL_TTL_SECONDS=${STORAGE_SIGNED_URL_TTL_SECONDS:-3600}
+      - YTDLP_COOKIES_DIR=${YTDLP_COOKIES_DIR:-/app/cookies}
+      - YTDLP_COOKIES_B64=${YTDLP_COOKIES_B64}
+      - DISABLE_OWNERSHIP_CHECKS=true
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - excerpt_temp:/app/temp
+    networks:
+      - excerpt-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  render-worker:
+    build:
+      context: .
+      target: worker-prod
+    container_name: excerpt-render-worker
+    command: ["node", "workers/renderWorker.js"]
+    cpus: "${WORKER_CPUS:-1.0}"
+    mem_limit: "${WORKER_MEMORY_LIMIT:-1g}"
+    pids_limit: 512
+    environment:
+      - NODE_ENV=production
+      - RENDER_MODE=draft
+      - REDIS_URL=redis://redis:6379
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GOOGLE_AI_API_KEY=${GOOGLE_AI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_TTS_API_KEY=${GOOGLE_TTS_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - EXCERPT_VOICEOVER_ENABLED=${EXCERPT_VOICEOVER_ENABLED}
+      - VOICEOVER_PRIMARY_PROVIDER=${VOICEOVER_PRIMARY_PROVIDER}
+      - VOICEOVER_FALLBACK_PROVIDER=${VOICEOVER_FALLBACK_PROVIDER}
+      - EXCERPT_NEXUS_AUDIO=${EXCERPT_NEXUS_AUDIO}
+      - EXCERPT_NEXUS_FACE=${EXCERPT_NEXUS_FACE}
+      - EXCERPT_NEXUS_VISUAL=${EXCERPT_NEXUS_VISUAL}
+      - EXCERPT_NEXUS_THUMBNAIL=${EXCERPT_NEXUS_THUMBNAIL}
+      - EXCERPT_NEXUS_SCORE_MERGE=${EXCERPT_NEXUS_SCORE_MERGE}
+      - OLLAMA_MODEL=${OLLAMA_MODEL}
+      - SUPABASE_URL=http://host.docker.internal:54321
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - B2_KEY_ID=${B2_KEY_ID}
+      - B2_APPLICATION_KEY=${B2_APPLICATION_KEY}
+      - B2_ENDPOINT=${B2_ENDPOINT:-https://s3.us-west-004.backblazeb2.com}
+      - B2_REGION=${B2_REGION:-us-west-004}
+      - B2_BUCKET_NAME=${B2_BUCKET_NAME:-excerpt-clips}
+      - OLLAMA_URL=http://host.docker.internal:11434/api/generate
+      - EXCERPT_FFMPEG_THREADS=${EXCERPT_FFMPEG_THREADS:-2}
+      - STORAGE_SIGNED_URL_TTL_SECONDS=${STORAGE_SIGNED_URL_TTL_SECONDS:-3600}
+      - YTDLP_COOKIES_DIR=${YTDLP_COOKIES_DIR:-/app/cookies}
+      - YTDLP_COOKIES_B64=${YTDLP_COOKIES_B64}
+      - DISABLE_OWNERSHIP_CHECKS=true
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - excerpt_temp:/app/temp
+    networks:
+      - excerpt-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  voiceover-worker:
+    build:
+      context: .
+      target: worker-prod
+    container_name: excerpt-voiceover-worker
+    command: ["node", "workers/voiceoverWorker.js"]
+    cpus: "0.5"
+    mem_limit: "512m"
+    pids_limit: 256
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - GOOGLE_TTS_API_KEY=${GOOGLE_TTS_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - SUPABASE_URL=http://host.docker.internal:54321
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - B2_KEY_ID=${B2_KEY_ID}
+      - B2_APPLICATION_KEY=${B2_APPLICATION_KEY}
+      - B2_ENDPOINT=${B2_ENDPOINT:-https://s3.us-west-004.backblazeb2.com}
+      - B2_REGION=${B2_REGION:-us-west-004}
+      - B2_BUCKET_NAME=${B2_BUCKET_NAME:-excerpt-clips}
+      - DISABLE_OWNERSHIP_CHECKS=true
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - excerpt_temp:/app/temp
+    networks:
+      - excerpt-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  web:
+    build:
+      context: .
+      target: web-prod
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+        - NEXT_PUBLIC_SUPABASE_URL=${SUPABASE_URL}
+        - NEXT_PUBLIC_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+        - NEXT_PUBLIC_EXCERPT_API_TOKEN=${NEXT_PUBLIC_EXCERPT_API_TOKEN}
+    container_name: excerpt-web
+    cpus: "0.5"
+    mem_limit: "256m"
+    ports:
+      - "127.0.0.1:3010:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+      - NEXT_PUBLIC_SUPABASE_URL=${SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - NEXT_PUBLIC_EXCERPT_API_TOKEN=${NEXT_PUBLIC_EXCERPT_API_TOKEN}
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - excerpt-net
+
+volumes:
+  excerpt_temp:
+
+networks:
+  excerpt-net:
+    driver: bridge

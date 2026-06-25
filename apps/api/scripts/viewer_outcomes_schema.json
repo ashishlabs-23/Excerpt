@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Viewer Outcomes Schema",
+  "type": "object",
+  "properties": {
+    "clip_id": { "type": "string" },
+    "watch_time": { "type": ["number", "null"] },
+    "completion_rate": { "type": ["number", "null"] },
+    "rewatch_rate": { "type": ["number", "null"] },
+    "share_rate": { "type": ["number", "null"] },
+    "like_rate": { "type": ["number", "null"] }
+  },
+  "required": ["clip_id"]
+}

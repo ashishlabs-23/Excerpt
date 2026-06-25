@@ -1,0 +1,25 @@
+.next/types/app/dashboard/page.ts(2,24): error TS2306: File 'C:/Users/Ashish/OneDrive/Projects/Excerpt/apps/web/src/app/dashboard/page.tsx' is not a module.
+.next/types/app/dashboard/page.ts(5,29): error TS2306: File 'C:/Users/Ashish/OneDrive/Projects/Excerpt/apps/web/src/app/dashboard/page.tsx' is not a module.
+.next/types/app/editor/page.ts(2,24): error TS2306: File 'C:/Users/Ashish/OneDrive/Projects/Excerpt/apps/web/src/app/editor/page.tsx' is not a module.
+.next/types/app/editor/page.ts(5,29): error TS2306: File 'C:/Users/Ashish/OneDrive/Projects/Excerpt/apps/web/src/app/editor/page.tsx' is not a module.
+src/components/ActiveJobs.tsx(2,31): error TS2306: File 'C:/Users/Ashish/OneDrive/Projects/Excerpt/apps/web/src/data/mockData.ts' is not a module.
+src/components/ActiveJobs.tsx(3,26): error TS2307: Cannot find module '@/components/ui/progress' or its corresponding type declarations.
+src/components/ActiveJobs.tsx(15,40): error TS7006: Parameter 'job' implicitly has an 'any' type.
+src/components/DashboardMetrics.tsx(2,31): error TS2306: File 'C:/Users/Ashish/OneDrive/Projects/Excerpt/apps/web/src/data/mockData.ts' is not a module.
+src/components/DashboardMetrics.tsx(3,35): error TS2307: Cannot find module '@/components/ui/card' or its corresponding type declarations.
+src/components/DashboardMetrics.tsx(15,35): error TS7006: Parameter 'metric' implicitly has an 'any' type.
+src/components/EditorSidebar.tsx(2,24): error TS2307: Cannot find module '@/components/ui/switch' or its corresponding type declarations.
+src/components/EditorSidebar.tsx(3,24): error TS2307: Cannot find module '@/components/ui/button' or its corresponding type declarations.
+src/components/Features.tsx(2,33): error TS2306: File 'C:/Users/Ashish/OneDrive/Projects/Excerpt/apps/web/src/data/mockData.ts' is not a module.
+src/components/Features.tsx(3,58): error TS2307: Cannot find module '@/components/ui/card' or its corresponding type declarations.
+src/components/Features.tsx(22,42): error TS7006: Parameter 'feature' implicitly has an 'any' type.
+src/components/Hero.tsx(2,33): error TS2306: File 'C:/Users/Ashish/OneDrive/Projects/Excerpt/apps/web/src/data/mockData.ts' is not a module.
+src/components/Hero.tsx(3,24): error TS2307: Cannot find module '@/components/ui/button' or its corresponding type declarations.
+src/components/HowItWorks.tsx(2,33): error TS2306: File 'C:/Users/Ashish/OneDrive/Projects/Excerpt/apps/web/src/data/mockData.ts' is not a module.
+src/components/HowItWorks.tsx(15,41): error TS7006: Parameter 'step' implicitly has an 'any' type.
+src/components/HowItWorks.tsx(15,47): error TS7006: Parameter 'index' implicitly has an 'any' type.
+src/components/Navbar.tsx(2,24): error TS2307: Cannot find module '@/components/ui/button' or its corresponding type declarations.
+src/components/RecentClips.tsx(2,31): error TS2306: File 'C:/Users/Ashish/OneDrive/Projects/Excerpt/apps/web/src/data/mockData.ts' is not a module.
+src/components/RecentClips.tsx(11,43): error TS7006: Parameter 'clip' implicitly has an 'any' type.
+src/components/SidebarNav.tsx(3,20): error TS2307: Cannot find module '@/lib/utils' or its corresponding type declarations.
+src/components/UploadZone.tsx(3,24): error TS2307: Cannot find module '@/components/ui/button' or its corresponding type declarations.

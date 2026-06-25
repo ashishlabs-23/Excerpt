@@ -1,0 +1,453 @@
+
+--- TEST: FORCED AUDIO FAILURE ---
+--- Starting: Input (Stage 0) ---
+Input:
+* url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+--- Processing ---
+Output:
+* video_path: temp/nexus_test_pipeline\video.mp4
+* url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+Status: success
+--- Finished: Input (Stage 0) ---
+
+--- Starting: Transcript Module (Stage 1) ---
+Input:
+* video_path: temp/nexus_test_pipeline\video.mp4
+--- Processing ---
+Output:
+* transcript_len: 95
+Status: success
+--- Finished: Transcript Module (Stage 1) ---
+
+--- Starting: Hook Intelligence (Stage 2) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Output:
+* hook_score: 0.85
+* needs_rewrite: True
+Status: success
+--- Finished: Hook Intelligence (Stage 2) ---
+
+--- Starting: Segment Generation (Stage 3) ---
+Input:
+* video_path: temp/nexus_test_pipeline\video.mp4
+--- Processing ---
+Output:
+* total_segments: 5
+* segment_ids: ['seg_01', 'seg_02', 'seg_03', 'seg_04', 'seg_05']
+Status: success
+--- Finished: Segment Generation (Stage 3) ---
+
+--- Starting: Audio Analysis (Stage 4) ---
+Input:
+* segments: None
+--- Processing ---
+Error: Forced Audio Module Failure
+Status: failed
+--- Finished: Audio Analysis (Stage 4) ---
+
+--- Starting: Visual Analysis (Stage 5) ---
+Input:
+* segments: None
+--- Processing ---
+Output:
+* segments_with_faces: 3
+* highest_motion_segment: seg_04
+* visual_scores: [0.6, 0.4, 0.85]
+Status: success
+--- Finished: Visual Analysis (Stage 5) ---
+
+--- Starting: Ranking (Stage 6) ---
+Input:
+* audio_lead: None
+--- Processing ---
+Output:
+* top_segment_id: seg_05
+* top_segment_score: 40.0
+* score_breakdown: {"original_score": 40.0, "audio_score": 40.0, "visual_score": 40.0, "hook_score": 40.0}
+* weights_used: {"original": 0.1, "audio": 0.3, "visual": 0.3, "hook": 0.3}
+* reason_for_selection: Selected due to high 'audio' weight influence and peak performance in that category.
+Status: success
+--- Finished: Ranking (Stage 6) ---
+
+--- Starting: Thumbnail Module (Stage 7) ---
+Input:
+* top_segment: None
+--- Processing ---
+Output:
+* thumbnail_path: temp/nexus_test_pipeline\thumb_01.jpg
+* selected_timestamp: 15.42
+* reason: Peak emotional intensity and high image contrast selected for high CTR.
+Status: success
+--- Finished: Thumbnail Module (Stage 7) ---
+
+--- Starting: Hook Rewrite (Stage 8) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Error: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=2)
+Status: failed
+--- Finished: Hook Rewrite (Stage 8) ---
+
+--- Starting: Metadata Module (Stage 9) ---
+Input:
+* title: None
+--- Processing ---
+Error: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=2)
+Output:
+* hashtag_count: 3
+* caption_length: 50
+* hashtags: ['#viral', '#ai']
+* caption: Fallback caption.
+Status: success
+--- Finished: Metadata Module (Stage 9) ---
+
+--- Starting: Quality Check (Stage 10) ---
+Input:
+* final_score: None
+--- Processing ---
+Output:
+* verdict: Verified Viral Ready
+* issues_detected: []
+* is_rejected: False
+Status: success
+--- Finished: Quality Check (Stage 10) ---
+
+--- Starting: Final Output (Stage 11) ---
+Input:
+* verdict: None
+--- Processing ---
+Output:
+* clip_duration: 28.5
+* resolution: 1080x1920
+* cached: True
+Status: success
+--- Finished: Final Output (Stage 11) ---
+
+--- Starting: Learning Module (Stage 12) ---
+Input:
+* history_count: 0
+--- Processing ---
+Output:
+* best_signal: no change recommended
+* confidence_level: 0.3
+* reason: Insufficient historical data for reliable learning.
+Status: success
+--- Finished: Learning Module (Stage 12) ---
+
+--- PIPELINE SUMMARY ---
+Modules Run: ['Input (Stage 0)', 'Transcript Module (Stage 1)', 'Hook Intelligence (Stage 2)', 'Segment Generation (Stage 3)', 'Visual Analysis (Stage 5)', 'Ranking (Stage 6)', 'Thumbnail Module (Stage 7)', 'Metadata Module (Stage 9)', 'Quality Check (Stage 10)', 'Final Output (Stage 11)', 'Learning Module (Stage 12)']
+Modules Skipped: []
+Modules Failed: ['Audio Analysis (Stage 4)', 'Hook Rewrite (Stage 8)']
+Final Output File Paths (JSON List): ["video.mp4", "thumb_01.jpg"]
+------------------------
+[PASS] Stage 4 marked as 'skipped'.
+[PASS] Pipeline continued to Stage 6 and Stage 11.
+[PASS] audio_scores is empty list.
+[PASS] debug_data exists.
+Result: Audio resilience validations complete.
+
+--- TEST: FORCED VISUAL FAILURE ---
+--- Starting: Input (Stage 0) ---
+Input:
+* url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+--- Processing ---
+Output:
+* video_path: temp/nexus_test_pipeline\video.mp4
+* url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+Status: success
+--- Finished: Input (Stage 0) ---
+
+--- Starting: Transcript Module (Stage 1) ---
+Input:
+* video_path: temp/nexus_test_pipeline\video.mp4
+--- Processing ---
+Output:
+* transcript_len: 95
+Status: success
+--- Finished: Transcript Module (Stage 1) ---
+
+--- Starting: Hook Intelligence (Stage 2) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Output:
+* hook_score: 0.85
+* needs_rewrite: True
+Status: success
+--- Finished: Hook Intelligence (Stage 2) ---
+
+--- Starting: Segment Generation (Stage 3) ---
+Input:
+* video_path: temp/nexus_test_pipeline\video.mp4
+--- Processing ---
+Output:
+* total_segments: 5
+* segment_ids: ['seg_01', 'seg_02', 'seg_03', 'seg_04', 'seg_05']
+Status: success
+--- Finished: Segment Generation (Stage 3) ---
+
+--- Starting: Audio Analysis (Stage 4) ---
+Input:
+* segments: None
+--- Processing ---
+Output:
+* average_audio_score: 0.82
+* top_audio_segment: seg_03
+* audio_scores: [0.8, 0.7, 0.9]
+Status: success
+--- Finished: Audio Analysis (Stage 4) ---
+
+--- Starting: Visual Analysis (Stage 5) ---
+Input:
+* segments: None
+--- Processing ---
+Error: Forced Visual Module Failure
+Status: failed
+--- Finished: Visual Analysis (Stage 5) ---
+
+--- Starting: Ranking (Stage 6) ---
+Input:
+* audio_lead: None
+--- Processing ---
+Output:
+* top_segment_id: seg_05
+* top_segment_score: 40.0
+* score_breakdown: {"original_score": 40.0, "audio_score": 40.0, "visual_score": 40.0, "hook_score": 40.0}
+* weights_used: {"original": 0.1, "audio": 0.3, "visual": 0.3, "hook": 0.3}
+* reason_for_selection: Selected due to high 'audio' weight influence and peak performance in that category.
+Status: success
+--- Finished: Ranking (Stage 6) ---
+
+--- Starting: Thumbnail Module (Stage 7) ---
+Input:
+* top_segment: None
+--- Processing ---
+Output:
+* thumbnail_path: temp/nexus_test_pipeline\thumb_01.jpg
+* selected_timestamp: 15.42
+* reason: Peak emotional intensity and high image contrast selected for high CTR.
+Status: success
+--- Finished: Thumbnail Module (Stage 7) ---
+
+--- Starting: Hook Rewrite (Stage 8) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Error: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=2)
+Status: failed
+--- Finished: Hook Rewrite (Stage 8) ---
+
+--- Starting: Metadata Module (Stage 9) ---
+Input:
+* title: None
+--- Processing ---
+Error: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=2)
+Output:
+* hashtag_count: 3
+* caption_length: 50
+* hashtags: ['#viral', '#ai']
+* caption: Fallback caption.
+Status: success
+--- Finished: Metadata Module (Stage 9) ---
+
+--- Starting: Quality Check (Stage 10) ---
+Input:
+* final_score: None
+--- Processing ---
+Output:
+* verdict: Verified Viral Ready
+* issues_detected: []
+* is_rejected: False
+Status: success
+--- Finished: Quality Check (Stage 10) ---
+
+--- Starting: Final Output (Stage 11) ---
+Input:
+* verdict: None
+--- Processing ---
+Output:
+* clip_duration: 28.5
+* resolution: 1080x1920
+* cached: True
+Status: success
+--- Finished: Final Output (Stage 11) ---
+
+--- Starting: Learning Module (Stage 12) ---
+Input:
+* history_count: 0
+--- Processing ---
+Output:
+* best_signal: no change recommended
+* confidence_level: 0.3
+* reason: Insufficient historical data for reliable learning.
+Status: success
+--- Finished: Learning Module (Stage 12) ---
+
+--- PIPELINE SUMMARY ---
+Modules Run: ['Input (Stage 0)', 'Transcript Module (Stage 1)', 'Hook Intelligence (Stage 2)', 'Segment Generation (Stage 3)', 'Audio Analysis (Stage 4)', 'Ranking (Stage 6)', 'Thumbnail Module (Stage 7)', 'Metadata Module (Stage 9)', 'Quality Check (Stage 10)', 'Final Output (Stage 11)', 'Learning Module (Stage 12)']
+Modules Skipped: []
+Modules Failed: ['Visual Analysis (Stage 5)', 'Hook Rewrite (Stage 8)']
+Final Output File Paths (JSON List): ["video.mp4", "thumb_01.jpg"]
+------------------------
+[PASS] Stage 5 marked as 'skipped'.
+[PASS] Pipeline continued to Stage 6 and Stage 11.
+[PASS] visual_scores is empty list.
+[PASS] debug_data exists.
+Result: Visual resilience validations complete.
+
+--- TEST: FORCED OLLAMA JSON CORRUPTION ---
+--- Starting: Input (Stage 0) ---
+Input:
+* url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+--- Processing ---
+Output:
+* video_path: temp/nexus_test_pipeline\video.mp4
+* url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+Status: success
+--- Finished: Input (Stage 0) ---
+
+--- Starting: Transcript Module (Stage 1) ---
+Input:
+* video_path: temp/nexus_test_pipeline\video.mp4
+--- Processing ---
+Output:
+* transcript_len: 95
+Status: success
+--- Finished: Transcript Module (Stage 1) ---
+
+--- Starting: Hook Intelligence (Stage 2) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Output:
+* hook_score: 0.85
+* needs_rewrite: True
+Status: success
+--- Finished: Hook Intelligence (Stage 2) ---
+
+--- Starting: Segment Generation (Stage 3) ---
+Input:
+* video_path: temp/nexus_test_pipeline\video.mp4
+--- Processing ---
+Output:
+* total_segments: 5
+* segment_ids: ['seg_01', 'seg_02', 'seg_03', 'seg_04', 'seg_05']
+Status: success
+--- Finished: Segment Generation (Stage 3) ---
+
+--- Starting: Audio Analysis (Stage 4) ---
+Input:
+* segments: None
+--- Processing ---
+Output:
+* average_audio_score: 0.82
+* top_audio_segment: seg_03
+* audio_scores: [0.8, 0.7, 0.9]
+Status: success
+--- Finished: Audio Analysis (Stage 4) ---
+
+--- Starting: Visual Analysis (Stage 5) ---
+Input:
+* segments: None
+--- Processing ---
+Output:
+* segments_with_faces: 3
+* highest_motion_segment: seg_04
+* visual_scores: [0.6, 0.4, 0.85]
+Status: success
+--- Finished: Visual Analysis (Stage 5) ---
+
+--- Starting: Ranking (Stage 6) ---
+Input:
+* audio_lead: None
+--- Processing ---
+Output:
+* top_segment_id: seg_05
+* top_segment_score: 40.0
+* score_breakdown: {"original_score": 40.0, "audio_score": 40.0, "visual_score": 40.0, "hook_score": 40.0}
+* weights_used: {"original": 0.1, "audio": 0.3, "visual": 0.3, "hook": 0.3}
+* reason_for_selection: Selected due to high 'audio' weight influence and peak performance in that category.
+Status: success
+--- Finished: Ranking (Stage 6) ---
+
+--- Starting: Thumbnail Module (Stage 7) ---
+Input:
+* top_segment: None
+--- Processing ---
+Output:
+* thumbnail_path: temp/nexus_test_pipeline\thumb_01.jpg
+* selected_timestamp: 15.42
+* reason: Peak emotional intensity and high image contrast selected for high CTR.
+Status: success
+--- Finished: Thumbnail Module (Stage 7) ---
+
+--- Starting: Hook Rewrite (Stage 8) ---
+Input:
+* transcript_len: 95
+--- Processing ---
+Error: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=2)
+Status: failed
+--- Finished: Hook Rewrite (Stage 8) ---
+
+--- Starting: Metadata Module (Stage 9) ---
+Input:
+* title: None
+--- Processing ---
+Error: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=2)
+Output:
+* hashtag_count: 3
+* caption_length: 50
+* hashtags: ['#viral', '#ai']
+* caption: Fallback caption.
+Status: success
+--- Finished: Metadata Module (Stage 9) ---
+
+--- Starting: Quality Check (Stage 10) ---
+Input:
+* final_score: None
+--- Processing ---
+Output:
+* verdict: Verified Viral Ready
+* issues_detected: []
+* is_rejected: False
+Status: success
+--- Finished: Quality Check (Stage 10) ---
+
+--- Starting: Final Output (Stage 11) ---
+Input:
+* verdict: None
+--- Processing ---
+Output:
+* clip_duration: 28.5
+* resolution: 1080x1920
+* cached: True
+Status: success
+--- Finished: Final Output (Stage 11) ---
+
+--- Starting: Learning Module (Stage 12) ---
+Input:
+* history_count: 0
+--- Processing ---
+Output:
+* best_signal: no change recommended
+* confidence_level: 0.3
+* reason: Insufficient historical data for reliable learning.
+Status: success
+--- Finished: Learning Module (Stage 12) ---
+
+--- PIPELINE SUMMARY ---
+Modules Run: ['Input (Stage 0)', 'Transcript Module (Stage 1)', 'Hook Intelligence (Stage 2)', 'Segment Generation (Stage 3)', 'Audio Analysis (Stage 4)', 'Visual Analysis (Stage 5)', 'Ranking (Stage 6)', 'Thumbnail Module (Stage 7)', 'Metadata Module (Stage 9)', 'Quality Check (Stage 10)', 'Final Output (Stage 11)', 'Learning Module (Stage 12)']
+Modules Skipped: []
+Modules Failed: ['Hook Rewrite (Stage 8)']
+Final Output File Paths (JSON List): ["video.mp4", "thumb_01.jpg"]
+------------------------
+[PASS] fallback_used == True for Ollama failure.
+[PASS] Pipeline continued past Stage 8 failure.
+[PASS] debug_data exists.
+Result: Ollama resilience validations complete.
+
+========================================
+ENHANCED RESILIENCE VERIFICATION COMPLETE
+========================================
