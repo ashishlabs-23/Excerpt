@@ -9,7 +9,7 @@ type AuthContextValue = {
   session: Session | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error?: string }>;
-  signUp: (email: string, password: string) => Promise<{ error?: string }>;
+  signUp: (email: string, password: string, fullName?: string) => Promise<{ error?: string }>;
   signOut: () => Promise<void>;
 };
 
@@ -29,56 +29,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     let mounted = true;
 
-    const sessionPromise = supabase.auth.getSession();
-    const timeoutPromise = new Promise<{ data: { session: any } }>(resolve => {
-      setTimeout(() => resolve({ data: { session: null } }), 800);
+    // Load the existing session on mount
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      if (data.session) {
+        setSession(data.session);
+        setUser(data.session.user ?? null);
+      }
+      setLoading(false);
+    }).catch((err) => {
+      console.warn('[AuthProvider]: Session load error:', err);
+      if (mounted) setLoading(false);
     });
 
-    Promise.race([sessionPromise, timeoutPromise])
-      .then(({ data }) => {
-        if (!mounted) return;
-        if (data.session) {
-          setSession(data.session);
-          setUser(data.session.user ?? null);
-        } else {
-          // If no remote session, fall back to mock dev user so the app is always functional locally
-          const mockUser: any = {
-            id: '00000000-0000-0000-0000-000000000000',
-            email: 'dev@studio.com',
-            user_metadata: {}
-          };
-          const mockSession: any = {
-            user: mockUser,
-            access_token: 'mock-token'
-          };
-          setSession(mockSession);
-          setUser(mockUser);
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.warn('[AuthProvider]: Session load error, falling back:', err);
-        if (mounted) {
-          const mockUser: any = {
-            id: '00000000-0000-0000-0000-000000000000',
-            email: 'dev@studio.com',
-            user_metadata: {}
-          };
-          const mockSession: any = {
-            user: mockUser,
-            access_token: 'mock-token'
-          };
-          setSession(mockSession);
-          setUser(mockUser);
-          setLoading(false);
-        }
-      });
-
+    // Listen for auth state changes (sign-in, sign-out, token refresh)
     const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (nextSession) {
-        setSession(nextSession);
-        setUser(nextSession.user ?? null);
-      }
+      if (!mounted) return;
+      setSession(nextSession);
+      setUser(nextSession?.user ?? null);
       setLoading(false);
     });
 
@@ -92,33 +60,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return { error: "Supabase is not configured." };
 
-    try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      return {};
-    } catch (err: any) {
-      console.warn('[AuthProvider]: signin failed, falling back to mock user:', err.message);
-      const mockUser: any = {
-        id: '00000000-0000-0000-0000-000000000000',
-        email: email,
-        user_metadata: {}
-      };
-      const mockSession: any = {
-        user: mockUser,
-        access_token: 'mock-token'
-      };
-      setSession(mockSession);
-      setUser(mockUser);
-      setLoading(false);
-      return {};
-    }
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    return error ? { error: error.message } : {};
   }, []);
 
-  const signUp = useCallback(async (email: string, password: string) => {
+  const signUp = useCallback(async (email: string, password: string, fullName?: string) => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return { error: "Supabase is not configured." };
 
-    const { error } = await supabase.auth.signUp({ email, password });
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { full_name: fullName || "" },
+      },
+    });
     return error ? { error: error.message } : {};
   }, []);
 
@@ -126,6 +82,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
     await supabase.auth.signOut();
+    setUser(null);
+    setSession(null);
   }, []);
 
   const value = useMemo(

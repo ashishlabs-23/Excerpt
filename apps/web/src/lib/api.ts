@@ -19,16 +19,11 @@ export function apiUrl(path: string) {
 
 export async function getAccessToken(): Promise<string | null> {
   const supabase = getSupabaseBrowserClient();
-  if (!supabase) return "mock-token";
+  if (!supabase) return null;
 
   try {
-    const sessionPromise = supabase.auth.getSession();
-    const timeoutPromise = new Promise<{ data: { session: any } }>(resolve => {
-      setTimeout(() => resolve({ data: { session: null } }), 500);
-    });
-
-    const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]);
-    if (!session?.access_token) return "mock-token";
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return null;
 
     const expiresAtMs = session.expires_at ? session.expires_at * 1000 : 0;
     if (expiresAtMs && expiresAtMs - Date.now() < 60_000) {
@@ -40,8 +35,8 @@ export async function getAccessToken(): Promise<string | null> {
 
     return session.access_token;
   } catch (err) {
-    console.warn('[api]: Failed to get session, using mock-token:', err);
-    return "mock-token";
+    console.warn('[api]: Failed to get session token:', err);
+    return null;
   }
 }
 

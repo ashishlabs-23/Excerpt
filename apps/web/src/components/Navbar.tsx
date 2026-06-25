@@ -1,28 +1,61 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
-import { Sparkles, Menu, X, Play } from "lucide-react";
+import { Sparkles, Menu, X, Play, LogOut, ChevronDown, User, LayoutDashboard } from "lucide-react";
+import { useAuth } from "@/components/AuthProvider";
 
 export const Navbar: React.FC = () => {
   const [scrolled, setScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const { user, signOut, loading } = useAuth();
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const handleScroll = () => {
-      setScrolled(window.scrollY > 20);
-    };
-
+    const handleScroll = () => setScrolled(window.scrollY > 20);
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  // Close user menu on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
   const navLinks = [
-    { name: "Features", href: "#features" },
-    { name: "How It Works", href: "#how-it-works" },
+    { name: "Features", href: "/#features" },
+    { name: "How It Works", href: "/#how-it-works" },
   ];
+
+  const handleSignOut = async () => {
+    setUserMenuOpen(false);
+    setMobileMenuOpen(false);
+    await signOut();
+  };
+
+  // Get initials for avatar
+  const getInitials = () => {
+    if (!user) return "?";
+    const name = user.user_metadata?.full_name || user.email || "";
+    if (user.user_metadata?.full_name) {
+      return name
+        .split(" ")
+        .map((n: string) => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2);
+    }
+    return (user.email?.[0] || "U").toUpperCase();
+  };
 
   return (
     <>
@@ -65,22 +98,93 @@ export const Navbar: React.FC = () => {
 
           {/* CTA Buttons */}
           <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-            <Link href="/dashboard" className="hidden sm:block">
-              <Button
-                variant="ghost"
-                className="text-sm font-medium text-white/70 hover:text-white hover:bg-white/[0.05] rounded-full"
-              >
-                Sign In
-              </Button>
-            </Link>
-            <Link href="/dashboard" className="hidden sm:block">
-              <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-                <Button className="px-6 py-2 h-auto text-sm font-semibold rounded-full bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/25 animate-glow border border-white/10 group">
-                  Get Started
-                  <Play className="ml-2 w-4 h-4 fill-current group-hover:translate-x-0.5 transition-transform" />
-                </Button>
-              </motion.div>
-            </Link>
+            {!loading && (
+              <>
+                {user ? (
+                  /* Authenticated user menu */
+                  <div ref={userMenuRef} className="relative hidden sm:block">
+                    <button
+                      onClick={() => setUserMenuOpen(!userMenuOpen)}
+                      className="flex items-center gap-2.5 px-3 py-2 rounded-full border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] transition-all duration-200 group"
+                    >
+                      {/* Avatar */}
+                      <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary to-violet-600 flex items-center justify-center text-white text-xs font-bold">
+                        {getInitials()}
+                      </div>
+                      <span className="text-sm text-white/70 font-medium max-w-[140px] truncate">
+                        {user.user_metadata?.full_name || user.email}
+                      </span>
+                      <ChevronDown
+                        className={`w-3.5 h-3.5 text-white/40 transition-transform duration-200 ${
+                          userMenuOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+
+                    <AnimatePresence>
+                      {userMenuOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                          transition={{ duration: 0.15 }}
+                          className="absolute right-0 mt-2 w-56 rounded-2xl border border-white/10 bg-[#0a0a12]/95 backdrop-blur-xl shadow-2xl overflow-hidden"
+                        >
+                          {/* User info */}
+                          <div className="px-4 py-3 border-b border-white/[0.06]">
+                            <p className="text-xs text-white/40 font-medium uppercase tracking-wider">
+                              Signed in as
+                            </p>
+                            <p className="text-sm text-white font-semibold truncate mt-0.5">
+                              {user.email}
+                            </p>
+                          </div>
+
+                          {/* Menu items */}
+                          <div className="py-1">
+                            <Link
+                              href="/dashboard"
+                              onClick={() => setUserMenuOpen(false)}
+                              className="flex items-center gap-3 px-4 py-2.5 text-sm text-white/70 hover:text-white hover:bg-white/[0.06] transition-colors"
+                            >
+                              <LayoutDashboard className="w-4 h-4" />
+                              Dashboard
+                            </Link>
+                            <button
+                              onClick={handleSignOut}
+                              className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors"
+                            >
+                              <LogOut className="w-4 h-4" />
+                              Sign Out
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                ) : (
+                  /* Unauthenticated buttons */
+                  <>
+                    <Link href="/auth" className="hidden sm:block">
+                      <Button
+                        variant="ghost"
+                        className="text-sm font-medium text-white/70 hover:text-white hover:bg-white/[0.05] rounded-full"
+                      >
+                        Sign In
+                      </Button>
+                    </Link>
+                    <Link href="/auth" className="hidden sm:block">
+                      <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
+                        <Button className="px-6 py-2 h-auto text-sm font-semibold rounded-full bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/25 animate-glow border border-white/10 group">
+                          Get Started
+                          <Play className="ml-2 w-4 h-4 fill-current group-hover:translate-x-0.5 transition-transform" />
+                        </Button>
+                      </motion.div>
+                    </Link>
+                  </>
+                )}
+              </>
+            )}
 
             {/* Mobile Menu Button */}
             <motion.button
@@ -132,19 +236,52 @@ export const Navbar: React.FC = () => {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.3 }}
               >
-                <Link href="/dashboard" onClick={() => setMobileMenuOpen(false)}>
-                  <Button
-                    variant="outline"
-                    className="w-full py-7 text-lg font-bold rounded-2xl border-white/10 glass-card bg-transparent"
-                  >
-                    Sign In
-                  </Button>
-                </Link>
-                <Link href="/dashboard" onClick={() => setMobileMenuOpen(false)}>
-                  <Button className="w-full py-7 text-lg font-bold rounded-2xl bg-primary hover:bg-primary/90 text-white shadow-xl shadow-primary/20">
-                    Get Started
-                  </Button>
-                </Link>
+                {user ? (
+                  <>
+                    {/* Mobile user info */}
+                    <div className="flex items-center gap-3 px-4 py-3 rounded-2xl border border-white/10 bg-white/[0.04]">
+                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary to-violet-600 flex items-center justify-center text-white text-sm font-bold">
+                        {getInitials()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        {user.user_metadata?.full_name && (
+                          <p className="text-sm text-white font-semibold truncate">
+                            {user.user_metadata.full_name}
+                          </p>
+                        )}
+                        <p className="text-xs text-white/50 truncate">{user.email}</p>
+                      </div>
+                    </div>
+                    <Link href="/dashboard" onClick={() => setMobileMenuOpen(false)}>
+                      <Button className="w-full py-7 text-lg font-bold rounded-2xl bg-primary hover:bg-primary/90 text-white shadow-xl shadow-primary/20">
+                        Dashboard
+                      </Button>
+                    </Link>
+                    <Button
+                      variant="outline"
+                      onClick={handleSignOut}
+                      className="w-full py-7 text-lg font-bold rounded-2xl border-rose-500/30 text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 bg-transparent"
+                    >
+                      Sign Out
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Link href="/auth" onClick={() => setMobileMenuOpen(false)}>
+                      <Button
+                        variant="outline"
+                        className="w-full py-7 text-lg font-bold rounded-2xl border-white/10 glass-card bg-transparent"
+                      >
+                        Sign In
+                      </Button>
+                    </Link>
+                    <Link href="/auth" onClick={() => setMobileMenuOpen(false)}>
+                      <Button className="w-full py-7 text-lg font-bold rounded-2xl bg-primary hover:bg-primary/90 text-white shadow-xl shadow-primary/20">
+                        Get Started
+                      </Button>
+                    </Link>
+                  </>
+                )}
               </motion.div>
             </div>
           </motion.div>

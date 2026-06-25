@@ -46,8 +46,8 @@ export async function validateBearerToken(token: string): Promise<any | null> {
     return cached.user;
   }
 
-  // Local development mock token bypass
-  if (token === 'mock-token') {
+  // Local development mock token bypass — disabled in production
+  if (token === 'mock-token' && process.env.NODE_ENV !== 'production') {
     const devUser = {
       id: '00000000-0000-0000-0000-000000000000',
       email: 'dev@studio.com',
