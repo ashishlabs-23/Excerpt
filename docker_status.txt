@@ -1,6 +1,0 @@
-CONTAINER ID   IMAGE                           COMMAND                  CREATED          STATUS                    PORTS                                         NAMES
-d0b0a2503393   excerpt-worker                  "docker-entrypoint.sΓÇª"   21 minutes ago   Up 21 minutes                                                           excerpt-worker
-4777a56f66dc   excerpt-api                     "docker-entrypoint.sΓÇª"   21 minutes ago   Up 21 minutes (healthy)   0.0.0.0:8010->8007/tcp, [::]:8010->8007/tcp   excerpt-api
-524701e19928   excerpt-web                     "docker-entrypoint.sΓÇª"   3 days ago       Up 21 minutes             0.0.0.0:3010->3000/tcp, [::]:3010->3000/tcp   excerpt-web
-5759f6f8c800   redislabs/redisinsight:latest   "./docker-entry.sh nΓÇª"   4 days ago       Up 21 minutes             0.0.0.0:8005->8001/tcp, [::]:8005->8001/tcp   excerpt-redis-insight
-b5ec91a67ec1   redis:alpine                    "docker-entrypoint.sΓÇª"   4 days ago       Up 21 minutes (healthy)   0.0.0.0:6380->6379/tcp, [::]:6380->6379/tcp   excerpt-redis

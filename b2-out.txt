@@ -1,7 +1,0 @@
-Γùç injecting env (15) from .env // tip: Γîÿ multiple files { path: ['.env.local', '.env'] }
-Γùç injecting env (0) from ..\..\.env // tip: Γîÿ enable debugging { debug: true }
-[StorageService]: Godmode Initiated. Connecting to B2 at https://s3.us-west-004.backblazeb2.com...
-An error was encountered in a non-retryable streaming request.
-[StorageService]: B2 upload failed: The key '00578b2722b52f60000000001' is not valid. Falling back to local storage.
-[StorageService]: Local Godmode -> C:\Projects\Ashishlabs\Excerpt\temp\clips\test-upload.txt
-SUCCESS URL: http://localhost:8010/clips/test-upload.txt

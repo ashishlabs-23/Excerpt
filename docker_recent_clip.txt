@@ -1,5 +1,0 @@
-total 28684
-drwxr-xr-x    2 root     root          4096 Apr  7 10:48 .
-drwxr-xr-x   13 root     root          4096 Apr  7 10:47 ..
--rw-r--r--    1 root     root      18150027 Apr  7 10:48 5b053e16-b1fc-4456-8a40-2eaca32f4636.mp4
--rw-r--r--    1 root     root      11208263 Apr  7 10:47 d38172b3-503b-406a-8b31-b3ec06e21cf1.mp4

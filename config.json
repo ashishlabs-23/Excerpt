@@ -1,6 +1,0 @@
-{
-  "enable_audio_analysis": true,
-  "enable_visual_analysis": true,
-  "enable_hook_rewrite": true,
-  "enable_learning": true
-}

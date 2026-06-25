@@ -1,9 +1,0 @@
-time="2026-04-03T13:00:35+05:30" level=warning msg="C:\\Projects\\Ashishlabs\\Excerpt\\docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
-excerpt-worker  | Γùç injecting env (0) from .env // tip: Γîÿ override existing { override: true }
-excerpt-worker  | Γùç injecting env (0) from .env // tip: Γîÿ multiple files { path: ['.env.local', '.env'] }
-excerpt-worker  | Γùç injecting env (0) from ../.env // tip: Γîÿ enable debugging { debug: true }
-excerpt-worker  | [StorageService]: Godmode Initiated. Connecting to B2 at https://s3.us-west-004.backblazeb2.com...
-excerpt-worker  | [StorageService]: Godmode Initiated. Connecting to B2 at https://s3.us-west-004.backblazeb2.com...
-excerpt-worker  | [Worker]: ≡ƒÜÇ Gen-3 Neural Worker Starting...
-excerpt-worker  | [Worker]: ≡ƒöù Connecting to Redis at redis:6379
-excerpt-worker  | [Worker]: ≡ƒƒó Neural Core Online and Listening for Gen-3 Sequences.
