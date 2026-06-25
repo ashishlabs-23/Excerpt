@@ -1,0 +1,86 @@
+services:
+  - type: web
+    name: excerpt-api
+    runtime: node
+    region: singapore
+    plan: free
+    rootDir: apps/api
+    buildCommand: chmod +x apps/api/render-build.sh && apps/api/render-build.sh
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8010
+      # ─── Supabase (Excerpt V2) ───────────────────────────
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      # ─── AI Services ─────────────────────────────────────
+      - key: GOOGLE_AI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: GOOGLE_TTS_API_KEY
+        sync: false
+      # ─── Storage (Backblaze B2) ───────────────────────────
+      - key: B2_KEY_ID
+        sync: false
+      - key: B2_APPLICATION_KEY
+        sync: false
+      - key: B2_ENDPOINT
+        sync: false
+      - key: B2_REGION
+        sync: false
+      - key: B2_BUCKET_NAME
+        sync: false
+      # ─── Auth & CORS ──────────────────────────────────────
+      - key: EXCERPT_JOB_SUBMISSION_TOKEN
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      # ─── Pipeline Config ──────────────────────────────────
+      - key: YTDLP_COOKIES_B64
+        sync: false
+      - key: EXCERPT_FORCE_DRAFT_MODE
+        value: false
+      - key: EXCERPT_ALLOW_SERVICE_KEY
+        value: false
+      - key: DISABLE_OWNERSHIP_CHECKS
+        value: false
+      # ─── Neural Nexus ─────────────────────────────────────
+      - key: EXCERPT_NEXUS_AUDIO
+        value: true
+      - key: EXCERPT_NEXUS_FACE
+        value: true
+      - key: EXCERPT_NEXUS_VISUAL
+        value: true
+      - key: EXCERPT_NEXUS_THUMBNAIL
+        value: true
+      - key: EXCERPT_NEXUS_SCORE_MERGE
+        value: true
+      - key: EXCERPT_NEXUS_HOOK
+        value: false
+      - key: EXCERPT_NEXUS_LEARNING
+        value: false
+      - key: EXCERPT_NEXUS_THUMBNAIL_TIMEOUT_MS
+        value: 120000
+      # ─── Voiceover ────────────────────────────────────────
+      - key: EXCERPT_VOICEOVER_ENABLED
+        value: true
+      - key: VOICEOVER_PRIMARY_PROVIDER
+        value: elevenlabs
+      - key: VOICEOVER_FALLBACK_PROVIDER
+        value: google
+      - key: VOICEOVER_MAX_SEGMENT_CHARS
+        value: 500
+      - key: VOICEOVER_MAX_SEGMENTS
+        value: 50
