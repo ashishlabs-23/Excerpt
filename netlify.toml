@@ -1,21 +1,25 @@
 # Excerpt — Netlify Deployment Configuration
-# Frontend: Next.js 14 (apps/web) — All pages statically generated
+# Frontend: Next.js 14 static export (out/ directory)
+# NO serverless functions — pure CDN-served static site
 
 [build]
   base    = "apps/web"
   command = "npm install && npm run build"
-  publish = ".next"
+  # next.config.js uses output:'export' which writes to out/
+  publish = "out"
 
 [build.environment]
-  NODE_VERSION             = "20"
-  NEXT_TELEMETRY_DISABLED  = "1"
-  NPM_FLAGS                = "--legacy-peer-deps"
+  NODE_VERSION            = "20"
+  NEXT_TELEMETRY_DISABLED = "1"
+  NPM_FLAGS               = "--legacy-peer-deps"
 
-# Next.js plugin — handles routing and static/SSR pages correctly on Netlify
-[[plugins]]
-  package = "@netlify/plugin-nextjs"
+# SPA-style routing — all routes served by index.html fallback
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200
 
-# Security headers (moved from next.config.js to avoid unnecessary lambda invocations)
+# Security headers at CDN edge (no lambda needed)
 [[headers]]
   for = "/*"
   [headers.values]

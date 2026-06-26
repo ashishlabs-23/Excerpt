@@ -1,11 +1,16 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Pure static export — generates out/ with plain HTML/CSS/JS
+  // No server functions, no lambdas, works perfectly on Netlify CDN
+  output: 'export',
   reactStrictMode: false,
   transpilePackages: ['framer-motion'],
   experimental: {
     esmExternals: 'loose',
   },
   images: {
+    // Static export doesn't support Next.js image optimization server
+    unoptimized: true,
     remotePatterns: [
       { protocol: 'https', hostname: 'lh3.googleusercontent.com' },
       { protocol: 'https', hostname: 'contribution.usercontent.google.com' },
