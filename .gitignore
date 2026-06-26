@@ -1,47 +1,77 @@
-# Logs
-logs
+# ─── Logs ───────────────────────────────────────────────────────────────────
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
 lerna-debug.log*
 
-# Dependency directories
+# ─── Dependencies ────────────────────────────────────────────────────────────
 node_modules/
 node_modules_old/
+node_modules_old_web/
 jspm_packages/
-
-# Optional npm cache directory
 .npm
 
-# Optional eslint cache
-.eslintcache
-
-# dotenv environment variables file
+# ─── Environment Variables (NEVER commit) ───────────────────────────────────
 .env
-.env.test
-.env.local
+.env.*
+!.env.example
+render.env
 
-# Next.js build output
-.next
+# ─── Build Outputs ──────────────────────────────────────────────────────────
+.next/
+.dist/
+dist/
+build/
+out/
 
-# Build directory
-dist
-build
-out
+# ─── Large Dataset Directories ──────────────────────────────────────────────
+football_gold_dataset/
+human_editor_dataset_v2/
 
-# Temporary files
-.DS_Store
-*.pem
+# ─── Temp / Scratch / Debug scripts ─────────────────────────────────────────
 temp/
 scratch/
-__pycache__/
+.cache/
+apps/api/scripts/test_*.ts
+apps/api/scripts/merge_sql.ts
+apps/api/scripts/*_auditor.ts
+apps/api/scripts/*_audit.ts
+apps/api/scripts/*redteam*.ts
+apps/api/scripts/*_hardening.ts
+apps/api/scripts/*_live_*.ts
 
-# yt-dlp cookie files
+# ─── Web App Build Logs ──────────────────────────────────────────────────────
+apps/web/*.log
+apps/web/*.txt
+apps/web/build_output.txt
+apps/web/ts_errors*.txt
+apps/web/dev_error_capture.log
+
+# ─── TypeScript Build Info ──────────────────────────────────────────────────
+*.tsbuildinfo
+
+# ─── OS / Editor ────────────────────────────────────────────────────────────
+.DS_Store
+*.pem
+Thumbs.db
+
+# ─── yt-dlp Cookies ─────────────────────────────────────────────────────────
 cookies/
 cookies.txt
 *.cookie
 yt-dlp-cookies-*.txt
 
-# Local Netlify folder
-.netlify
+# ─── Netlify & Docker Local State ───────────────────────────────────────────
+.netlify/
+.docker-local/
+
+# ─── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# ─── AI / Tooling ────────────────────────────────────────────────────────────
+.stitch/
+.claude/
+AI_CONTEXT_MEMORY.md

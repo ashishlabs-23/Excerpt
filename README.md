@@ -1,154 +1,237 @@
-# 🌌 Excerpt: AI-Driven Video Viralization Engine
+<div align="center">
 
-[![Framework: Next.js](https://img.shields.io/badge/Framework-Next.js%2014-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
-[![Backend: Express](https://img.shields.io/badge/Backend-Express.js-000000?style=for-the-badge&logo=express)](https://expressjs.com/)
-[![Database: Supabase](https://img.shields.io/badge/Database-Supabase-3ECF8E?style=for-the-badge&logo=supabase)](https://supabase.com/)
-[![AI: Gemini 1.5 Flash](https://img.shields.io/badge/AI-Gemini%201.5%20Flash-4285F4?style=for-the-badge&logo=google-gemini)](https://deepmind.google/technologies/gemini/)
-[![Storage: Backblaze B2](https://img.shields.io/badge/Storage-Backblaze%20B2-FF4F00?style=for-the-badge&logo=backblaze)](https://www.backblaze.com/b2/cloud-storage.html)
+<img src="https://img.shields.io/badge/Excerpt-AI%20Video%20Clipping-orange?style=for-the-badge&logo=youtube&logoColor=white" alt="Excerpt" />
 
-**Excerpt** is a production-grade platform designed to automate the conversion of long-form video content into high-impact, viral short-form clips. By leveraging a complex multi-stage AI pipeline and high-performance video processing, Excerpt identifies "hooks," transcribes content with minimal latency, and crops footage for professional 9:16 vertical distribution.
+# ✂️ Excerpt — AI Video Clipping Platform
 
----
+**Transform long-form football videos into viral, publishable clips — automatically.**
 
-## ✨ Key Features
+[![Next.js](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js)](https://nextjs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://typescriptlang.org)
+[![Supabase](https://img.shields.io/badge/Supabase-Database-3ECF8E?style=flat-square&logo=supabase)](https://supabase.com)
+[![Redis](https://img.shields.io/badge/Redis-Queue-DC382D?style=flat-square&logo=redis)](https://redis.io)
+[![Netlify](https://img.shields.io/badge/Netlify-Deployed-00C7B7?style=flat-square&logo=netlify)](https://netlify.com)
 
-- 💎 **Cyber-Premium UI & Advanced Editor**: A futuristic dashboard with glassmorphism, real-time processing metrics, and a fully-featured non-linear Clip Editor with trim handles, zoomable timeline, and persistent keyboard-accessible controls.
-- 🧠 **Neural Nexus Pipeline**: A 14-stage orchestration engine that coordinates ASR, LLM reasoning, and computer vision.
-- 🎯 **Cinematic Smart Cropping**: Automated 9:16 vertical cropping powered by face tracking and visual activity detection, with visual overlays in the editor.
-- 📝 **AI Captions & Keywords**: Dynamic, animated caption generation with SEO-optimized metadata, and interactive transcript viewing and editing.
-- 🔄 **Real-time Synchronization**: Supabase-backed persistence with real-time updates for job status and clip metrics.
-- 🛡️ **Enterprise Resilience & Security**: Distributed worker concurrency with stale job reclamation, strict BOLA/IDOR endpoint hardening, SSRF DNS-pinning protection, rate-limiting, and comprehensive JWT middleware.
+[🚀 Live Demo](#) · [📖 Docs](#architecture) · [🐛 Report Bug](https://github.com/ashishlabs-23/Excerpt/issues)
+
+</div>
 
 ---
 
-## 🏗 System Architecture
+## 🎯 What is Excerpt?
 
-```mermaid
-graph TD
-    User([User]) -->|Upload/Link| Web[Next.js Dashboard]
-    Web -->|API Call| API[Express API Server]
-    API -->|Queue Job| Redis[(Redis Queue)]
-    Redis -->|Process| Worker[Video Worker Engine]
-    
-    subgraph "Neural Nexus Pipeline (14 Stages)"
-        Worker -->|Download| Source[yt-dlp / Local]
-        Source -->|Audio| Groq[Groq Whisper v3]
-        Groq -->|Transcript| Analysis[Gemini/Ollama Analysis]
-        Analysis -->|Ranking| Ranking[Cross-Correlation Scoring]
-        Ranking -->|Selection| Edit[FFmpeg Multi-Thread Render]
-        Edit -->|Storage| B2[Backblaze B2]
-    end
-    
-    B2 -->|Media URL| DB[(Supabase Postgres)]
-    DB -->|Real-time Updates| Web
+Excerpt is a **full-stack AI platform** that ingests YouTube match videos and automatically detects, cuts, captions, and publishes the most exciting moments — goals, counter-attacks, near-misses, saves — without any manual editing.
+
+```
+YouTube URL ──► AI Detection ──► Smart Cutting ──► Captions ──► Cloud Upload ──► Ready to Share
 ```
 
 ---
 
-## 🧠 The 14-Stage Viral Pipeline
+## ✨ Features
 
-The core logic resides in `viral_pipeline.py` and the `NexusRegistry`, featuring a reinforced orchestration layer:
-
-| Stage | Name | Description |
-| :--- | :--- | :--- |
-| **0** | **Input** | URL/Path validation and duration extraction. |
-| **1** | **Transcript** | High-speed ASR extraction via Groq Whisper v3. |
-| **2** | **Hook Intel** | Initial assessment of the hook's viral potential. |
-| **3** | **Segment Gen** | Breaking video into logical chunks for analysis. |
-| **4** | **Audio Analysis** | Scanning for high-energy/clear dialogue (AudioIntelligence). |
-| **5** | **Visual Analysis** | Tracking entities, whiteboards, and visual flow. |
-| **5b** | **Cinematic Crop** | (Stage 5b) Face tracking and 9:16 framing (FaceTracking). |
-| **6** | **Ranking** | Cross-correlation of audio, visual, and hook scores. |
-| **7** | **Thumbnail** | Frame-stepping to find the most cinematic preview frame. |
-| **8** | **Hook Rewrite** | LLM-driven hook refinement for higher retention. |
-| **9** | **Metadata** | Automated title, captions, and hashtag generation. |
-| **10** | **Quality Guard** | Final automated check before rendering. |
-| **11** | **Persistence** | Writing video files and SRT subtitles to disk. |
-| **12** | **Learning** | Pattern analysis loop for weight optimization. |
-| **13** | **Quality Audit** | Verification of file existence and integrity. |
+| Feature | Description |
+|---|---|
+| 🤖 **AI Clip Detection** | Neural pipeline detects key moments using Google AI & Groq |
+| ✂️ **Smart Boundary Engine** | Learns from human editors to perfect clip start/end times |
+| 🎙️ **Voiceover Studio** | Auto-generates sports commentary via ElevenLabs / Google TTS |
+| 📊 **Editor Arena** | Human reviewers vote on clip quality to train the AI |
+| 🏆 **Policy Tournament** | AB-tests clip boundaries to promote the best strategy |
+| 📱 **Viral Format** | Clips optimised for TikTok / Instagram / YouTube Shorts |
+| ⚡ **Real-time Updates** | Live progress via Supabase Realtime subscriptions |
+| 🔐 **Auth & RLS** | Supabase Auth with Row Level Security per user |
 
 ---
 
-## 🛠 Tech Stack
+## 🏗️ Architecture
 
-### Frontend & Orchestration
-- **Framework**: Next.js 14 (App Router)
-- **Styling**: Vanilla CSS + Tailwind CSS
-- **Animations**: Framer Motion & GSAP
-- **State**: React Hooks + Supabase Real-time
-- **Database**: Supabase (Postgres + Auth)
+```
+┌─────────────────────────────────────────────────────────┐
+│                    FRONTEND (Netlify)                    │
+│              Next.js 14 · TypeScript · Tailwind          │
+└────────────────────────┬────────────────────────────────┘
+                         │ REST / Realtime
+┌────────────────────────▼────────────────────────────────┐
+│                  BACKEND API (Render)                    │
+│              Node.js · Express · TypeScript              │
+└──────────┬────────────────────────┬─────────────────────┘
+           │                        │
+    ┌──────▼──────┐        ┌────────▼────────┐
+    │  Redis Queue │        │    Supabase DB   │
+    │  BullMQ Jobs │        │  PostgreSQL+RLS  │
+    └──────┬──────┘        └─────────────────┘
+           │
+    ┌──────▼──────────────────────────────────┐
+    │           WORKER (Render)                │
+    │  yt-dlp → FFmpeg → AI → Caption → B2    │
+    └─────────────────────────────────────────┘
+```
+
+### Stack
+
+- **Frontend**: Next.js 14, TypeScript, Tailwind CSS, Framer Motion, Supabase JS
+- **Backend API**: Node.js, Express, TypeScript, BullMQ
+- **Worker**: yt-dlp, FFmpeg, Google AI (Gemini), Groq, ElevenLabs
+- **Database**: Supabase (PostgreSQL) with Row Level Security
 - **Queue**: Redis (BullMQ)
+- **Storage**: Backblaze B2 (S3-compatible)
+- **Deployment**: Netlify (web) · Render (api + worker) · Upstash (Redis)
 
-### AI & Media Processing
-- **ASR**: Groq (Whisper-large-v3) - Sub-second latency.
-- **Reasoning**: Google Gemini 1.5 Flash & Ollama (Local LLM).
-- **Computer Vision**: OpenCV (Face Tracking).
-- **Rendering**: FFmpeg (Fluent-FFmpeg) for multi-thread rendering.
-- **Storage**: Backblaze B2 (S3-Compatible).
+---
+
+## 📁 Project Structure
+
+```
+Excerpt/
+├── apps/
+│   ├── web/                 # Next.js frontend (Netlify)
+│   │   ├── src/
+│   │   │   ├── app/         # App router pages
+│   │   │   ├── components/  # UI components
+│   │   │   └── lib/         # Supabase client, utils
+│   │   └── netlify.toml
+│   └── api/                 # Express API + Worker (Render)
+│       ├── src/
+│       │   ├── routes/      # API endpoints
+│       │   ├── services/    # Supabase, B2, AI services
+│       │   └── workers/     # BullMQ clip processing workers
+│       └── scripts/         # Migration & preflight scripts
+├── packages/                # Shared packages
+├── supabase/
+│   └── migrations/          # Database schema migrations
+├── netlify.toml             # Frontend deployment config
+├── render.yaml              # Backend deployment config
+└── docker-compose.yml       # Local development stack
+```
 
 ---
 
 ## 🚀 Getting Started
 
-### 1. Environment Configuration
-Create a `.env` file in the root directory with the following variables:
+### Prerequisites
 
-```env
-# AI Services
-GOOGLE_AI_API_KEY=your_gemini_key
-GROQ_API_KEY=your_groq_key
+- Node.js 20+
+- Redis (local or [Upstash](https://upstash.com))
+- [Supabase](https://supabase.com) project
+- [Backblaze B2](https://backblaze.com) bucket
+- FFmpeg installed locally
+- yt-dlp installed locally
 
-# Database & Storage
-SUPABASE_URL=your_supabase_url
-SUPABASE_ANON_KEY=your_supabase_key
-B2_KEY_ID=your_b2_id
-B2_APPLICATION_KEY=your_b2_key
-B2_BUCKET_NAME=excerpt-clips
-
-# Infrastructure
-REDIS_URL=redis://localhost:6380
-NEXT_PUBLIC_API_URL=http://192.168.0.5:8010
-```
-
-### 2. Running via Docker (Recommended)
-The platform is fully containerized for production parity.
+### 1. Clone & Install
 
 ```bash
-# Start the full stack
-docker-compose up -d --build
-```
-
-Access URLs:
-- **Frontend**: [http://192.168.0.5:3010](http://192.168.0.5:3010) (or localhost:3010)
-- **API Server**: [http://192.168.0.5:8010](http://192.168.0.5:8010)
-- **Redis Insight**: [http://localhost:8005](http://localhost:8005)
-
-### 3. Local Development
-```bash
-# Install dependencies
+git clone https://github.com/ashishlabs-23/Excerpt.git
+cd Excerpt
 npm install
+```
 
-# Start all services concurrently
-npm run dev
+### 2. Environment Variables
+
+Copy the example and fill in your keys:
+
+```bash
+cp .env.example .env
+```
+
+| Variable | Description |
+|---|---|
+| `SUPABASE_URL` | Your Supabase project URL |
+| `SUPABASE_ANON_KEY` | Supabase anon public key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (backend only) |
+| `GOOGLE_AI_API_KEY` | Google Gemini API key |
+| `GROQ_API_KEY` | Groq API key for fast inference |
+| `ELEVENLABS_API_KEY` | ElevenLabs for voiceover |
+| `REDIS_URL` | Redis connection URL |
+| `B2_KEY_ID` | Backblaze B2 key ID |
+| `B2_APPLICATION_KEY` | Backblaze B2 application key |
+
+### 3. Set Up Database
+
+Run the complete schema setup against your Supabase project:
+
+```bash
+node scripts/setup_database.mjs
+```
+
+Or paste `supabase/setup_complete_schema.sql` directly into the Supabase SQL Editor.
+
+### 4. Start Development
+
+```bash
+# Start all services (Redis + API + Web)
+docker-compose up -d redis
+
+# Start API
+npm run dev --workspace=apps/api
+
+# Start Web
+npm run dev --workspace=apps/web
 ```
 
 ---
 
-## 📁 Directory Structure
+## 🌐 Deployment
 
-```text
-excerpt/
-├── apps/
-│   ├── web/                # Next.js Dashboard & Studio Editor
-│   └── api/                # Express Backend & Video Worker
-│       ├── src/services/nexus/ # Neural Nexus Intelligence Modules
-│       └── scripts/            # Python Intelligence Scripts (OpenCV)
-├── packages/
-│   └── types/              # Unified TypeScript Interfaces
-├── viral_pipeline.py       # Main Orchestration Pipeline
-└── docker-compose.yml      # Container Infrastructure
+### Frontend → Netlify
+
+The `netlify.toml` at the repo root is pre-configured:
+
+```toml
+[build]
+  base    = "apps/web"
+  command = "npm install && npm run build"
+  publish = ".next"
 ```
+
+Connect this repo to Netlify and set the required `NEXT_PUBLIC_*` environment variables.
+
+### Backend + Worker → Render
+
+The `render.yaml` defines two services:
+- `excerpt-api` — Express REST API
+- `excerpt-worker` — BullMQ clip processing worker
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy)
+
+### Redis → Upstash
+
+Create a free Redis database at [upstash.com](https://upstash.com) and set `REDIS_URL`.
 
 ---
 
-Built with precision for the future of vertical content. 🚀
+## 📊 Database Schema
+
+30 tables covering the full platform:
+
+| Category | Tables |
+|---|---|
+| Core | `jobs`, `clips` |
+| Processing | `job_events`, `worker_heartbeats`, `production_failures` |
+| AI Learning | `editorial_corrections`, `boundary_policy_cache`, `policy_versions` |
+| Benchmarking | `clip_scorecards`, `ground_truth_clips`, `engine_shadow_results` |
+| Voiceover | `voiceover_clips`, `voiceover_feedback` |
+| Reward Model | `reward_features`, `arena_matches`, `model_versions` |
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repo
+2. Create a feature branch (`git checkout -b feat/amazing-feature`)
+3. Commit changes (`git commit -m 'feat: add amazing feature'`)
+4. Push the branch (`git push origin feat/amazing-feature`)
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+Private repository — all rights reserved © 2026 Ashish Labs.
+
+---
+
+<div align="center">
+
+Built with ❤️ by **Ashish Labs**
+
+</div>

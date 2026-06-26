@@ -1,0 +1,21 @@
+# Excerpt — Netlify Deployment Configuration
+# Frontend: Next.js 14 (apps/web)
+# All pages are statically generated — no server-side API routes
+
+[build]
+  # Build from the web app subdirectory
+  base    = "apps/web"
+  # Install deps + run Next.js production build
+  command = "npm install && npm run build"
+  # Next.js output directory (used by @netlify/plugin-nextjs)
+  publish = ".next"
+
+[build.environment]
+  # Node.js version — must match local dev (20.x)
+  NODE_VERSION  = "20"
+  # Skip Next.js telemetry during build
+  NEXT_TELEMETRY_DISABLED = "1"
+
+# Netlify Next.js plugin — handles SSG, image optimization, and routing correctly
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
