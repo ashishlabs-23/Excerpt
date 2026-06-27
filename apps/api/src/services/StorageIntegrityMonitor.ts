@@ -1,4 +1,5 @@
 import { DatabaseService } from './supabaseService';
+import { StorageService } from './storageService';
 
 export class StorageIntegrityMonitor {
   private static instance: StorageIntegrityMonitor;
@@ -61,24 +62,8 @@ export class StorageIntegrityMonitor {
           : clip.storage_path;
 
         // Verify with storage API
-        const { data: signedUrlData, error: signError } = await this.db.getSupabase()
-          .storage
-          .from('clips')
-          .createSignedUrl(cleanPath, 60);
-
-        let isMissing = false;
-        
-        if (signError || !signedUrlData?.signedUrl) {
-           isMissing = true;
-        } else {
-           // Verify the file actually exists by doing a quick HEAD request
-           try {
-             const res = await fetch(signedUrlData.signedUrl, { method: 'HEAD' });
-             if (!res.ok) isMissing = true;
-           } catch {
-             isMissing = true;
-           }
-        }
+        const exists = await StorageService.getInstance().checkObjectExists(cleanPath);
+        let isMissing = !exists;
 
         if (isMissing) {
           console.warn(`[StorageIntegrityMonitor]: Drift detected for clip ${clip.id}. Missing storage path ${cleanPath}. Marking as failed.`);

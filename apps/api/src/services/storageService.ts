@@ -3,7 +3,8 @@ import path from 'path'; // kept for file reads (readFileSync/createReadStream) 
 import dotenv from 'dotenv';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from './supabaseService';
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // Safety load for monorepo context
 dotenv.config();
@@ -111,6 +112,17 @@ export class StorageService {
 
   async createSignedUrl(key: string, expiresInSeconds?: number): Promise<string> {
     const ttl = expiresInSeconds || Number(process.env.STORAGE_SIGNED_URL_TTL_SECONDS || 60 * 60);
+    
+    if (this.s3) {
+      try {
+        const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
+        const signedUrl = await getSignedUrl(this.s3, command, { expiresIn: ttl });
+        return signedUrl;
+      } catch (err: any) {
+        throw new Error(`[StorageService]: Failed to sign B2 URL for ${key}: ${err.message}`);
+      }
+    }
+
     try {
       const { data, error } = await this.getSupabase().storage
         .from("clips")
@@ -128,7 +140,13 @@ export class StorageService {
   async checkObjectExists(key: string): Promise<boolean> {
     try {
       if (this.s3) {
-        return true; 
+        try {
+          await this.s3.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+          return true;
+        } catch (err: any) {
+          if (err.name === 'NotFound' || err.$metadata?.httpStatusCode === 404) return false;
+          throw err;
+        }
       }
       
       const { data, error } = await this.getSupabase().storage
@@ -147,6 +165,33 @@ export class StorageService {
 
   async clearAllClips(): Promise<void> {
     console.log("[StorageService]: Initiating cloud purge (no local storage)...");
+
+    if (this.s3) {
+      try {
+        let isTruncated = true;
+        let continuationToken: string | undefined;
+
+        while (isTruncated) {
+          const { Contents, IsTruncated, NextContinuationToken } = await this.s3.send(
+            new ListObjectsV2Command({ Bucket: this.bucket, ContinuationToken: continuationToken })
+          );
+          
+          if (Contents && Contents.length > 0) {
+            await this.s3.send(new DeleteObjectsCommand({
+              Bucket: this.bucket,
+              Delete: {
+                Objects: Contents.map(c => ({ Key: c.Key }))
+              }
+            }));
+          }
+          
+          isTruncated = !!IsTruncated;
+          continuationToken = NextContinuationToken;
+        }
+      } catch (err: any) {
+         console.warn(`[StorageService]: B2 purge warning: ${err.message}`);
+      }
+    }
 
     // Purge Supabase
     try {

@@ -1,6 +1,7 @@
 -- ============================================================
--- EXCERPT COMPLETE DATABASE SETUP SCRIPT
--- Run this once in the Supabase SQL Editor to set up everything
+-- EXCERPT COMPLETE DATABASE SETUP SCRIPT v3.1 (IDEMPOTENT)
+-- Safe to run multiple times — all CREATE ops use IF NOT EXISTS
+-- All policies use DROP IF EXISTS before CREATE
 -- Project: maldlbmoeorpetllaceg
 -- ============================================================
 
@@ -8,7 +9,6 @@
 -- STEP 1: BASE TABLES (Core Schema)
 -- ─────────────────────────────────────────
 
--- Jobs table
 CREATE TABLE IF NOT EXISTS public.jobs (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -20,12 +20,12 @@ CREATE TABLE IF NOT EXISTS public.jobs (
     generation_mode TEXT,
     debug_data JSONB,
     locked_by TEXT,
+    worker_id TEXT,
     lock_expires_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Clips table
 CREATE TABLE IF NOT EXISTS public.clips (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     job_id UUID NOT NULL REFERENCES public.jobs(id) ON DELETE CASCADE,
@@ -43,8 +43,32 @@ CREATE TABLE IF NOT EXISTS public.clips (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS public.render_jobs (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    job_id UUID REFERENCES public.jobs(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    clip_id UUID REFERENCES public.clips(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    locked_by TEXT,
+    lock_expires_at TIMESTAMP WITH TIME ZONE,
+    error TEXT,
+    result JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.render_cache (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    candidate_hash TEXT NOT NULL UNIQUE,
+    clip_id UUID REFERENCES public.clips(id) ON DELETE SET NULL,
+    job_id UUID REFERENCES public.jobs(id) ON DELETE SET NULL,
+    render_params JSONB DEFAULT '{}'::jsonb,
+    result_url TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
 -- ─────────────────────────────────────────
--- STEP 2: INDEXES (Performance)
+-- STEP 2: INDEXES
 -- ─────────────────────────────────────────
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON public.jobs(status);
@@ -53,49 +77,65 @@ CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON public.jobs(user_id);
 CREATE INDEX IF NOT EXISTS idx_clips_created_at ON public.clips(created_at);
 CREATE INDEX IF NOT EXISTS idx_clips_job_id ON public.clips(job_id);
 CREATE INDEX IF NOT EXISTS idx_clips_user_id ON public.clips(user_id);
+CREATE INDEX IF NOT EXISTS idx_render_jobs_status ON public.render_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_render_cache_hash ON public.render_cache(candidate_hash);
 
 -- ─────────────────────────────────────────
--- STEP 3: ROW LEVEL SECURITY
+-- STEP 3: ROW LEVEL SECURITY (IDEMPOTENT)
 -- ─────────────────────────────────────────
 
 ALTER TABLE public.jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.clips ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.render_jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.render_cache ENABLE ROW LEVEL SECURITY;
 
--- Jobs RLS: users see their own jobs
+-- Jobs policies
+DROP POLICY IF EXISTS "Users can view their own jobs" ON public.jobs;
 CREATE POLICY "Users can view their own jobs"
-  ON public.jobs FOR SELECT
-  USING (auth.uid() = user_id);
+  ON public.jobs FOR SELECT USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert their own jobs" ON public.jobs;
 CREATE POLICY "Users can insert their own jobs"
-  ON public.jobs FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
+  ON public.jobs FOR INSERT WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their own jobs" ON public.jobs;
 CREATE POLICY "Users can update their own jobs"
-  ON public.jobs FOR UPDATE
-  USING (auth.uid() = user_id);
+  ON public.jobs FOR UPDATE USING (auth.uid() = user_id);
 
--- Service role can do everything on jobs (for the API backend)
+DROP POLICY IF EXISTS "Service role full access jobs" ON public.jobs;
 CREATE POLICY "Service role full access jobs"
-  ON public.jobs FOR ALL
-  USING (auth.role() = 'service_role');
+  ON public.jobs FOR ALL USING (auth.role() = 'service_role');
 
--- Clips RLS: users see their own clips
+-- Clips policies
+DROP POLICY IF EXISTS "Users can view their own clips" ON public.clips;
 CREATE POLICY "Users can view their own clips"
-  ON public.clips FOR SELECT
-  USING (auth.uid() = user_id);
+  ON public.clips FOR SELECT USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert their own clips" ON public.clips;
 CREATE POLICY "Users can insert their own clips"
-  ON public.clips FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
+  ON public.clips FOR INSERT WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their own clips" ON public.clips;
 CREATE POLICY "Users can update their own clips"
-  ON public.clips FOR UPDATE
-  USING (auth.uid() = user_id);
+  ON public.clips FOR UPDATE USING (auth.uid() = user_id);
 
--- Service role can do everything on clips
+DROP POLICY IF EXISTS "Service role full access clips" ON public.clips;
 CREATE POLICY "Service role full access clips"
-  ON public.clips FOR ALL
-  USING (auth.role() = 'service_role');
+  ON public.clips FOR ALL USING (auth.role() = 'service_role');
+
+-- Render jobs policies
+DROP POLICY IF EXISTS "Service role full access render_jobs" ON public.render_jobs;
+CREATE POLICY "Service role full access render_jobs"
+  ON public.render_jobs FOR ALL USING (auth.role() = 'service_role');
+
+DROP POLICY IF EXISTS "Users can view their own render_jobs" ON public.render_jobs;
+CREATE POLICY "Users can view their own render_jobs"
+  ON public.render_jobs FOR SELECT USING (auth.uid() = user_id);
+
+-- Render cache policies
+DROP POLICY IF EXISTS "Service role full access render_cache" ON public.render_cache;
+CREATE POLICY "Service role full access render_cache"
+  ON public.render_cache FOR ALL USING (auth.role() = 'service_role');
 
 -- ─────────────────────────────────────────
 -- STEP 4: UPDATED_AT TRIGGER
@@ -112,20 +152,73 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS update_jobs_updated_at ON public.jobs;
 CREATE TRIGGER update_jobs_updated_at
     BEFORE UPDATE ON public.jobs
-    FOR EACH ROW
-    EXECUTE FUNCTION public.update_updated_at_column();
+    FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_clips_updated_at ON public.clips;
 CREATE TRIGGER update_clips_updated_at
     BEFORE UPDATE ON public.clips
-    FOR EACH ROW
-    EXECUTE FUNCTION public.update_updated_at_column();
+    FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_render_jobs_updated_at ON public.render_jobs;
+CREATE TRIGGER update_render_jobs_updated_at
+    BEFORE UPDATE ON public.render_jobs
+    FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 -- ─────────────────────────────────────────
--- STEP 5: MIGRATION TABLES (Learning System)
+-- STEP 5: QUEUE RPCs (required by API worker)
 -- ─────────────────────────────────────────
 
--- Editorial corrections
+CREATE OR REPLACE FUNCTION public.claim_next_job(worker_id_text TEXT)
+RETURNS SETOF public.jobs
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  UPDATE public.jobs
+  SET
+    status = 'processing',
+    locked_by = worker_id_text,
+    worker_id = worker_id_text,
+    lock_expires_at = NOW() + INTERVAL '10 minutes',
+    updated_at = NOW()
+  WHERE id = (
+    SELECT id FROM public.jobs
+    WHERE status = 'queued'
+      AND (lock_expires_at IS NULL OR lock_expires_at < NOW())
+    ORDER BY created_at ASC
+    LIMIT 1 FOR UPDATE SKIP LOCKED
+  )
+  RETURNING *;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.claim_next_render_job(worker_id_text TEXT)
+RETURNS SETOF public.render_jobs
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  UPDATE public.render_jobs
+  SET
+    status = 'processing',
+    locked_by = worker_id_text,
+    lock_expires_at = NOW() + INTERVAL '10 minutes',
+    updated_at = NOW()
+  WHERE id = (
+    SELECT id FROM public.render_jobs
+    WHERE status = 'pending'
+      AND (lock_expires_at IS NULL OR lock_expires_at < NOW())
+    ORDER BY created_at ASC
+    LIMIT 1 FOR UPDATE SKIP LOCKED
+  )
+  RETURNING *;
+END;
+$$;
+
+-- ─────────────────────────────────────────
+-- STEP 6: LEARNING SYSTEM TABLES
+-- ─────────────────────────────────────────
+
 CREATE TABLE IF NOT EXISTS public.editorial_corrections (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     clip_id TEXT NOT NULL,
@@ -139,7 +232,6 @@ CREATE TABLE IF NOT EXISTS public.editorial_corrections (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Boundary failure dataset
 CREATE TABLE IF NOT EXISTS public.boundary_failure_dataset (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     video_id TEXT NOT NULL,
@@ -157,7 +249,6 @@ CREATE TABLE IF NOT EXISTS public.boundary_failure_dataset (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Boundary policy cache
 CREATE TABLE IF NOT EXISTS public.boundary_policy_cache (
     narrative_type TEXT PRIMARY KEY,
     sample_count INT NOT NULL DEFAULT 0,
@@ -169,7 +260,6 @@ CREATE TABLE IF NOT EXISTS public.boundary_policy_cache (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Boundary tournament
 CREATE TABLE IF NOT EXISTS public.boundary_tournament (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     clip_id TEXT NOT NULL,
@@ -184,7 +274,7 @@ CREATE TABLE IF NOT EXISTS public.boundary_tournament (
 );
 
 -- ─────────────────────────────────────────
--- STEP 6: POLICY PROMOTION SYSTEM
+-- STEP 7: POLICY PROMOTION SYSTEM
 -- ─────────────────────────────────────────
 
 DO $$ BEGIN
@@ -223,7 +313,7 @@ CREATE TABLE IF NOT EXISTS public.policy_matchups (
 );
 
 -- ─────────────────────────────────────────
--- STEP 7: JOB EVENT SOURCING & WORKER HEARTBEATS
+-- STEP 8: EVENT SOURCING & HEARTBEATS
 -- ─────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS public.job_events (
@@ -246,8 +336,15 @@ CREATE TABLE IF NOT EXISTS public.worker_heartbeats (
 
 CREATE INDEX IF NOT EXISTS idx_worker_heartbeats_last_seen ON public.worker_heartbeats(last_seen);
 
+CREATE TABLE IF NOT EXISTS public.render_worker_heartbeats (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    worker_id TEXT NOT NULL UNIQUE,
+    last_heartbeat TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    status TEXT NOT NULL
+);
+
 -- ─────────────────────────────────────────
--- STEP 8: BENCHMARKING INFRASTRUCTURE
+-- STEP 9: BENCHMARKING INFRASTRUCTURE
 -- ─────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS public.clip_scorecards (
@@ -310,10 +407,9 @@ CREATE TABLE IF NOT EXISTS public.engine_shadow_results (
 );
 
 CREATE INDEX IF NOT EXISTS idx_engine_shadow_results_job_clip ON public.engine_shadow_results(job_id, clip_id);
-CREATE INDEX IF NOT EXISTS idx_engine_shadow_results_engine ON public.engine_shadow_results(engine_name);
 
 -- ─────────────────────────────────────────
--- STEP 9: SCHEMA VERSION
+-- STEP 10: SCHEMA VERSION
 -- ─────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS public.schema_info (
@@ -322,20 +418,7 @@ CREATE TABLE IF NOT EXISTS public.schema_info (
     applied_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-INSERT INTO public.schema_info (version) VALUES ('v3.0.0') ON CONFLICT DO NOTHING;
-
--- ─────────────────────────────────────────
--- STEP 10: RENDER WORKER HEARTBEATS
--- ─────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS public.render_worker_heartbeats (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    worker_id TEXT NOT NULL UNIQUE,
-    last_heartbeat TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
-    status TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_render_worker_heartbeats_last_heartbeat ON public.render_worker_heartbeats(last_heartbeat);
+INSERT INTO public.schema_info (version) VALUES ('v3.1.0') ON CONFLICT DO NOTHING;
 
 -- ─────────────────────────────────────────
 -- STEP 11: VOICEOVER SYSTEM
@@ -365,21 +448,21 @@ CREATE INDEX IF NOT EXISTS idx_voiceover_clips_user_id ON public.voiceover_clips
 
 ALTER TABLE public.voiceover_clips ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view their own voiceover clips" ON public.voiceover_clips;
 CREATE POLICY "Users can view their own voiceover clips"
-  ON public.voiceover_clips FOR SELECT
-  USING (auth.uid() = user_id);
+  ON public.voiceover_clips FOR SELECT USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert their own voiceover clips" ON public.voiceover_clips;
 CREATE POLICY "Users can insert their own voiceover clips"
-  ON public.voiceover_clips FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
+  ON public.voiceover_clips FOR INSERT WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their own voiceover clips" ON public.voiceover_clips;
 CREATE POLICY "Users can update their own voiceover clips"
-  ON public.voiceover_clips FOR UPDATE
-  USING (auth.uid() = user_id);
+  ON public.voiceover_clips FOR UPDATE USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete their own voiceover clips" ON public.voiceover_clips;
 CREATE POLICY "Users can delete their own voiceover clips"
-  ON public.voiceover_clips FOR DELETE
-  USING (auth.uid() = user_id);
+  ON public.voiceover_clips FOR DELETE USING (auth.uid() = user_id);
 
 CREATE TABLE IF NOT EXISTS public.voiceover_feedback (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -397,23 +480,25 @@ CREATE TABLE IF NOT EXISTS public.voiceover_feedback (
 
 ALTER TABLE public.voiceover_feedback ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view own voiceover feedback" ON public.voiceover_feedback;
 CREATE POLICY "Users can view own voiceover feedback"
   ON public.voiceover_feedback FOR SELECT
   USING (
     EXISTS (
       SELECT 1 FROM public.voiceover_clips
       WHERE voiceover_clips.id = voiceover_feedback.voiceover_id
-      AND voiceover_clips.user_id = auth.uid()
+        AND voiceover_clips.user_id = auth.uid()
     )
   );
 
+DROP POLICY IF EXISTS "Users can insert own voiceover feedback" ON public.voiceover_feedback;
 CREATE POLICY "Users can insert own voiceover feedback"
   ON public.voiceover_feedback FOR INSERT
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM public.voiceover_clips
       WHERE voiceover_clips.id = voiceover_feedback.voiceover_id
-      AND voiceover_clips.user_id = auth.uid()
+        AND voiceover_clips.user_id = auth.uid()
     )
   );
 
@@ -434,7 +519,7 @@ CREATE TABLE IF NOT EXISTS public.production_failures (
 CREATE OR REPLACE FUNCTION public.claim_next_voiceover_clip()
 RETURNS SETOF public.voiceover_clips
 LANGUAGE plpgsql
-AS $function$
+AS $$
 BEGIN
   RETURN QUERY
   UPDATE public.voiceover_clips
@@ -447,10 +532,10 @@ BEGIN
   )
   RETURNING *;
 END;
-$function$;
+$$;
 
 -- ─────────────────────────────────────────
--- STEP 13: LEARNING PLATFORM (Reward Model)
+-- STEP 13: LEARNING PLATFORM
 -- ─────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS public.model_versions (
@@ -521,13 +606,8 @@ BEGIN
     old_status := OLD.status;
     new_status := NEW.status;
 
-    IF old_status = new_status THEN
-        RETURN NEW;
-    END IF;
-
-    IF new_status = 'queued' THEN
-        RETURN NEW;
-    END IF;
+    IF old_status = new_status THEN RETURN NEW; END IF;
+    IF new_status = 'queued' THEN RETURN NEW; END IF;
 
     IF old_status = 'queued' AND new_status NOT IN ('processing', 'cancelled', 'failed') THEN
         RAISE EXCEPTION 'Invalid transition from queued to %', new_status;
@@ -552,18 +632,20 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trigger_job_status_transition ON public.jobs;
 CREATE TRIGGER trigger_job_status_transition
     BEFORE UPDATE OF status ON public.jobs
-    FOR EACH ROW
-    EXECUTE FUNCTION public.enforce_job_status_transition();
+    FOR EACH ROW EXECUTE FUNCTION public.enforce_job_status_transition();
 
 -- ─────────────────────────────────────────
--- STEP 15: NOTIFY PostgREST TO RELOAD
+-- STEP 15: STORAGE BUCKETS CHECK
+-- ─────────────────────────────────────────
+-- Create 'clips' and 'thumbnails' buckets in the Supabase dashboard:
+-- Storage → New Bucket → clips (public: false)
+-- Storage → New Bucket → thumbnails (public: true)
+
+-- ─────────────────────────────────────────
+-- STEP 16: NOTIFY & VERIFY
 -- ─────────────────────────────────────────
 
 NOTIFY pgrst, 'reload schema';
-
--- ─────────────────────────────────────────
--- VERIFICATION QUERY
--- ─────────────────────────────────────────
 
 SELECT table_name, pg_size_pretty(pg_total_relation_size(quote_ident(table_name))) AS size
 FROM information_schema.tables

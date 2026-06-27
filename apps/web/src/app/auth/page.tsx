@@ -12,8 +12,8 @@ export default function AuthPage() {
   const router = useRouter();
 
   const [mode, setMode] = useState<"signin" | "signup">("signin");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("ashish@gamil.com");
+  const [password, setPassword] = useState("password123");
   const [fullName, setFullName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
