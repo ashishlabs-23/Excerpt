@@ -34,51 +34,179 @@ import videoRoutes from './routes/video';
 import voiceoverRoutes from './routes/voiceover';
 import systemRoutes from './routes/system';
 import tournamentRoutes from './routes/tournament';
-import { startWorker } from './workers/videoWorker';
 import { requestLogger } from './middleware/logging';
 import { validateSystemOrExit } from './validation/systemValidator';
 import http from 'http';
+import { spawn, ChildProcess } from 'child_process';
 import { WebSocketService } from './services/WebSocketService';
 import { ZombieSweeperService } from './services/ZombieSweeperService';
 
+// ─── Worker Manager ──────────────────────────────────────────────────────────
+// Spawns workers as isolated child processes AFTER Express is ready.
+//
+// Features:
+//   • Workers only start once Express is listening (clean startup logs).
+//   • Each worker has a distinct log prefix for easy debugging in Render logs.
+//   • Crash-loop detection: stops restarting after 5 crashes within 2 minutes.
+//   • Graceful shutdown: SIGTERM/SIGINT propagates to all children before exit.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CRASH_LOOP_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
+const CRASH_LOOP_MAX = 5;                    // max crashes before giving up
+
+interface WorkerState {
+  label:        string;
+  child:        ChildProcess | null;
+  pid:          number | null;
+  startedAt:    number | null;
+  restartCount: number;
+  running:      boolean;
+  stopped:      boolean; // crash-loop disabled
+}
+
+const workerRegistry: WorkerState[] = [];
+
+function spawnWorker(scriptPath: string, label: string): void {
+  const crashTimestamps: number[] = [];
+
+  // Register in the worker registry so /health/workers can expose status
+  const state: WorkerState = {
+    label, child: null, pid: null, startedAt: null,
+    restartCount: 0, running: false, stopped: false,
+  };
+  workerRegistry.push(state);
+
+  const launch = () => {
+    if (state.stopped) return;
+
+    console.log(`[WorkerManager]: ▶ Starting [${label}]`);
+
+    const child = spawn('node', [scriptPath], {
+      env: process.env,
+      stdio: 'inherit', // stream worker logs directly to Render console
+    });
+
+    state.child    = child;
+    state.pid      = child.pid ?? null;
+    state.startedAt = Date.now();
+    state.running  = true;
+
+    child.on('exit', (code, signal) => {
+      state.running = false;
+      state.child   = null;
+      state.pid     = null;
+
+      if (code === 0 || signal === 'SIGTERM') {
+        console.log(`[WorkerManager]: [${label}] exited cleanly (code=${code}).`);
+        return;
+      }
+
+      console.error(`[WorkerManager]: [${label}] crashed (code=${code}, signal=${signal}).`);
+      state.restartCount++;
+
+      // Record crash timestamp and prune those outside the window
+      const now = Date.now();
+      crashTimestamps.push(now);
+      const recent = crashTimestamps.filter(t => now - t < CRASH_LOOP_WINDOW_MS);
+      crashTimestamps.length = 0;
+      crashTimestamps.push(...recent);
+
+      if (crashTimestamps.length >= CRASH_LOOP_MAX) {
+        state.stopped = true;
+        console.error(
+          `[WorkerManager]: ⛔ WORKER_DISABLED ` +
+          `worker=${label} reason=CrashLoop ` +
+          `restartCount=${state.restartCount} ` +
+          `window=${CRASH_LOOP_WINDOW_MS / 1000}s — API will continue running.`
+        );
+        return;
+      }
+
+      const delay = Math.min(3000 * Math.pow(2, crashTimestamps.length - 1), 30000);
+      console.warn(`[WorkerManager]: [${label}] restarting in ${delay}ms (crash ${crashTimestamps.length}/${CRASH_LOOP_MAX})...`);
+      setTimeout(launch, delay);
+    });
+
+    child.on('error', (err) => {
+      console.error(`[WorkerManager]: Failed to start [${label}]:`, err.message);
+      state.running = false;
+    });
+  };
+
+  launch();
+}
+
+/**
+ * Graceful shutdown — kill all worker children before the main process exits.
+ * Called on SIGTERM (Render deploys) and SIGINT (ctrl+c locally).
+ */
+function setupGracefulShutdown(): void {
+  const shutdown = (signal: string) => {
+    const running = workerRegistry.filter(w => w.running);
+    console.log(`[WorkerManager]: Received ${signal}. Shutting down ${running.length} worker(s)...`);
+    for (const w of workerRegistry) {
+      if (w.child) {
+        try { w.child.kill('SIGTERM'); } catch (_) { /* already dead */ }
+      }
+    }
+    // Give workers 2s to clean up, then exit the main process
+    setTimeout(() => process.exit(0), 2000);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT',  () => shutdown('SIGINT'));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function bootstrap() {
-  // 1. Run strict system validations
+  // 1. Run strict system validations before anything starts
   await validateSystemOrExit();
 
-
-  // 2. Worker now runs inline since Render free plan doesn't support background workers
-  startWorker().catch(console.error);
-  
-  
-  // 3. Initialize Zombie Sweeper
+  // 2. Initialize Zombie Sweeper (cleans stale locked jobs from previous deploys)
   const zombieSweeper = new ZombieSweeperService();
   zombieSweeper.start();
 
   const app = express();
 
-app.set('trust proxy', true);
-// Enforce 8010 for backend to avoid conflict with Next.js (3000)
-const PORT = process.env.PORT === '3000' ? 8010 : (process.env.PORT || 8010);
-const corsOrigin = process.env.CORS_ORIGIN || process.env.NEXT_PUBLIC_APP_URL || true;
+  app.set('trust proxy', true);
+  // Enforce 8010 for backend to avoid conflict with Next.js (3000)
+  const PORT = process.env.PORT === '3000' ? 8010 : (process.env.PORT || 8010);
+  const corsOrigin = process.env.CORS_ORIGIN || process.env.NEXT_PUBLIC_APP_URL || true;
 
-// Middleware
-app.use(helmet({ crossOriginResourcePolicy: false }));
-app.use(compression());
-app.use(cors({ origin: corsOrigin, exposedHeaders: ['Content-Disposition', 'Content-Length', 'Content-Type'] }));
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(requestLogger);
+  // Middleware
+  app.use(helmet({ crossOriginResourcePolicy: false }));
+  app.use(compression());
+  app.use(cors({ origin: corsOrigin, exposedHeaders: ['Content-Disposition', 'Content-Length', 'Content-Type'] }));
+  app.use(bodyParser.json());
+  app.use(bodyParser.urlencoded({ extended: true }));
+  app.use(requestLogger);
 
-// Routes
-app.use('/api/video', videoRoutes);
-app.use('/api/voiceover', voiceoverRoutes);
-app.use('/api/system', systemRoutes);
-app.use('/api/tournament', tournamentRoutes);
+  // Routes
+  app.use('/api/video', videoRoutes);
+  app.use('/api/voiceover', voiceoverRoutes);
+  app.use('/api/system', systemRoutes);
+  app.use('/api/tournament', tournamentRoutes);
 
-// Health Check
-app.get('/health', (req: express.Request, res: express.Response) => {
-  res.status(200).json({ status: 'OK', message: 'Excerpt API is live' });
-});
+  // Health Check
+  app.get('/health', (req: express.Request, res: express.Response) => {
+    res.status(200).json({ status: 'OK', message: 'Excerpt API is live' });
+  });
+
+  // Worker health — shows live status of all pipeline workers
+  app.get('/health/workers', (req: express.Request, res: express.Response) => {
+    const now = Date.now();
+    const workers = workerRegistry.map(w => ({
+      name:         w.label,
+      pid:          w.pid,
+      running:      w.running,
+      stopped:      w.stopped,
+      restarts:     w.restartCount,
+      uptimeSeconds: w.startedAt && w.running ? Math.floor((now - w.startedAt) / 1000) : null,
+    }));
+    const allHealthy = workers.length > 0 && workers.every(w => w.running);
+    res.status(allHealthy ? 200 : 207).json({ healthy: allHealthy, workers });
+  });
 
   // Error Handling
   app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -89,10 +217,24 @@ app.get('/health', (req: express.Request, res: express.Response) => {
   });
 
   const server = http.createServer(app);
-WebSocketService.getInstance().init(server);
+  WebSocketService.getInstance().init(server);
 
-server.listen(Number(PORT), () => {
+  // 3. Start listening — workers only spawn AFTER Express is confirmed ready.
+  //    This ensures clean startup logs and avoids race conditions with Supabase/B2 init.
+  server.listen(Number(PORT), () => {
     console.log(`[Server]: Excerpt API is running on port ${PORT}`);
+
+    // Register graceful shutdown handler (propagates SIGTERM to all children)
+    setupGracefulShutdown();
+
+    // Spawn all pipeline workers as independent child processes.
+    // Render Free plan doesn't support background worker services,
+    // so we run them here. Each is fully isolated — a worker crash cannot
+    // take down Express or sibling workers.
+    const distDir = __dirname;
+    spawnWorker(path.join(distDir, 'workers', 'videoWorker.js'),     'VideoWorker');
+    spawnWorker(path.join(distDir, 'workers', 'renderWorker.js'),    'RenderWorker');
+    spawnWorker(path.join(distDir, 'workers', 'voiceoverWorker.js'), 'VoiceoverWorker');
   });
 }
 
