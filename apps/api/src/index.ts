@@ -45,8 +45,10 @@ async function bootstrap() {
   // 1. Run strict system validations
   await validateSystemOrExit();
 
-  // 2. Worker now runs as an independent service in render.yaml
-  // startWorker().catch(console.error);
+
+  // 2. Worker now runs inline since Render free plan doesn't support background workers
+  startWorker().catch(console.error);
+  
   
   // 3. Initialize Zombie Sweeper
   const zombieSweeper = new ZombieSweeperService();
