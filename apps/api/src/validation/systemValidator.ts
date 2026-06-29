@@ -132,7 +132,6 @@ async function validateDatabaseSchema() {
 function validateEnvironmentVariables() {
   const requiredEnvVars = [
     'SUPABASE_URL',
-    'SUPABASE_SERVICE_ROLE_KEY',
     'GROQ_API_KEY',
     'GEMINI_API_KEY'
   ];
