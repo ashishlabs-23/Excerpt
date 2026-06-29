@@ -1,5 +1,6 @@
 import { DatabaseService } from './supabaseService';
 import { StorageIntegrityMonitor } from './StorageIntegrityMonitor';
+import { RetentionService } from './RetentionService';
 
 export class ZombieSweeperService {
   private db: DatabaseService;
@@ -7,6 +8,8 @@ export class ZombieSweeperService {
   private intervalId: NodeJS.Timeout | null = null;
   private readonly STALE_THRESHOLD_MINUTES = 30;
   private readonly FAIL_THRESHOLD_MINUTES = 15; // Time after being requeued before failing
+  private sweepCount: number = 0;              // tracks how many sweeps have run
+  private readonly RETENTION_INTERVAL_SWEEPS = 60; // run retention every 60 sweeps (~1 hour at 60s interval)
 
   constructor() {
     this.db = new DatabaseService();
@@ -30,11 +33,21 @@ export class ZombieSweeperService {
   private async sweep() {
     if (this.isRunning) return;
     this.isRunning = true;
+    this.sweepCount++;
     try {
       const supabase = this.db.getSupabase();
       
       // 0. Storage Integrity Sweep
       await StorageIntegrityMonitor.getInstance().sweepDriftedClips();
+
+      // 0b. Retention Sweep — runs once per hour
+      if (this.sweepCount % this.RETENTION_INTERVAL_SWEEPS === 0) {
+        try {
+          await new RetentionService().run();
+        } catch (retentionErr) {
+          console.error(`[ZombieSweeper]: RetentionService error:`, retentionErr);
+        }
+      }
 
       // 1. Sweep Jobs (Analysis/Clipping)
       // Transition 1: pending/processing/cancelling -> stale

@@ -163,7 +163,40 @@ export class StorageService {
     }
   }
 
+
+  /**
+   * Delete a single object by its storage key.
+   * Returns true if the object was deleted (or didn't exist).
+   * Returns false if deletion failed — callers must NOT delete the DB row on false.
+   */
+  async deleteFile(key: string): Promise<boolean> {
+    // 1. Try B2 deletion
+    if (this.s3) {
+      try {
+        const { DeleteObjectCommand } = await import('@aws-sdk/client-s3');
+        await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+        console.log(`[StorageService]: B2 deleted ${key}`);
+        return true;
+      } catch (err: any) {
+        console.warn(`[StorageService]: B2 deleteFile failed for ${key}: ${err.message}`);
+        return false;
+      }
+    }
+
+    // 2. Fallback: Supabase Storage
+    try {
+      const { error } = await this.getSupabase().storage.from('clips').remove([key]);
+      if (error) throw error;
+      console.log(`[StorageService]: Supabase deleted ${key}`);
+      return true;
+    } catch (err: any) {
+      console.warn(`[StorageService]: Supabase deleteFile failed for ${key}: ${err.message}`);
+      return false;
+    }
+  }
+
   async clearAllClips(): Promise<void> {
+
     console.log("[StorageService]: Initiating cloud purge (no local storage)...");
 
     if (this.s3) {
