@@ -1,16 +1,14 @@
 import { PersistentTrack, SpatialAdapter, InterestRegion } from './SpatialIntelligenceTypes';
 
-export class FootballAdapter implements SpatialAdapter {
+export class GamingAdapter implements SpatialAdapter {
     public generateInterestRegions(tracks: PersistentTrack[]): InterestRegion[] {
         return tracks.map(track => {
             let weight = 0.5;
 
-            if (track.type === 'ball') {
-                weight = 1.0;
-            } else if (track.type === 'person') {
-                weight = 0.6;
-            } else if (track.type === 'scoreboard') {
-                weight = 0.1;
+            if (track.type === 'person') {
+                weight = 0.7; // Facecam
+            } else if (track.type === 'gameplay') {
+                weight = 0.95; // Action/Crosshair
             }
 
             return {

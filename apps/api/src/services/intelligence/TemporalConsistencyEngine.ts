@@ -1,34 +1,31 @@
-import { CropPlan } from './SpatialIntelligenceTypes';
+import { LayoutDecision } from './LayoutEngine';
+import { LayoutType } from './SpatialIntelligenceTypes';
 
 export class TemporalConsistencyEngine {
-    private layoutHistory: string[] = [];
+    private layoutHistory: LayoutType[] = [];
     private readonly LAYOUT_STABILITY_FRAMES = 60; // Require 2 seconds at 30fps to change layout
-    private currentStableLayout: string = 'single';
+    private currentStableLayout: LayoutType = 'single';
 
     /**
-     * Evaluates the proposed crop plan over time to prevent rapid oscillation
+     * Evaluates the proposed layout over time to prevent rapid oscillation
      * and layout switching. Ensures visual continuity over a 2-5 second window.
      */
-    public stabilize(proposedPlan: CropPlan): CropPlan {
-        // 1. Layout Stability
-        this.layoutHistory.push(proposedPlan.layout);
+    public stabilize(proposedLayout: LayoutDecision): LayoutDecision {
+        this.layoutHistory.push(proposedLayout.type);
         if (this.layoutHistory.length > this.LAYOUT_STABILITY_FRAMES) {
             this.layoutHistory.shift();
         }
 
         // If all recent frames agree on a new layout, we can switch
-        const allAgree = this.layoutHistory.every(l => l === proposedPlan.layout);
+        const allAgree = this.layoutHistory.every(l => l === proposedLayout.type);
         if (allAgree && this.layoutHistory.length === this.LAYOUT_STABILITY_FRAMES) {
-            this.currentStableLayout = proposedPlan.layout;
+            this.currentStableLayout = proposedLayout.type;
         }
 
-        // 2. Anti-oscillation for Crop Center
-        // (In a real implementation, this would buffer the next N frames to peek ahead, 
-        // or aggressively penalize sudden directional reversals).
-        
+        // Return a stabilized decision
         return {
-            ...proposedPlan,
-            layout: this.currentStableLayout as any
+            ...proposedLayout,
+            type: this.currentStableLayout
         };
     }
 }

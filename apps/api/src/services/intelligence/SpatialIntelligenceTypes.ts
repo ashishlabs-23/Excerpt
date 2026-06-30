@@ -55,19 +55,36 @@ export interface CameraMotion {
     confidence: number;
 }
 
+export interface InterestRegion {
+    id: string; // Unique ID (e.g. tracking ID or semantic tag)
+    type: SaliencyType | 'speaker' | 'slides' | 'crosshair' | 'ocr' | 'saliency_hotspot';
+    bbox: BoundingBox;
+    confidence: number;
+    weight: number; // 0.0 to 1.0 importance factor
+}
+
+export type LayoutType = 'single' | 'split' | 'triple' | 'pip' | 'safe_mode';
+
 export interface CropPlan {
     frameIndex: number;
     timestamp: number;
-    layout: 'single' | 'split' | 'presentation' | 'sports';
-    regions: PersistentTrack[];
+    layout: LayoutType;
+    focalRegions: InterestRegion[];
     cameraMotion: CameraMotion;
-    reason: string;
     confidence: CropConfidence;
-    centerX: number;
-    centerY: number;
-    zoom: number;
+    compositionStrategy: 'rule_of_thirds' | 'center' | 'lead_room' | 'conversation_balance';
+}
+
+export interface RenderPlan {
+    frameIndex: number;
+    timestamp: number;
+    x: number; // Top-left x
+    y: number; // Top-left y
+    w: number; // Width
+    h: number; // Height
+    scale: number;
 }
 
 export interface SpatialAdapter {
-    evaluateRegions(tracks: PersistentTrack[]): PersistentTrack[];
+    generateInterestRegions(tracks: PersistentTrack[]): InterestRegion[];
 }

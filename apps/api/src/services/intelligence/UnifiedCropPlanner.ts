@@ -1,40 +1,49 @@
-import { CropPlan, PersistentTrack, SpatialAdapter, SpatialFrame, CameraMotion } from './SpatialIntelligenceTypes';
+import { CropPlan, PersistentTrack, SpatialAdapter, CameraMotion, InterestRegion, CropConfidence } from './SpatialIntelligenceTypes';
 import { CameraMotionEstimator } from './CameraMotionEstimator';
-import { KalmanFilter2D } from './KalmanFilter';
-import { EMAFilter2D } from './EMAFilter';
-import { ConfidenceEngine } from './ConfidenceEngine';
-import { DeadZoneController } from './DeadZoneController';
-
+import { PriorityResolver } from './PriorityResolver';
+import { SaliencyEngine } from './SaliencyEngine';
 import { TemporalConsistencyEngine } from './TemporalConsistencyEngine';
+import { LayoutEngine } from './LayoutEngine';
+import { ShotCompositionEngine } from './ShotCompositionEngine';
+
+// We define a mock SpatialFrame here to simplify integration
+export interface SpatialFrame {
+    frameIndex: number;
+    timestamp: number;
+    regions: PersistentTrack[];
+    globalMotion?: { dx: number; dy: number };
+    ocrData?: any[];
+    heatmapData?: any[];
+}
 
 export class UnifiedCropPlanner {
     private cameraMotionEstimator = new CameraMotionEstimator();
-    private kalman = new KalmanFilter2D(0.5, 0.5);
-    private ema = new EMAFilter2D(0.3);
-    private confidenceEngine = new ConfidenceEngine();
-    private deadZone = new DeadZoneController(0.1, 0.1);
+    private saliencyEngine = new SaliencyEngine();
+    private priorityResolver = new PriorityResolver();
     private temporalConsistency = new TemporalConsistencyEngine();
-
-    private currentCameraCenter = { x: 0.5, y: 0.5 };
+    private layoutEngine = new LayoutEngine();
+    private shotCompositionEngine = new ShotCompositionEngine();
 
     public processFrame(frame: SpatialFrame, adapter: SpatialAdapter, dt: number): CropPlan {
-        const activeTracks = frame.regions as unknown as PersistentTrack[];
-        const prioritizedTracks = adapter.evaluateRegions(activeTracks);
+        // 1. Adapter & Saliency Fusion
+        const domainRegions = adapter.generateInterestRegions(frame.regions);
+        const saliencyRegions = this.saliencyEngine.fuseSaliency(frame.regions, frame.ocrData || [], frame.heatmapData || []);
+        
+        const allRegions = [...domainRegions, ...saliencyRegions];
 
-        let sumX = 0, sumY = 0, sumWeight = 0;
-        let highestConfidence = 0;
+        // 2. Priority Resolution
+        const prioritizedRegions = this.priorityResolver.resolve(allRegions);
 
-        for (const track of prioritizedTracks) {
-            sumX += track.bbox.x * track.importance;
-            sumY += track.bbox.y * track.importance;
-            sumWeight += track.importance;
-            if (track.confidence > highestConfidence) highestConfidence = track.confidence;
-        }
+        // 3. Layout Engine
+        const rawLayoutDecision = this.layoutEngine.determineLayout(prioritizedRegions);
 
-        const rawTarget = sumWeight > 0 
-            ? { x: sumX / sumWeight, y: sumY / sumWeight } 
-            : { x: 0.5, y: 0.5 };
+        // 4. Temporal Consistency (pre-composition)
+        const stableLayoutDecision = this.temporalConsistency.stabilize(rawLayoutDecision);
 
+        // 5. Shot Composition (Cinematography)
+        const shotComposition = this.shotCompositionEngine.compose(stableLayoutDecision);
+
+        // 6. Camera Motion
         const cameraMotion: CameraMotion = frame.globalMotion 
             ? this.cameraMotionEstimator.estimate({ 
                 dx: frame.globalMotion.dx, dy: frame.globalMotion.dy, 
@@ -42,33 +51,21 @@ export class UnifiedCropPlanner {
               }, dt) 
             : { panX: 0, panY: 0, zoom: 0, rotation: 0, confidence: 0 };
 
-        const velocity = { x: 0, y: 0 };
-        const predictedTarget = this.kalman.predict(velocity, dt);
-        const filteredTarget = this.kalman.update(rawTarget);
-        const smoothedTarget = this.ema.smooth(filteredTarget.x, filteredTarget.y);
-
-        this.currentCameraCenter = this.deadZone.apply(smoothedTarget, this.currentCameraCenter);
-
-        const cropConfidence = {
-            score: highestConfidence,
+        const cropConfidence: CropConfidence = {
+            score: stableLayoutDecision.primaryRegion?.confidence || 0,
             stability: 1.0,
-            reason: highestConfidence < 0.5 ? 'low_confidence_fallback' : 'tracking'
+            reason: 'composed_shot'
         };
 
-        const proposedPlan: CropPlan = {
+        // 7. Output Crop Plan
+        return {
             frameIndex: frame.frameIndex,
             timestamp: frame.timestamp,
-            layout: 'single',
-            regions: prioritizedTracks,
+            layout: stableLayoutDecision.type,
+            focalRegions: [stableLayoutDecision.primaryRegion, stableLayoutDecision.secondaryRegion].filter(Boolean) as InterestRegion[],
             cameraMotion,
-            reason: 'unified_center_tracking',
             confidence: cropConfidence,
-            centerX: this.currentCameraCenter.x,
-            centerY: this.currentCameraCenter.y,
-            zoom: 1.0
+            compositionStrategy: shotComposition.compositionStrategy
         };
-
-        // 7. Temporal Consistency Check
-        return this.temporalConsistency.stabilize(proposedPlan);
     }
 }

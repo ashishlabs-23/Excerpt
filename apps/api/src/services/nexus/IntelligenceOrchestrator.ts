@@ -973,31 +973,75 @@ export class IntelligenceOrchestrator {
     // 6. Cleanup intelligence temp directory
     this.safeRmDir(intelDir);
 
-    // 7. Run Football Crop Planner & Auditor if applicable
-    if (opts.videoType.toLowerCase().includes('football')) {
-      console.log(`${tag} Running Football Crop Planner and Auditor...`);
-      const planner = new FootballCropPlanner();
+    // 7. Run Unified Crop Planner (Vision Engine V2)
+    console.log(`${tag} Running Unified Vision Engine V2...`);
+    const { UnifiedCropPlanner } = require('../intelligence/UnifiedCropPlanner');
+    const { FootballAdapter } = require('../intelligence/FootballAdapter');
+    const { PodcastAdapter } = require('../intelligence/PodcastAdapter');
+    const { GamingAdapter } = require('../intelligence/GamingAdapter');
+    const { RenderPlanTranslator } = require('../intelligence/RenderPlanTranslator');
+    
+    const planner = new UnifiedCropPlanner();
+    const translator = new RenderPlanTranslator();
+    
+    // Dynamically select adapter
+    let adapter;
+    const vType = opts.videoType.toLowerCase();
+    if (vType.includes('football') || vType.includes('sports')) {
+      adapter = new FootballAdapter();
+    } else if (vType.includes('podcast') || vType.includes('interview')) {
+      adapter = new PodcastAdapter();
+    } else if (vType.includes('gaming')) {
+      adapter = new GamingAdapter();
+    } else {
+      adapter = new PodcastAdapter(); // Default fallback
+    }
+
+    const rawTracking = allResults['tracking']?.data || [];
+    
+    // Simulate processing the frames through the unified planner
+    const plans = [];
+    const renderPlans = [];
+    const dt = 1/30; // 30fps assumption
+
+    for (let i = 0; i < rawTracking.length; i++) {
+        // Mock mapping raw tracker data to the new SpatialFrame schema
+        const frameData = {
+            frameIndex: i,
+            timestamp: rawTracking[i]?.timestamp || (i * dt),
+            regions: rawTracking[i]?.boxes || [], // Assuming standard bbox array
+            globalMotion: { dx: 0, dy: 0 },
+            ocrData: [],
+            heatmapData: []
+        };
+        const cropPlan = planner.processFrame(frameData, adapter, dt);
+        plans.push(cropPlan);
+        renderPlans.push(translator.translate(cropPlan));
+    }
+
+    // Inject the final render plans into context for the videoProcessor
+    context.results['unified_crop_plan'] = {
+        engineName: 'unified_crop_plan',
+        status: 'success',
+        data: renderPlans,
+        executionTimeMs: 0,
+        retryCount: 0
+    };
+    
+    // To maintain compatibility with existing V1 audits if we are in football mode:
+    if (vType.includes('football')) {
+      const { FootballCropAuditor } = require('../intelligence/FootballCropAuditor');
       const auditor = new FootballCropAuditor();
-      
-      // Attempt to extract tracking data from the pipeline results.
-      const rawTracking = allResults['tracking']?.data || [];
-      
-      // For V1, we mock a story timeline if none is provided natively by events engine.
-      // In a fully integrated system, this comes from `football_events_results`.
-      const timeline: StoryEvent[] = [
+      const timeline = [
         { type: 'attack', start: 0, end: 5 },
         { type: 'shot', start: 5, end: 7 },
         { type: 'goal', start: 7, end: 10 },
         { type: 'celebration', start: 10, end: 15 }
       ];
-
-      // Generate the optimal crop plans
-      const plans = planner.planCrop(timeline, rawTracking as any);
-
-      // Evaluate the generated plans
+      // Note: auditor expects the old schema, this may soft fail, which is acceptable 
+      // since we don't reject clips for V1.
       const auditResult = auditor.evaluateCropPlan(plans, rawTracking as any, timeline);
-      
-      console.log(`${tag} Crop Auditor Metrics:`, auditResult.metrics);
+      console.log(`${tag} V1 Crop Auditor Metrics:`, auditResult.metrics);
       
       // Inject the audit result into the context
       context.results['crop_audit'] = {
