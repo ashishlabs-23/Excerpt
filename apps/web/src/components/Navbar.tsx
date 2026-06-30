@@ -165,15 +165,7 @@ export const Navbar: React.FC = () => {
                 ) : (
                   /* Unauthenticated buttons */
                   <>
-                    <Link href="/auth" className="hidden sm:block">
-                      <Button
-                        variant="ghost"
-                        className="text-sm font-medium text-white/70 hover:text-white hover:bg-white/[0.05] rounded-full"
-                      >
-                        Sign In
-                      </Button>
-                    </Link>
-                    <Link href="/auth" className="hidden sm:block">
+                    <Link href="/dashboard" className="hidden sm:block">
                       <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
                         <Button className="px-6 py-2 h-auto text-sm font-semibold rounded-full bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/25 animate-glow border border-white/10 group">
                           Get Started
@@ -267,15 +259,7 @@ export const Navbar: React.FC = () => {
                   </>
                 ) : (
                   <>
-                    <Link href="/auth" onClick={() => setMobileMenuOpen(false)}>
-                      <Button
-                        variant="outline"
-                        className="w-full py-7 text-lg font-bold rounded-2xl border-white/10 glass-card bg-transparent"
-                      >
-                        Sign In
-                      </Button>
-                    </Link>
-                    <Link href="/auth" onClick={() => setMobileMenuOpen(false)}>
+                    <Link href="/dashboard" onClick={() => setMobileMenuOpen(false)}>
                       <Button className="w-full py-7 text-lg font-bold rounded-2xl bg-primary hover:bg-primary/90 text-white shadow-xl shadow-primary/20">
                         Get Started
                       </Button>
