@@ -200,7 +200,7 @@ export class VideoProcessor {
   private getYtDlpOptionalArgs(cookiesPath: string | null): string[] {
     const args: string[] = [];
     const browserProfile = process.env.YTDLP_COOKIES_FROM_BROWSER?.trim();
-    const extractorArgs = process.env.YTDLP_EXTRACTOR_ARGS?.trim();
+    const extractorArgs = process.env.YTDLP_EXTRACTOR_ARGS?.trim() || "youtube:player_client=ios";
 
     // 1. Explicit Cookies File (Heaviest Weight)
     if (cookiesPath) {
