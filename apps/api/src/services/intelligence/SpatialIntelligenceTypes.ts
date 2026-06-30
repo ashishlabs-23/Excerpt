@@ -72,7 +72,7 @@ export interface CropPlan {
     focalRegions: InterestRegion[];
     cameraMotion: CameraMotion;
     confidence: CropConfidence;
-    compositionStrategy: 'rule_of_thirds' | 'center' | 'lead_room' | 'conversation_balance';
+    compositionStrategy: 'rule_of_thirds' | 'center' | 'lead_room' | 'conversation_balance' | 'safe_mode';
 }
 
 export interface RenderPlan {
