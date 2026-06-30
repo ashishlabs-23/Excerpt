@@ -25,6 +25,7 @@
 The development has matured from a Python-scripted prototype into a highly reliable, distributed micro-worker architecture.
 
 ### Recent Fixes & Truth Phase Updates (June 2026):
+*   **Vision Engine V2 (Truth Mode):** Deprecated monolithic `FootballCropPlanner` for a domain-agnostic `UnifiedCropPlanner`. Implemented `PersistentTrackManager`, `CameraMotionEstimator`, separated `KalmanFilter` (prediction) & `EMAFilter` (smoothing), and built a `TemporalConsistencyEngine`. Verified tracking via FFmpeg side-by-side overlay (`truth_renderer.ts`).
 *   **Database Hardening:** Applied `v5_hardening_part4` migration, adding `debug_data`, `performance_metrics`, and `pipeline_summary` to the `jobs` table to unblock the state machine.
 *   **Storage Integration:** Backblaze B2 is now fully integrated using a private bucket approach. `@aws-sdk/s3-request-presigner` is used for secure signed URLs, Object Existence Checks, and Bucket Purging in `storageService.ts`, avoiding Supabase storage quotas.
 ### Active Working Files:
