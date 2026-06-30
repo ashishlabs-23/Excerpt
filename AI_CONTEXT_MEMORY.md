@@ -12,6 +12,7 @@
 *   **Infrastructure**: 95%
 *   **Generation**: 82%
 *   **Voiceover**: 95%
+*   **Deployment**: Web App launched on Netlify, Backend launched on Render.
 
 **Pending Focus Areas:**
 *   AI quota reliability

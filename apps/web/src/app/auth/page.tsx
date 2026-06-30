@@ -12,7 +12,7 @@ export default function AuthPage() {
   const router = useRouter();
 
   const [mode, setMode] = useState<"signin" | "signup">("signin");
-  const [email, setEmail] = useState("ashish@gamil.com");
+  const [email, setEmail] = useState("indudara2006@gmail.com");
   const [password, setPassword] = useState("password123");
   const [fullName, setFullName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
