@@ -15,6 +15,7 @@ ENV OPENCV_FACE_CASCADE=/opt/opencv-data/haarcascade_frontalface_default.xml
 
 # Backend Build
 FROM base AS api-builder
+ENV NODE_OPTIONS="--max_old_space_size=400"
 COPY package*.json ./
 COPY apps/api/package*.json ./apps/api/
 COPY packages/types/package*.json ./packages/types/
@@ -25,6 +26,7 @@ RUN npm run build -w apps/api
 
 # Frontend Build
 FROM base AS web-builder
+ENV NODE_OPTIONS="--max_old_space_size=400"
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
