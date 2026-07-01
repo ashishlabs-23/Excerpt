@@ -480,7 +480,7 @@ export class DatabaseService {
     const reclaimQuery = (updates: Record<string, any>) => this.db
       .from('jobs')
       .update(updates)
-      .in('status', ['processing', 'cutting', 'captioning', 'transcribing', 'detecting_clips'])
+      .in('status', ['processing', 'cutting', 'captioning', 'transcribing', 'detecting_clips', 'recovering'])
       .lt('updated_at', staleTimestamp)
       .select('id');
 
