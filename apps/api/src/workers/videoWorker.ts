@@ -75,11 +75,7 @@ import { IntelligenceOrchestrator, OrchestrationContext } from '../services/nexu
 
 installConsoleLogger();
 
-if (!process.env.YTDLP_COOKIES_B64) {
-  console.error('[Startup]: FATAL ERROR - YTDLP_COOKIES_B64 environment variable is missing.');
-  console.error('[Startup]: Please configure YTDLP_COOKIES_B64 with the base64-encoded contents of your cookies.txt file.');
-  process.exit(1);
-}
+// yt-dlp cookies no longer required as we use Cobalt API
 
 const processor = new VideoProcessor();
 const storage = StorageService.getInstance();
@@ -1758,10 +1754,14 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       error: error.message,
     };
 
-    await db.updateJob(jobId, {
-      status: terminalStatus,
-      failed_reason: error.message,
-    });
+    try {
+      await db.updateJob(jobId, {
+        status: terminalStatus,
+        failed_reason: error.message,
+      });
+    } catch (dbError: any) {
+      console.warn(`[Worker]: Failed to update job status to ${terminalStatus} in DB: ${dbError.message}`);
+    }
 
     try {
       await db.updateJob(jobId, {
