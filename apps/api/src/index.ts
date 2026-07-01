@@ -24,11 +24,7 @@ if (envPath) {
 
 installConsoleLogger();
 
-if (!process.env.YTDLP_COOKIES_B64) {
-  console.error('[Startup]: FATAL ERROR - YTDLP_COOKIES_B64 environment variable is missing.');
-  console.error('[Startup]: Please configure YTDLP_COOKIES_B64 with the base64-encoded contents of your cookies.txt file.');
-  process.exit(1);
-}
+// No longer require YTDLP_COOKIES_B64 since we use Cobalt API for downloads
 
 import videoRoutes from './routes/video';
 import voiceoverRoutes from './routes/voiceover';
