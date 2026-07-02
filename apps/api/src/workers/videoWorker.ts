@@ -40,6 +40,7 @@ import { JobStateMachine, JobStatus } from '../utils/JobStateMachine';
 import { NEXUS_FEATURES, isMultiModalEnabled, EXPERIMENTAL_FEATURES, isOrchestratorEnabled, ORCHESTRATOR_FEATURES, getActiveTiers } from '../config/features';
 import { CategoryClassifier } from '../services/intelligence/CategoryClassifier';
 import { createDefaultContext, PipelineContext } from '../services/intelligence/PipelineContext';
+import { downloadEngine } from '../services/download';
 import { EventEngine } from '../services/intelligence/EventEngine';
 import { CrowdExcitementEngine } from '../services/intelligence/CrowdExcitementEngine';
 import { CommentaryEmotionEngine } from '../services/intelligence/CommentaryEmotionEngine';
@@ -330,6 +331,9 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
   const monitor = createPipelineMonitor();
   let tempDir = '';
   let uploadedSourcePathToCleanup = '';
+  const { EnvironmentInspector } = require('../services/download/EnvironmentInspector');
+  const envSnapshot = await EnvironmentInspector.getSnapshot();
+
   const debugData: Record<string, any> = {
     schema_version: '1.0.0',
     workerId: process.env.RENDER_SERVICE_ID || process.env.HOSTNAME || require('os').hostname(),
@@ -340,11 +344,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       provider: process.env.RENDER ? 'render' : 'local',
       startedAt: new Date().toISOString()
     },
-    environment: {
-      node: process.version,
-      platform: process.platform,
-      memoryMb: Math.round(require('os').totalmem() / 1024 / 1024)
-    },
+    environment: envSnapshot,
     run_id: jobId,
     timestamp: new Date().toISOString(),
     stages: {},
@@ -1750,6 +1750,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       await JobStateMachine.transition(db, jobId, JobStatus.COMPLETED, {
         pipeline_summary: pipelineSummary,
         performance_metrics: { total: totalExecutionTimeMs },
+        debug_data: debugData,
       });
     } catch (telemetryErr: any) {
       console.warn(`[Worker]: Telemetry persistence failed (non-fatal): ${telemetryErr.message}`);

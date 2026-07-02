@@ -1,96 +1,33 @@
 import { execFile, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { assertSafeRemoteVideoUrl } from './urlSafety';
-import { withYtDlpCookies } from '../lib/cookieHelper';
-import { getBinaryPath } from './videoProcessor'; 
-
-export interface DownloadStrategy {
-  id: string;
-  resolutionCap: string; 
-  extractorArgs?: string; 
-  useCookies: boolean;
-  userAgent?: string;
-  rateLimit?: string;
-}
-
-const DEFAULT_STRATEGIES: DownloadStrategy[] = [
-  {
-    id: 'strategy_1_1080p_ios',
-    resolutionCap: '1080',
-    extractorArgs: 'youtube:player_client=ios',
-    useCookies: true,
-    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
-    rateLimit: '25M'
-  },
-  {
-    id: 'strategy_2_1080p_mweb',
-    resolutionCap: '1080',
-    extractorArgs: 'youtube:player_client=mweb',
-    useCookies: true,
-    userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.122 Mobile Safari/537.36',
-    rateLimit: '25M'
-  },
-  {
-    id: 'strategy_3_720p_tv_web',
-    resolutionCap: '720',
-    extractorArgs: 'youtube:player_client=tv,web',
-    useCookies: true,
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    rateLimit: '15M'
-  },
-  {
-    id: 'strategy_4_720p_android',
-    resolutionCap: '720',
-    extractorArgs: 'youtube:player_client=android',
-    useCookies: false, 
-    userAgent: 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
-    rateLimit: '10M'
-  },
-  {
-    id: 'strategy_5_720p_ios_no_cookie',
-    resolutionCap: '720',
-    extractorArgs: 'youtube:player_client=ios',
-    useCookies: false,
-    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
-    rateLimit: '10M'
-  },
-  {
-    id: 'strategy_6_720p_default',
-    resolutionCap: '720',
-    useCookies: false,
-    rateLimit: '10M'
-  }
-];
-
-export interface DownloadAttempt {
-  client: string;
-  command?: string[];
-  result: string;
-  duration_ms: number;
-  httpStatus?: number;
-  stderr_tail?: string;
-}
+import { assertSafeRemoteVideoUrl } from '../urlSafety';
+import { withYtDlpCookies } from '../../lib/cookieHelper';
+import { getBinaryPath } from '../videoProcessor'; 
+import { StrategyManager } from './StrategyManager';
+import { TelemetryCollector } from './TelemetryCollector';
+import { DownloadStrategy, DownloadAttempt } from './types';
+import { EnvProxyProvider } from './ProxyProvider';
 
 export class DownloadIntelligenceEngine {
-  private strategies = DEFAULT_STRATEGIES;
+  private strategyManager = new StrategyManager();
+  private proxyProvider = new EnvProxyProvider();
   
-  // Define slow download as under 100KiB/s (100 * 1024 bytes)
   private readonly THROTTLE_THRESHOLD_BPS = 100 * 1024;
-  private readonly THROTTLE_TIME_LIMIT_MS = 15000; // Must be slow for 15 seconds to abort
+  private readonly THROTTLE_TIME_LIMIT_MS = 15000; 
 
   private getYtDlpOptionalArgs(cookiesPath: string | null, strategy: DownloadStrategy): string[] {
     const args: string[] = [];
     if (strategy.useCookies && cookiesPath) {
       args.push('--cookies', cookiesPath);
     }
-    // Could support proxy rotation here from process.env.YTDLP_PROXY if needed
+    const proxyUrl = strategy.proxyProvider?.getProxyUrl() || this.proxyProvider.getProxyUrl();
+    if (proxyUrl) {
+      args.push('--proxy', proxyUrl);
+    }
     return args;
   }
 
-  /**
-   * Probes the video for duration and automatically adjusts maximum resolution.
-   */
   public async probeDuration(url: string): Promise<number | null> {
     try {
       const bin = getBinaryPath('yt-dlp');
@@ -121,63 +58,55 @@ export class DownloadIntelligenceEngine {
     
     console.log(`[DownloadEngine]: Probing duration for smart resolution capping...`);
     const duration = await this.probeDuration(safeUrl);
-    console.log(`[DownloadEngine]: Video duration: ${duration || 'unknown'} seconds`);
 
-    // Override resolutions based on length to save storage
-    let localStrategies = [...this.strategies];
-    if (duration && duration > 3600) {
-      console.log(`[DownloadEngine]: Video > 1hr detected. Capping all strategies to 720p.`);
-      localStrategies = localStrategies.map(s => ({ ...s, resolutionCap: '720' }));
-    }
-
+    const activeStrategies = this.strategyManager.getStrategiesForVideo(duration);
     const attempts: DownloadAttempt[] = [];
 
     return withYtDlpCookies(async (cookiePath) => {
-      for (const [index, strategy] of localStrategies.entries()) {
-        const startTime = Date.now();
-        try {
-          console.log(`[DownloadEngine]: Attempting Strategy ${index + 1}/${localStrategies.length} (${strategy.id})`);
+      for (const [index, strategy] of activeStrategies.entries()) {
+        let currentRetries = 0;
+        let success = false;
+
+        while (currentRetries <= strategy.maxRetries && !success) {
+          const telemetry = new TelemetryCollector(strategy.id, strategy.extractorArgs);
+          await telemetry.populateEnvironment();
           
-          const { outputPath: finalOutputPath, command } = await this.runStrategy(
-            strategy,
-            bin,
-            ffmpegBin,
-            safeUrl,
-            outputPath,
-            cookiePath,
-            (percent, speed, eta) => onProgress(percent, speed, eta, strategy.id)
-          );
-          
-          attempts.push({
-            client: strategy.extractorArgs || 'default',
-            command,
-            result: 'success',
-            duration_ms: Date.now() - startTime
-          });
-          
-          console.log(`[DownloadEngine]: Success with ${strategy.id}`);
-          return { outputPath: finalOutputPath, attempts };
-          
-        } catch (error: any) {
-          const errMsg = error.message || String(error);
-          const httpMatch = errMsg.match(/HTTP Error (\d+)/i);
-          const httpStatus = httpMatch ? parseInt(httpMatch[1], 10) : undefined;
-          
-          // Truncate stderr to last 500 chars to save DB space
-          const stderrTail = errMsg.length > 500 ? errMsg.substring(errMsg.length - 500) : errMsg;
-          
-          attempts.push({
-            client: strategy.extractorArgs || 'default',
-            command: error.command,
-            result: httpStatus ? `HTTP ${httpStatus}` : (errMsg.includes('KILLED_THROTTLED') ? 'throttled' : 'bot_detection'),
-            duration_ms: Date.now() - startTime,
-            httpStatus,
-            stderr_tail: stderrTail
-          });
-          
-          console.error(`[DownloadEngine]: Strategy ${strategy.id} failed: ${errMsg.substring(0, 100)}...`);
-          this.cleanupPartialFiles(outputPath);
+          const startTime = Date.now();
+          try {
+            console.log(`[DownloadEngine]: Attempting Strategy ${index + 1}/${activeStrategies.length} (${strategy.id}) - Retry ${currentRetries}/${strategy.maxRetries}`);
+            
+            const { outputPath: finalOutputPath, command, finalSpeedBps } = await this.runStrategy(
+              strategy,
+              bin,
+              ffmpegBin,
+              safeUrl,
+              outputPath,
+              cookiePath,
+              (percent, speed, eta) => onProgress(percent, speed, eta, strategy.id)
+            );
+            
+            telemetry.setCommand(this.redactSecrets(command));
+            telemetry.recordSuccess(Date.now() - startTime, finalSpeedBps ? finalSpeedBps / (1024 * 1024) : undefined);
+            attempts.push(telemetry.build());
+            
+            this.strategyManager.recordResult(strategy.id, true);
+            console.log(`[DownloadEngine]: Success with ${strategy.id}`);
+            return { outputPath: finalOutputPath, attempts };
+            
+          } catch (error: any) {
+            const errMsg = error.message || String(error);
+            telemetry.setCommand(this.redactSecrets(error.command || []));
+            telemetry.recordFailure(Date.now() - startTime, errMsg);
+            attempts.push(telemetry.build());
+            
+            console.error(`[DownloadEngine]: Strategy ${strategy.id} failed: ${errMsg.substring(0, 100)}...`);
+            this.cleanupPartialFiles(outputPath);
+            
+            currentRetries++;
+          }
         }
+        
+        this.strategyManager.recordResult(strategy.id, false);
       }
 
       const e = new Error(`All download strategies failed.`);
@@ -186,9 +115,21 @@ export class DownloadIntelligenceEngine {
     });
   }
 
+  private redactSecrets(command: string[]): string[] {
+    return command.map(arg => {
+      if (arg.includes('cookies.txt')) return '[REDACTED_COOKIES_PATH]';
+      if (arg.includes('http://') || arg.includes('https://') && arg.includes('@')) {
+        // Redact basic auth in proxy URLs
+        return arg.replace(/\/\/[^:]+:[^@]+@/, '//[REDACTED_AUTH]@');
+      }
+      return arg;
+    });
+  }
+
   private cleanupPartialFiles(outputPath: string) {
     const dir = path.dirname(outputPath);
     try {
+      if (!fs.existsSync(dir)) return;
       const files = fs.readdirSync(dir);
       for (const f of files) {
         if (f.startsWith('input') && (f.endsWith('.part') || f.endsWith('.ytdl'))) {
@@ -208,7 +149,7 @@ export class DownloadIntelligenceEngine {
     outputPath: string,
     cookiePath: string | null,
     onProgress: (percent: number, speed: string, eta: string) => void
-  ): Promise<{ outputPath: string; command: string[] }> {
+  ): Promise<{ outputPath: string; command: string[], finalSpeedBps?: number }> {
     return new Promise((resolve, reject) => {
       const args = [
         '-f', `bestvideo[height<=${strategy.resolutionCap}]+bestaudio/best[height<=${strategy.resolutionCap}]`,
@@ -233,11 +174,9 @@ export class DownloadIntelligenceEngine {
         '--no-write-subs',
         '--no-embed-subs',
         '--no-write-auto-subs',
-        '--retries', '3', // Reduce retries so it falls back to next strategy faster
-        '--retry-sleep', '2',
-        '--fragment-retries', '5',
+        '--retries', '1', // Handled by our StrategyManager now
+        '--fragment-retries', '3',
         '--sleep-interval', '1',
-        '--max-sleep-interval', '2',
         '--limit-rate', strategy.rateLimit || '10M',
         '--no-check-certificates',
         '--verbose',
@@ -248,10 +187,10 @@ export class DownloadIntelligenceEngine {
       );
 
       const command = [bin, ...args];
-
       let slowTimer: NodeJS.Timeout | null = null;
       let childProcess: ChildProcess | null = null;
       let isThrottled = false;
+      let lastSpeedBps = -1;
       
       childProcess = execFile(bin, args, { maxBuffer: 1024 * 1024 * 500, timeout: 1000 * 60 * 30 }, (error, stdout, stderr) => {
         if (slowTimer) clearTimeout(slowTimer);
@@ -263,7 +202,7 @@ export class DownloadIntelligenceEngine {
             return reject(err);
           }
           if (fs.existsSync(outputPath)) {
-            return resolve({ outputPath, command }); // Partial success edgecase
+            return resolve({ outputPath, command, finalSpeedBps: lastSpeedBps }); // Partial success edgecase
           }
           const rawMessage = [stderr, stdout, error?.message].filter(Boolean).join('\n');
           const err = new Error(rawMessage);
@@ -283,9 +222,9 @@ export class DownloadIntelligenceEngine {
             const matchPath = path.join(dir, matches[0].name);
             try {
               fs.renameSync(matchPath, outputPath);
-              return resolve({ outputPath, command });
+              return resolve({ outputPath, command, finalSpeedBps: lastSpeedBps });
             } catch {
-              return resolve({ outputPath: matchPath, command });
+              return resolve({ outputPath: matchPath, command, finalSpeedBps: lastSpeedBps });
             }
           } else {
             const err = new Error(`File not found at ${outputPath}`);
@@ -294,14 +233,12 @@ export class DownloadIntelligenceEngine {
           }
         }
 
-        resolve({ outputPath, command });
+        resolve({ outputPath, command, finalSpeedBps: lastSpeedBps });
       });
 
-      // Track throttling 
       childProcess.stdout?.on('data', (data) => {
         const msg = data.toString().trim();
         if (msg.includes('%')) {
-          // Parse: [download]  10.0% of 1.82GiB at 10.00MiB/s ETA 01:20
           const percentMatch = msg.match(/(\d+(\.\d+)?)%/);
           const speedMatch = msg.match(/at\s+([\d.]+)(KiB|MiB|GiB|B)\/s/);
           const etaMatch = msg.match(/ETA\s+([\d:]+)/);
@@ -314,6 +251,7 @@ export class DownloadIntelligenceEngine {
             else if (unit === 'KiB') speedBps = val * 1024;
             else if (unit === 'MiB') speedBps = val * 1024 * 1024;
             else if (unit === 'GiB') speedBps = val * 1024 * 1024 * 1024;
+            lastSpeedBps = speedBps;
           }
 
           if (percentMatch && percentMatch[1]) {
@@ -323,7 +261,6 @@ export class DownloadIntelligenceEngine {
             onProgress(percent, speedStr, etaStr);
           }
 
-          // Throttle Check
           if (speedBps !== -1 && speedBps < this.THROTTLE_THRESHOLD_BPS) {
             if (!slowTimer) {
               slowTimer = setTimeout(() => {
@@ -345,5 +282,3 @@ export class DownloadIntelligenceEngine {
     });
   }
 }
-
-export const downloadEngine = new DownloadIntelligenceEngine();
