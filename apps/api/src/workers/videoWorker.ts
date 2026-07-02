@@ -36,6 +36,7 @@ import { fallbackClipService } from '../services/fallbackClipService';
 // Job state is owned exclusively by Supabase. Use db.updateJob() for all status mutations.
 import { NexusRegistry } from '../services/nexus/NexusRegistry';
 import { LearningService } from '../services/nexus/LearningService';
+import { JobStateMachine, JobStatus } from '../utils/JobStateMachine';
 import { NEXUS_FEATURES, isMultiModalEnabled, EXPERIMENTAL_FEATURES, isOrchestratorEnabled, ORCHESTRATOR_FEATURES, getActiveTiers } from '../config/features';
 import { CategoryClassifier } from '../services/intelligence/CategoryClassifier';
 import { createDefaultContext, PipelineContext } from '../services/intelligence/PipelineContext';
@@ -72,6 +73,8 @@ import { viewerSatisfactionEngine } from '../services/intelligence/ViewerSatisfa
 import { universalWowMomentEngineV2 } from '../services/intelligence/UniversalWowMomentEngineV2';
 import { learningSubsystem } from '../services/intelligence/LearningSubsystem';
 import { IntelligenceOrchestrator, OrchestrationContext } from '../services/nexus/IntelligenceOrchestrator';
+import { classifyError } from '../utils/errorClassifier';
+import { TimelineEvent, JobDebugData, JobPerformanceMetrics } from '../types/diagnostics';
 
 installConsoleLogger();
 
@@ -371,8 +374,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
   try {
     checkCancellation();
     // Update status to 'processing'
-    await db.updateJob(jobId, { status: 'processing', progress: 0 });
-    try { await db.updateJob(jobId, { status: 'processing', progress: 0 }); } catch {}
+    try { await JobStateMachine.transition(db, jobId, JobStatus.PROCESSING, { progress: 0 }); } catch {}
 
     let videoUrl = String(data.videoUrl || '');
     const numClips = data.numClips || 3;
@@ -437,8 +439,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
 
     // â”€â”€ Phase 1: Recovery / Retrieval â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const stage0StartedAt = Date.now();
-    await db.updateJob(jobId, { progress: 10, status: 'processing' });
-    try { await db.updateJob(jobId, { status: 'processing', progress: 10 }); } catch {}
+    try { await JobStateMachine.transition(db, jobId, JobStatus.PROCESSING, { progress: 10 }); } catch {}
     
     // Check if videoUrl is a local file (multer path) or a URL
     const isLocal = fs.existsSync(videoUrl);
@@ -454,16 +455,15 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     } else if (fs.existsSync(cachedInputPath)) {
       console.log(`[Worker]: ðŸ§  Neural Cache HIT! Reusing source from ${cachedInputPath}`);
       fs.copyFileSync(cachedInputPath, inputPath);
-      await db.updateJob(jobId, { progress: 20 });
     } else {
       console.log(`[Worker]: ðŸ›œ Satellite Link Active -> Downloading from ${videoUrl}`);
       await processor.downloadVideo(videoUrl, cachedInputPath, async (percent: number) => {
         const scaledProgress = 10 + Math.floor(percent / 10);
-        await db.updateJob(jobId, { progress: scaledProgress });
+        try { await db.updateJob(jobId, { progress: scaledProgress }); } catch {}
       });
       // Copy to job-specific path for FFmpeg stability
       fs.copyFileSync(cachedInputPath, inputPath);
-      console.log(`[Worker]: ðŸ—„ï¸ Source cached for future Neural Remixes.`);
+      console.log(`[Worker]: ðŸ—„ï¸  Source cached for future Neural Remixes.`);
     }
     
     const videoSize = fs.statSync(inputPath).size;
@@ -531,11 +531,12 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           if (fs.existsSync(cachedTranscriptionPath)) {
           console.log(`[Worker]: ðŸ§  Semantic Cache HIT! Loading existing transcription.`);
           const cachedData = JSON.parse(fs.readFileSync(cachedTranscriptionPath, 'utf8'));
-          transcriptionText = cachedData.text;
-          segments = cachedData.segments;
+          const parsedGraph = typeof cachedData.graph === 'string' ? JSON.parse(cachedData.graph) : cachedData.graph;
+          transcriptionText = cachedData.text || (parsedGraph?.transcript ? parsedGraph.transcript.map((s: any) => s.text).join(' ') : '');
+          segments = cachedData.segments || (parsedGraph?.transcript ? parsedGraph.transcript.map((s: any) => ({ text: s.text, start: s.start, end: s.end, speaker: s.speaker })) : []);
           words = cachedData.words || [];
         } else {
-          await db.updateJob(jobId, { progress: 20, status: 'transcribing' });
+          await JobStateMachine.transition(db, jobId, JobStatus.TRANSCRIBING, { progress: 20 });
           console.log(`[Worker]: 🌪️ Groq / Neural Decode & Spatial Graph Build START...`);
           
           const graph = await graphBuilderService.build(inputPath, sourceDuration);
@@ -591,12 +592,12 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       } catch (transcriptionError: any) {
         recoveryMode = true;
         recoveryReason = transcriptionError.message;
-        await db.updateJob(jobId, { status: 'recovering', progress: 35 });
+        await JobStateMachine.transition(db, jobId, JobStatus.RECOVERING, { progress: 35 });
         console.warn(`[Worker]: Transcription unavailable. Switching to draft clip recovery mode.`);
       }
     } else {
       recoveryReason = 'Draft mode forced for local/offline verification.';
-      await db.updateJob(jobId, { status: 'recovering', progress: 35 });
+      await JobStateMachine.transition(db, jobId, JobStatus.RECOVERING, { progress: 35 });
       console.warn(`[Worker]: Draft mode forced. Skipping transcription and AI analysis.`);
     }
 
@@ -670,8 +671,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
 
     // â”€â”€ Step 2: AI Detection (Burst Decode Sequence) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const stage3StartedAt = Date.now();
-    await db.updateJob(jobId, { progress: 50, status: 'detecting_clips' });
-    try { await db.updateJob(jobId, { status: 'detecting_clips', progress: 50 }); } catch {}
+    try { await JobStateMachine.transition(db, jobId, JobStatus.DETECTING_CLIPS, { progress: 50 }); } catch {}
     console.log(`[SYNC] Llama-3.3 / AI Detection START -> Finding viral moments (Burst Sequence)...`);
     
     clips = [];
@@ -847,11 +847,9 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         } catch (aiError: any) {
           recoveryReason = aiError.message;
           console.warn(`[Worker]: AI Detection jitter detected. Attempting transcript-guided fallback...`);
-          await db.updateJob(jobId, {
-            status: 'recovering',
+          await JobStateMachine.transition(db, jobId, JobStatus.RECOVERING, {
             progress: 55,
-            generationMode: 'heuristic',
-            recoveryReason,
+            generation_mode: 'heuristic',
           });
 
           try {
@@ -875,11 +873,9 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
               : recoveryReason;
             recoveryReason = fallbackReason;
             console.warn(`[Worker]: Heuristic fallback unavailable. Initiating Neural Recovery...`);
-            await db.updateJob(jobId, {
-              status: 'recovering',
+            await JobStateMachine.transition(db, jobId, JobStatus.RECOVERING, {
               progress: 55,
-              generationMode: 'recovery',
-              recoveryReason,
+              generation_mode: 'recovery',
             });
           }
         }
@@ -1379,7 +1375,10 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       finalSelectedClips = orderedClips.slice(0, numClips);
     }
 
+    clips = finalSelectedClips;
+
     }
+
 
     recordStage(monitor, 'stage_6_ranking', stage6StartedAt, 'success');
     debugData.stage_6 = {
@@ -1394,8 +1393,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     
     // ─── Step 3: Enqueue Render Jobs ──────────────────────────
     const stage11StartedAt = Date.now();
-    await db.updateJob(jobId, { progress: 60, status: 'detecting_clips' });
-    try { await db.updateJob(jobId, { status: 'detecting_clips', progress: 60 }); } catch {}
+    try { await JobStateMachine.transition(db, jobId, JobStatus.DETECTING_CLIPS, { progress: 60 }); } catch {}
     console.log(`[Worker]: Enqueueing ${clips.length} clips for renderWorker...`);
     
     const dbClips = [];
@@ -1465,33 +1463,30 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         id: clipId,
         job_id: jobId,
         status: 'pending',
-        generation_key: generationKey,
         title: clipTitle,
-        caption: clip.content,
         start_time: renderStart,
         end_time: renderEnd,
-        content: clip.content,
+        storage_path: '',
+        thumbnail_url: '',
         metadata: {
           title: clipTitle,
           hook: hookText,
           summary: summaryText,
+          generation_key: generationKey,
           selection_reason: clip.reason,
           virality_score: clip.virality_score,
           clip_score: clipScore,
           score_breakdown: clip.score_breakdown,
           generation_mode: generationMode,
           nexus: (clip as any).nexus_metadata,
-        },
-        validation_status: 'passed',
-        analysis_status: 'completed',
-        is_archived: false
+        }
       };
       
       // Check cache immediately to prevent queuing duplicate render jobs
       const cachedRender = await db.getRenderCache(candidateHash);
       
       // Override ID if clip already exists in DB to allow UPSERT matching on primary key
-      const { data: existingClip } = await db.getSupabase().from('clips').select('id').eq('generation_key', candidateHash).single();
+      const { data: existingClip } = await db.getSupabase().from('clips').select('id').eq('metadata->>generation_key', candidateHash).maybeSingle();
       if (existingClip) {
         dbClip.id = existingClip.id;
       }
@@ -1500,7 +1495,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         console.log(`[Worker]: ⚡ L5 Cache HIT for clip ${clipId} during planning. Bypassing render queue.`);
         dbClip.status = 'uploaded';
         (dbClip as any).storage_path = cachedRender.storage_path;
-        (dbClip as any).thumbnail_storage_path = cachedRender.thumbnail_path;
+        (dbClip as any).thumbnail_url = cachedRender.thumbnail_path;
         dbClips.push(dbClip);
         continue;
       }
@@ -1509,7 +1504,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
 
       const renderJobData = {
         job_id: jobId,
-        clip_id: clipId,
+        clip_id: dbClip.id,
         status: 'pending',
         payload: {
           videoPath: inputPath,
@@ -1541,6 +1536,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     // Create Render Jobs AFTER clips are saved
     const pendingRenders = (dbClips as any)._pendingRenderJobs || [];
     for (const renderJobData of pendingRenders) {
+      console.log(`[Worker]: Attempting to create render job for clip_id ${renderJobData.clip_id}`);
       await db.createRenderJob(renderJobData);
     }
 
@@ -1588,13 +1584,14 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
 
 
     // ─── Step 4: Render-Proof Verification ──────────────────────────
+    try { await JobStateMachine.transition(db, jobId, JobStatus.RENDERING, { progress: 85 }); } catch (err: any) { console.warn(`Failed to set rendering status: ${err.message}`) }
     console.log('[Worker]: Waiting for RenderWorker to complete clips...');
     let allRendered = false;
     let renderAttempts = 0;
     const maxRenderAttempts = 120; // 10 minutes max wait
     
     while (!allRendered && renderAttempts < maxRenderAttempts) {
-      const { data: currentClips } = await db.getSupabase().from('clips').select('id, status, storage_path, thumbnail_storage_path').in('id', dbClips.map((c: any) => c.id));
+      const { data: currentClips } = await db.getSupabase().from('clips').select('id, status, storage_path, thumbnail_url').in('id', dbClips.map((c: any) => c.id));
       const pending = currentClips?.filter(c => c.status !== 'uploaded' && c.status !== 'failed') || [];
       if (pending.length === 0) {
         allRendered = true;
@@ -1605,7 +1602,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
 
         for (const c of uploadedClips) {
           const videoExists = await storage.checkObjectExists(c.storage_path);
-          const thumbExists = c.thumbnail_storage_path ? await storage.checkObjectExists(c.thumbnail_storage_path) : false;
+          const thumbExists = c.thumbnail_url ? await storage.checkObjectExists(c.thumbnail_url) : false;
           
           if (videoExists && thumbExists) {
             validClipsCount++;
@@ -1638,10 +1635,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         status: finalStatus,
         progress: 100,
         result: finalDbClips,
-        recoveryMode: usedFallbackMode,
         generation_mode: generationMode,
-        recoveryReason: finalReason,
-        totalExecutionTimeMs,
       }),
       new Promise((_, reject) => setTimeout(() => reject(new Error('PERSISTENCE_TIMEOUT')), 30000))
     ]).catch(err => {
@@ -1654,17 +1648,13 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         const clipsToSave = dbClips.map((c: any) => ({
           id: c.id,
           job_id: c.job_id,
-          video_url: c.video_url,
           thumbnail_url: c.thumbnail_url,
           title: c.title,
-          caption: c.caption,
           start_time: c.start_time,
           end_time: c.end_time,
-          content: c.content,
           metadata: c.metadata,
-          validation_status: c.validation_status || 'passed',
-          analysis_status: c.analysis_status || 'completed',
-          is_archived: false,
+          status: c.status,
+          storage_path: c.storage_path
         }));
         await db.saveClips(clipsToSave);
         console.log(`[Worker]: ${dbClips.length} clips successfully saved to Supabase`);
@@ -1677,10 +1667,10 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
               start_time: clip.start_time,
               end_time: clip.end_time,
               clip_id: clip.id,
-              transcript_hash: crypto.createHash('sha256').update(clip.caption || '').digest('hex'),
+              transcript_hash: crypto.createHash('sha256').update((clip as any).caption || '').digest('hex'),
               story_signature: clip.metadata?.nexus?.story_signature || 'viral_moment',
               event_signature: clip.metadata?.nexus?.event_signature || 'moment',
-              semantic_summary: (clip.metadata as any)?.description || clip.caption,
+              semantic_summary: (clip.metadata as any)?.description || (clip as any).caption,
               embedding: (clip as any).temp_embedding || null
             });
           } catch (memErr: any) {
@@ -1709,7 +1699,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     }
 
     try {
-      await db.updateJob(jobId, {
+      await JobStateMachine.transition(db, jobId, JobStatus.COMPLETED, {
         pipeline_summary: pipelineSummary,
         performance_metrics: { total: totalExecutionTimeMs },
       });
@@ -1730,7 +1720,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     };
   } catch (error: any) {
     const isCancel = error.message === 'Job was cancelled by the user.';
-    const terminalStatus = isCancel ? 'cancelled' : 'failed';
+    const terminalStatus = isCancel ? JobStatus.CANCELLED : JobStatus.FAILED;
     console.error(`[Worker]: ❌ Job ${jobId} ${isCancel ? 'CANCELLED' : 'FAILED'}:`, error.message);
     const totalExecutionTimeMs = Date.now() - monitor.startedAt;
     const performanceMetrics = {
@@ -1749,23 +1739,25 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       total_execution_time_ms: totalExecutionTimeMs,
       output_files: [],
     };
-    const debugDataError: any = {
-      summary: pipelineSummary,
-      error: error.message,
+
+    const classifiedError = classifyError(error.stderr || error.message);
+    const stderrTail = error.stderr ? error.stderr.split('\n').slice(-20).join('\n') : undefined;
+
+    const debugData: JobDebugData = {
+      stage: 'failed',
+      operation: error.operation || 'unknown',
+      exit_code: error.exitCode || 1,
+      error_type: classifiedError.category,
+      summary: classifiedError.summary,
+      stderr_tail: stderrTail,
+      timestamp: new Date().toISOString(),
+      raw_message: error.message
     };
 
     try {
-      await db.updateJob(jobId, {
-        status: terminalStatus,
+      await JobStateMachine.transition(db, jobId, terminalStatus, {
         failed_reason: error.message,
-      });
-    } catch (dbError: any) {
-      console.warn(`[Worker]: Failed to update job status to ${terminalStatus} in DB: ${dbError.message}`);
-    }
-
-    try {
-      await db.updateJob(jobId, {
-        failed_reason: error.message,
+        debug_data: debugData,
         performance_metrics: performanceMetrics,
         pipeline_summary: pipelineSummary,
       });
@@ -1829,7 +1821,7 @@ async function processClaimedJobWithRetries(job: any) {
     };
 
     const jobData = {
-      videoUrl: job.video_url || job.url,
+      videoUrl: job.youtube_url || job.video_url || job.url,
       numClips: job.num_clips || 3,
       ...payload,
       attempt,
@@ -1837,13 +1829,12 @@ async function processClaimedJobWithRetries(job: any) {
     };
 
     try {
-      await db.updateJob(job.id, {
-        status: 'processing',
+      await JobStateMachine.transition(db, job.id, JobStatus.PROCESSING, {
         progress: Math.max(0, Number(job.progress || 0)),
         payload: attemptPayload,
       });
-    } catch (dbError) {
-      console.warn(`[Worker]: Failed to persist retry attempt ${attempt}/${maxAttempts}:`, dbError);
+    } catch (err: any) {
+      console.warn(`[Worker]: Failed to persist retry attempt ${attempt}/${maxAttempts}:`, err);
     }
 
     console.log(`[Worker]: Attempt ${attempt}/${maxAttempts} starting for job ${job.id}`);
@@ -1864,8 +1855,8 @@ async function processClaimedJobWithRetries(job: any) {
 
     if (!retryable || attempt >= maxAttempts || stopRequested) {
       const terminalStatus = lastResult?.status === 'cancelled'
-        ? 'cancelled'
-        : (retryable && attempt >= maxAttempts ? 'dead_letter' : 'failed');
+        ? JobStatus.CANCELLED
+        : (retryable && attempt >= maxAttempts ? JobStatus.DEAD_LETTER : JobStatus.FAILED);
         
       const terminalPayload = {
         ...payload,
@@ -1873,20 +1864,19 @@ async function processClaimedJobWithRetries(job: any) {
           ...currentRetryPayload,
           attempt,
           maxAttempts,
-          dead_letter: terminalStatus === 'dead_letter',
+          dead_letter: terminalStatus === JobStatus.DEAD_LETTER,
           exhausted_at: new Date().toISOString(),
-          last_error: failedReason,
+          error: failedReason,
         },
       };
 
       try {
-        await db.updateJob(job.id, {
-          status: terminalStatus,
+        await JobStateMachine.transition(db, job.id, terminalStatus, {
           failed_reason: failedReason,
           payload: terminalPayload,
         });
-      } catch (dbError) {
-        console.warn(`[Worker]: Failed to persist terminal retry state for ${job.id}:`, dbError);
+      } catch (err: any) {
+        console.warn(`[Worker]: Failed to persist terminal retry state for ${job.id}:`, err);
       }
 
       return { ...lastResult, status: terminalStatus, failedReason };
@@ -1901,18 +1891,17 @@ async function processClaimedJobWithRetries(job: any) {
         attempt,
         maxAttempts,
         next_retry_at: nextRetryAt,
-        last_error: failedReason,
+        error: failedReason,
       },
     };
 
     try {
-      await db.updateJob(job.id, {
-        status: 'retrying',
+      await JobStateMachine.transition(db, job.id, 'retrying' as any, {
         failed_reason: failedReason,
         payload,
       });
-    } catch (dbError) {
-      console.warn(`[Worker]: Failed to persist retry backoff for ${job.id}:`, dbError);
+    } catch (err: any) {
+      console.warn(`[Worker]: Failed to persist retry backoff for ${job.id}:`, err);
     }
 
     console.warn(`[Worker]: Job ${job.id} failed attempt ${attempt}/${maxAttempts}. Retrying in ${retryDelayMs}ms.`);

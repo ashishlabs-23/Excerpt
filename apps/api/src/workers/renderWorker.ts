@@ -21,6 +21,7 @@ import { DatabaseService } from '../services/supabaseService';
 import { VideoProcessor } from '../services/videoProcessor';
 import { StorageService } from '../services/storageService';
 import { CaptionService } from '../services/captionService';
+import { JobStateMachine, JobStatus } from '../utils/JobStateMachine';
 import { installConsoleLogger, withLogContext } from '../services/logger';
 
 installConsoleLogger();
@@ -83,9 +84,8 @@ async function processRenderJob(renderJob: any) {
       console.log(`[RenderWorker]: ⚡ L5 Cache HIT for clip ${clipId}. Bypassing FFmpeg...`);
       await db.getSupabase().from('clips').update({
         storage_path: cachedRender.storage_path,
-        thumbnail_storage_path: cachedRender.thumbnail_path,
-        status: 'uploaded',
-        is_archived: false
+        thumbnail_url: cachedRender.thumbnail_path,
+        status: 'uploaded'
       }).eq('id', clipId);
       
       await db.updateRenderJob(renderJob.id, { status: 'completed' });
@@ -144,9 +144,8 @@ async function processRenderJob(renderJob: any) {
       // 4. Update Clip in DB
       await db.getSupabase().from('clips').update({
         storage_path: storageKey,
-        thumbnail_storage_path: thumbStorageKey,
-        status: 'uploaded',
-        is_archived: false
+        thumbnail_url: thumbStorageKey,
+        status: 'uploaded'
       }).eq('id', clipId);
 
       // Save to Render Cache
@@ -192,7 +191,7 @@ async function processRenderJob(renderJob: any) {
           '-of', 'default=noprint_wrappers=1:nokey=1',
           signedUrl
         ]);
-        const streams = stdout.split('\\n').map((s: string) => s.trim()).filter(Boolean);
+        const streams = stdout.split('\n').map((s: string) => s.trim()).filter(Boolean);
         if (!streams.includes('video')) {
           throw new Error('ffprobe validation failed: No video stream found.');
         }
@@ -217,6 +216,7 @@ async function processRenderJob(renderJob: any) {
       });
 
       console.log(`[RenderWorker]: Completed render job ${renderJob.id}`);
+      await checkParentJobCompletion(renderJob.job_id);
     } catch (err: any) {
       console.error(`[RenderWorker]: Render job failed:`, err);
       await db.updateClipStatus(clipId, 'failed');
@@ -228,9 +228,10 @@ async function processRenderJob(renderJob: any) {
           payload: renderJob.payload,
           final_error: err.message
         });
-        await db.updateRenderJob(renderJob.id, { status: 'failed', last_error: err.message });
+        await db.updateRenderJob(renderJob.id, { status: 'failed', error: err.message });
+        await checkParentJobCompletion(renderJob.job_id);
       } else {
-        await db.updateRenderJob(renderJob.id, { status: 'retrying', last_error: err.message, locked_by: null });
+        await db.updateRenderJob(renderJob.id, { status: 'retrying', error: err.message, locked_by: null });
       }
 
       await db.logProductionFailure({
@@ -247,6 +248,28 @@ async function processRenderJob(renderJob: any) {
         .upsert({ worker_id: workerInstanceId, last_heartbeat: new Date().toISOString(), status: 'idle' });
     }
   });
+}
+
+async function checkParentJobCompletion(jobId: string) {
+  try {
+    const { data: renderJobs } = await db.getSupabase()
+      .from('render_jobs')
+      .select('status')
+      .eq('job_id', jobId);
+
+    if (!renderJobs || renderJobs.length === 0) return;
+
+    const allCompletedOrFailed = renderJobs.every(rj => 
+      rj.status === 'completed' || rj.status === 'failed' || rj.status === 'dead_letter'
+    );
+
+    if (allCompletedOrFailed) {
+      console.log(`[RenderWorker]: All render jobs for parent job ${jobId} are terminal. Marking parent as completed.`);
+      await JobStateMachine.transition(db, jobId, JobStatus.COMPLETED, { progress: 100 });
+    }
+  } catch (err) {
+    console.warn(`[RenderWorker]: Failed to check/update parent job completion for ${jobId}:`, err);
+  }
 }
 
 async function startPolling() {
