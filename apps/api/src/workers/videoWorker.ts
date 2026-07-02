@@ -1681,10 +1681,10 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
                 video_id: videoUrl,
                 start_time: clip.start_time,
                 end_time: clip.end_time,
-                transcript_hash: crypto.createHash('sha256').update(clip.caption || '').digest('hex'),
+                transcript_hash: crypto.createHash('sha256').update((clip as any).caption || '').digest('hex'),
                 story_signature: clip.metadata?.nexus?.story_signature || 'viral_moment',
                 event_signature: clip.metadata?.nexus?.event_signature || 'moment',
-                semantic_summary: (clip.metadata as any)?.description || clip.caption,
+                semantic_summary: (clip.metadata as any)?.description || (clip as any).caption,
                 embedding: (clip as any).temp_embedding || null
               });
             } catch (retryErr: any) {
