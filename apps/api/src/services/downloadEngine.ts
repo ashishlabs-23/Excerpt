@@ -16,22 +16,31 @@ export interface DownloadStrategy {
 
 const DEFAULT_STRATEGIES: DownloadStrategy[] = [
   {
-    id: 'strategy_1_1080p_tv_web',
+    id: 'strategy_1_1080p_ios',
     resolutionCap: '1080',
-    extractorArgs: 'youtube:player_client=tv,web',
+    extractorArgs: 'youtube:player_client=ios',
     useCookies: true,
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
     rateLimit: '25M'
   },
   {
-    id: 'strategy_2_720p_web',
-    resolutionCap: '720',
-    extractorArgs: 'youtube:player_client=web',
+    id: 'strategy_2_1080p_mweb',
+    resolutionCap: '1080',
+    extractorArgs: 'youtube:player_client=mweb',
     useCookies: true,
+    userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.122 Mobile Safari/537.36',
+    rateLimit: '25M'
+  },
+  {
+    id: 'strategy_3_720p_tv_web',
+    resolutionCap: '720',
+    extractorArgs: 'youtube:player_client=tv,web',
+    useCookies: true,
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     rateLimit: '15M'
   },
   {
-    id: 'strategy_3_720p_android',
+    id: 'strategy_4_720p_android',
     resolutionCap: '720',
     extractorArgs: 'youtube:player_client=android',
     useCookies: false, 
@@ -39,7 +48,15 @@ const DEFAULT_STRATEGIES: DownloadStrategy[] = [
     rateLimit: '10M'
   },
   {
-    id: 'strategy_4_720p_default',
+    id: 'strategy_5_720p_ios_no_cookie',
+    resolutionCap: '720',
+    extractorArgs: 'youtube:player_client=ios',
+    useCookies: false,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+    rateLimit: '10M'
+  },
+  {
+    id: 'strategy_6_720p_default',
     resolutionCap: '720',
     useCookies: false,
     rateLimit: '10M'
