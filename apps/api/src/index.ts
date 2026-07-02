@@ -29,6 +29,7 @@ installConsoleLogger();
 import videoRoutes from './routes/video';
 import voiceoverRoutes from './routes/voiceover';
 import systemRoutes from './routes/system';
+import diagnosticsRoutes from './routes/diagnostics';
 import tournamentRoutes from './routes/tournament';
 import { requestLogger } from './middleware/logging';
 import { validateSystemOrExit } from './validation/systemValidator';
@@ -182,6 +183,7 @@ async function bootstrap() {
   app.use('/api/video', videoRoutes);
   app.use('/api/voiceover', voiceoverRoutes);
   app.use('/api/system', systemRoutes);
+  app.use('/api/diagnostics', diagnosticsRoutes);
   app.use('/api/tournament', tournamentRoutes);
 
   // Health Check

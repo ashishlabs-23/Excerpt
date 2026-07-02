@@ -437,7 +437,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     recoveryMode = false;
     generationMode = 'ai';
 
-    // â”€â”€ Phase 1: Recovery / Retrieval â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Phase 1: Recovery / Retrieval ──────────────────────────
     const stage0StartedAt = Date.now();
     try { await JobStateMachine.transition(db, jobId, JobStatus.PROCESSING, { progress: 10 }); } catch {}
     
@@ -453,17 +453,32 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         uploadedSourcePathToCleanup = videoUrl;
       }
     } else if (fs.existsSync(cachedInputPath)) {
-      console.log(`[Worker]: ðŸ§  Neural Cache HIT! Reusing source from ${cachedInputPath}`);
+      console.log(`[Worker]: 🧠 Neural Cache HIT! Reusing source from ${cachedInputPath}`);
       fs.copyFileSync(cachedInputPath, inputPath);
     } else {
-      console.log(`[Worker]: ðŸ›œ Satellite Link Active -> Downloading from ${videoUrl}`);
-      await processor.downloadVideo(videoUrl, cachedInputPath, async (percent: number) => {
-        const scaledProgress = 10 + Math.floor(percent / 10);
-        try { await db.updateJob(jobId, { progress: scaledProgress }); } catch {}
+      console.log(`[Worker]: 🛰️ Satellite Link Active -> Downloading from ${videoUrl}`);
+      await processor.downloadVideo(videoUrl, cachedInputPath, async (percent: number, speed?: string, eta?: string, strategy?: string) => {
+        // Map 0-100% download progress to 10%-40% overall pipeline progress
+        const scaledProgress = 10 + Math.floor(percent * 0.3);
+        
+        const updatePayload: any = { progress: scaledProgress };
+        
+        // Expose rich diagnostic telemetry to the UI if available
+        if (speed || eta || strategy) {
+          updatePayload.debug_data = {
+            stage: 'downloading',
+            speed,
+            eta,
+            strategy,
+            percent_complete: percent
+          };
+        }
+        
+        try { await db.updateJob(jobId, updatePayload); } catch {}
       });
       // Copy to job-specific path for FFmpeg stability
       fs.copyFileSync(cachedInputPath, inputPath);
-      console.log(`[Worker]: ðŸ—„ï¸  Source cached for future Neural Remixes.`);
+      console.log(`[Worker]: 🗄️ Source cached for future Neural Remixes.`);
     }
     
     const videoSize = fs.statSync(inputPath).size;

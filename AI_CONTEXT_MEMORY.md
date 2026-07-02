@@ -139,4 +139,9 @@ The following documents are now part of the project's strict verification proces
 *   `Thumbnail Audit`
 
 ---
+## 🐛 Production Issues (July 2026)
+1. **UX Navigation Issue**: The "Excerpt Arena" page (`/arena`) lacks the sidebar navigation menu or a "Back" button, preventing users from returning to the dashboard/home without manual URL input.
+2. **Core Functionality Error (State Machine)**: When generating clips, the job fails at 16% (during "Media Download") with error: `Job execution failed: Invalid transition from processing to recovering`. This indicates a state machine transition issue on the backend when downloading fails or faces rate limits.
+
+---
 *Note for AI Agents: When starting a new task, refer to this file first to understand the boundaries and roles of the system's files. It represents the ultimate ground truth of the production architecture.*

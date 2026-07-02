@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@types/pg": "^8.20.0",
+    "node-fetch": "^2.7.0",
     "pg": "^8.22.0"
   }
 }

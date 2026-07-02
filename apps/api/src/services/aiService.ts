@@ -521,8 +521,7 @@ Return only JSON.`;
         [
           process.env.GROQ_CLIP_MODEL,
           'llama-3.3-70b-versatile',
-          'llama3-70b-8192',
-          'mixtral-8x7b-32768',
+          'llama-3.1-8b-instant',
         ].filter((value): value is string => Boolean(value))
       )
     );

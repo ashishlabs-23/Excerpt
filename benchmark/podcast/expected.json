@@ -1,0 +1,20 @@
+{
+  "video": "mock_podcast_video.mp4",
+  "expected_crop": {
+    "centerX": 0.5,
+    "centerY": 0.5,
+    "zoom": 1.2
+  },
+  "expected_scene_cuts": [
+    12.5,
+    24,
+    45.3
+  ],
+  "expected_tracking": [
+    {
+      "id": 1,
+      "type": "person"
+    }
+  ],
+  "expected_score": 95
+}
