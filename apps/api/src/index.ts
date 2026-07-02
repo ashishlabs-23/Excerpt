@@ -186,9 +186,29 @@ async function bootstrap() {
   app.use('/api/diagnostics', diagnosticsRoutes);
   app.use('/api/tournament', tournamentRoutes);
 
+  // Startup Version Metadata
+  const buildTime = new Date().toISOString();
+  let currentCommit = process.env.RENDER_GIT_COMMIT || process.env.COMMIT_SHA || 'unknown';
+  
+  try {
+    if (currentCommit === 'unknown') {
+      const { execSync } = require('child_process');
+      currentCommit = execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
+    }
+  } catch (e) {
+    // ignore
+  }
+
   // Health Check
   app.get('/health', (req: express.Request, res: express.Response) => {
-    res.status(200).json({ status: 'OK', message: 'Excerpt API is live' });
+    res.status(200).json({ 
+      status: 'OK', 
+      message: 'Excerpt API is live',
+      commit: currentCommit,
+      buildTime: buildTime,
+      workerVersion: 'Gen-4',
+      downloadEngineVersion: '2.0.0'
+    });
   });
 
   // Worker health — shows live status of all pipeline workers
