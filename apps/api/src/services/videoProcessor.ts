@@ -449,7 +449,7 @@ export class VideoProcessor {
   /**
    * Downloads a video from YouTube using yt-dlp via Download Intelligence Engine.
    */
-  async downloadVideo(url: string, outputPath: string, onProgress?: (percent: number, speed?: string, eta?: string, strategy?: string) => void): Promise<string> {
+  async downloadVideo(url: string, outputPath: string, onProgress?: (percent: number, speed?: string, eta?: string, strategy?: string) => void): Promise<{ outputPath: string; attempts: any[] }> {
     const { downloadEngine } = require('./downloadEngine');
     return downloadEngine.executeDownload(url, outputPath, onProgress || (() => {}));
   }

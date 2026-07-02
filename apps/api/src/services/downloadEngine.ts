@@ -63,6 +63,15 @@ const DEFAULT_STRATEGIES: DownloadStrategy[] = [
   }
 ];
 
+export interface DownloadAttempt {
+  client: string;
+  command?: string[];
+  result: string;
+  duration_ms: number;
+  httpStatus?: number;
+  stderr_tail?: string;
+}
+
 export class DownloadIntelligenceEngine {
   private strategies = DEFAULT_STRATEGIES;
   
@@ -105,7 +114,7 @@ export class DownloadIntelligenceEngine {
     url: string,
     outputPath: string,
     onProgress: (percent: number, speed: string, eta: string, strategy: string) => void
-  ): Promise<string> {
+  ): Promise<{ outputPath: string; attempts: DownloadAttempt[] }> {
     const safeUrl = await assertSafeRemoteVideoUrl(url);
     const bin = getBinaryPath('yt-dlp');
     const ffmpegBin = getBinaryPath('ffmpeg');
@@ -121,14 +130,15 @@ export class DownloadIntelligenceEngine {
       localStrategies = localStrategies.map(s => ({ ...s, resolutionCap: '720' }));
     }
 
-    const errors: string[] = [];
+    const attempts: DownloadAttempt[] = [];
 
     return withYtDlpCookies(async (cookiePath) => {
       for (const [index, strategy] of localStrategies.entries()) {
+        const startTime = Date.now();
         try {
           console.log(`[DownloadEngine]: Attempting Strategy ${index + 1}/${localStrategies.length} (${strategy.id})`);
           
-          const result = await this.runStrategy(
+          const { outputPath: finalOutputPath, command } = await this.runStrategy(
             strategy,
             bin,
             ffmpegBin,
@@ -138,17 +148,41 @@ export class DownloadIntelligenceEngine {
             (percent, speed, eta) => onProgress(percent, speed, eta, strategy.id)
           );
           
+          attempts.push({
+            client: strategy.extractorArgs || 'default',
+            command,
+            result: 'success',
+            duration_ms: Date.now() - startTime
+          });
+          
           console.log(`[DownloadEngine]: Success with ${strategy.id}`);
-          return result;
+          return { outputPath: finalOutputPath, attempts };
           
         } catch (error: any) {
-          console.error(`[DownloadEngine]: Strategy ${strategy.id} failed: ${error.message}`);
-          errors.push(`[${strategy.id}]: ${error.message}`);
+          const errMsg = error.message || String(error);
+          const httpMatch = errMsg.match(/HTTP Error (\d+)/i);
+          const httpStatus = httpMatch ? parseInt(httpMatch[1], 10) : undefined;
+          
+          // Truncate stderr to last 500 chars to save DB space
+          const stderrTail = errMsg.length > 500 ? errMsg.substring(errMsg.length - 500) : errMsg;
+          
+          attempts.push({
+            client: strategy.extractorArgs || 'default',
+            command: error.command,
+            result: httpStatus ? `HTTP ${httpStatus}` : (errMsg.includes('KILLED_THROTTLED') ? 'throttled' : 'bot_detection'),
+            duration_ms: Date.now() - startTime,
+            httpStatus,
+            stderr_tail: stderrTail
+          });
+          
+          console.error(`[DownloadEngine]: Strategy ${strategy.id} failed: ${errMsg.substring(0, 100)}...`);
           this.cleanupPartialFiles(outputPath);
         }
       }
 
-      throw new Error(`All download strategies failed:\n${errors.join('\n')}`);
+      const e = new Error(`All download strategies failed.`);
+      (e as any).attempts = attempts;
+      throw e;
     });
   }
 
@@ -174,7 +208,7 @@ export class DownloadIntelligenceEngine {
     outputPath: string,
     cookiePath: string | null,
     onProgress: (percent: number, speed: string, eta: string) => void
-  ): Promise<string> {
+  ): Promise<{ outputPath: string; command: string[] }> {
     return new Promise((resolve, reject) => {
       const args = [
         '-f', `bestvideo[height<=${strategy.resolutionCap}]+bestaudio/best[height<=${strategy.resolutionCap}]`,
@@ -213,6 +247,8 @@ export class DownloadIntelligenceEngine {
         url
       );
 
+      const command = [bin, ...args];
+
       let slowTimer: NodeJS.Timeout | null = null;
       let childProcess: ChildProcess | null = null;
       let isThrottled = false;
@@ -222,13 +258,17 @@ export class DownloadIntelligenceEngine {
         
         if (error || isThrottled) {
           if (isThrottled || error?.signal === 'SIGTERM' || (error?.message && error.message.includes('KILLED_THROTTLED'))) {
-            return reject(new Error('KILLED_THROTTLED: Download was too slow (< 100KiB/s)'));
+            const err = new Error('KILLED_THROTTLED: Download was too slow (< 100KiB/s)');
+            (err as any).command = command;
+            return reject(err);
           }
           if (fs.existsSync(outputPath)) {
-            return resolve(outputPath); // Partial success edgecase
+            return resolve({ outputPath, command }); // Partial success edgecase
           }
           const rawMessage = [stderr, stdout, error?.message].filter(Boolean).join('\n');
-          return reject(new Error(rawMessage));
+          const err = new Error(rawMessage);
+          (err as any).command = command;
+          return reject(err);
         }
 
         if (!fs.existsSync(outputPath)) {
@@ -243,16 +283,18 @@ export class DownloadIntelligenceEngine {
             const matchPath = path.join(dir, matches[0].name);
             try {
               fs.renameSync(matchPath, outputPath);
-              return resolve(outputPath);
+              return resolve({ outputPath, command });
             } catch {
-              return resolve(matchPath);
+              return resolve({ outputPath: matchPath, command });
             }
           } else {
-            return reject(new Error(`File not found at ${outputPath}`));
+            const err = new Error(`File not found at ${outputPath}`);
+            (err as any).command = command;
+            return reject(err);
           }
         }
 
-        resolve(outputPath);
+        resolve({ outputPath, command });
       });
 
       // Track throttling 

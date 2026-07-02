@@ -139,10 +139,13 @@ interface PlannedClip {
 }
 
 interface StageMetric {
-  execution_time_ms: number;
+  durationMs: number;
+  startedAt: string;
+  finishedAt: string;
   status: 'success' | 'skipped' | 'failed';
   fallback_used?: boolean;
   error?: string;
+  [key: string]: any;
 }
 
 function buildRecoveryClips(totalDuration: number, requestedClips: number): PlannedClip[] {
@@ -190,16 +193,18 @@ function createPipelineMonitor() {
 function recordStage(
   monitor: ReturnType<typeof createPipelineMonitor>,
   stageKey: string,
-  startedAt: number,
+  startedAtMs: number,
   status: StageMetric['status'],
-  extra: Omit<StageMetric, 'execution_time_ms' | 'status'> = {}
+  extra: Record<string, any> = {}
 ) {
-  const execution_time_ms = Date.now() - startedAt;
+  const durationMs = Date.now() - startedAtMs;
   monitor.stages[stageKey] = {
-    execution_time_ms,
+    durationMs,
+    startedAt: new Date(startedAtMs).toISOString(),
+    finishedAt: new Date().toISOString(),
     status,
     ...extra,
-  };
+  } as StageMetric;
 
   if (status === 'success') {
     monitor.run.add(stageKey);
@@ -209,8 +214,8 @@ function recordStage(
     monitor.failed.add(stageKey);
   }
 
-  if (execution_time_ms > 2000) {
-    console.warn(`[Pipeline] Slow stage detected: ${stageKey} -> ${execution_time_ms}ms`);
+  if (durationMs > 2000) {
+    console.warn(`[Pipeline] Slow stage detected: ${stageKey} -> ${durationMs}ms`);
   }
 }
 
@@ -326,6 +331,20 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
   let tempDir = '';
   let uploadedSourcePathToCleanup = '';
   const debugData: Record<string, any> = {
+    schema_version: '1.0.0',
+    workerId: process.env.RENDER_SERVICE_ID || process.env.HOSTNAME || require('os').hostname(),
+    host: {
+      hostname: require('os').hostname(),
+      pid: process.pid,
+      buildSha: process.env.RENDER_GIT_COMMIT || 'local',
+      provider: process.env.RENDER ? 'render' : 'local',
+      startedAt: new Date().toISOString()
+    },
+    environment: {
+      node: process.version,
+      platform: process.platform,
+      memoryMb: Math.round(require('os').totalmem() / 1024 / 1024)
+    },
     run_id: jobId,
     timestamp: new Date().toISOString(),
     stages: {},
@@ -339,12 +358,12 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       if (!fetchError && jobRecord?.status === 'cancelled') {
         isCancelled = true;
       } else {
-        await db.updateJob(jobId, { updated_at: new Date().toISOString() });
+        await db.updateJob(jobId, { heartbeat_at: new Date().toISOString() });
       }
     } catch (err) {
       console.warn(`[Worker Heartbeat]: Failed to send heartbeat for job ${jobId}:`, err);
     }
-  }, 10000);
+  }, 20000);
 
   const checkCancellation = () => {
     if (isCancelled) {
@@ -457,25 +476,37 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       fs.copyFileSync(cachedInputPath, inputPath);
     } else {
       console.log(`[Worker]: 🛰️ Satellite Link Active -> Downloading from ${videoUrl}`);
-      await processor.downloadVideo(videoUrl, cachedInputPath, async (percent: number, speed?: string, eta?: string, strategy?: string) => {
-        // Map 0-100% download progress to 10%-40% overall pipeline progress
-        const scaledProgress = 10 + Math.floor(percent * 0.3);
+      try {
+        const dlResult = await processor.downloadVideo(videoUrl, cachedInputPath, async (percent: number, speed?: string, eta?: string, strategy?: string) => {
+          // Map 0-100% download progress to 10%-40% overall pipeline progress
+          const scaledProgress = 10 + Math.floor(percent * 0.3);
+          
+          const updatePayload: any = { progress: scaledProgress };
+          
+          // Expose rich diagnostic telemetry to the UI if available
+          if (speed || eta || strategy) {
+            updatePayload.debug_data = {
+              ...debugData,
+              stage: 'downloading',
+              speed,
+              eta,
+              strategy,
+              percent_complete: percent
+            };
+          }
+          
+          try { await db.updateJob(jobId, updatePayload); } catch {}
+        });
         
-        const updatePayload: any = { progress: scaledProgress };
-        
-        // Expose rich diagnostic telemetry to the UI if available
-        if (speed || eta || strategy) {
-          updatePayload.debug_data = {
-            stage: 'downloading',
-            speed,
-            eta,
-            strategy,
-            percent_complete: percent
-          };
+        debugData.download = { attempts: dlResult.attempts };
+      } catch (dlError: any) {
+        if (dlError.attempts) {
+          debugData.download = { attempts: dlError.attempts };
+          await db.updateJob(jobId, { debug_data: debugData });
         }
-        
-        try { await db.updateJob(jobId, updatePayload); } catch {}
-      });
+        throw dlError;
+      }
+      
       // Copy to job-specific path for FFmpeg stability
       fs.copyFileSync(cachedInputPath, inputPath);
       console.log(`[Worker]: 🗄️ Source cached for future Neural Remixes.`);
@@ -521,7 +552,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     recordStage(monitor, 'stage_0_input', stage0StartedAt, 'success');
     debugData.stages.stage_0 = {
       source_duration_sec: Number(sourceDuration.toFixed(2)),
-      execution_time_ms: monitor.stages.stage_0_input.execution_time_ms,
+      execution_time_ms: monitor.stages.stage_0_input.durationMs,
     };
 
     // â”€â”€ Step 1: Transcription Retrieval â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -642,7 +673,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     debugData.stages.stage_1 = {
       transcript_available: Boolean(transcriptionText),
       segment_count: segments.length,
-      execution_time_ms: monitor.stages.stage_1_transcript.execution_time_ms,
+      execution_time_ms: monitor.stages.stage_1_transcript.durationMs,
       fallback_used: !transcriptionText,
     };
 
@@ -943,7 +974,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     debugData.stages.stage_3 = {
       clip_count: clips.length,
       generation_mode: generationMode,
-      execution_time_ms: monitor.stages.stage_3_segment_generation.execution_time_ms,
+      execution_time_ms: monitor.stages.stage_3_segment_generation.durationMs,
       fallback_used: generationMode !== 'ai',
     };
     
@@ -1006,7 +1037,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           monitor.failed.add(stageKey);
         }
 
-        const stageTimes = analysis.metadata?.execution_time_ms || {};
+        const stageTimes = analysis.metadata?.durationMs || {};
         for (const [stageKey, executionTime] of Object.entries(stageTimes)) {
           const status = (perClipSummary.failed || []).includes(stageKey)
             ? 'failed'
@@ -1014,9 +1045,11 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
               ? 'skipped'
               : 'success';
           const existing = monitor.stages[stageKey];
-          if (!existing || Number(executionTime) > existing.execution_time_ms) {
+          if (!existing || Number(executionTime) > existing.durationMs) {
             monitor.stages[stageKey] = {
-              execution_time_ms: Number(executionTime) || 0,
+              durationMs: Number(executionTime) || 0,
+              startedAt: new Date(Date.now() - (Number(executionTime) || 0)).toISOString(),
+              finishedAt: new Date().toISOString(),
               status,
             };
           }
@@ -1739,12 +1772,12 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     console.error(`[Worker]: ❌ Job ${jobId} ${isCancel ? 'CANCELLED' : 'FAILED'}:`, error.message);
     const totalExecutionTimeMs = Date.now() - monitor.startedAt;
     const performanceMetrics = {
-      download: monitor.stages.stage_0_input?.execution_time_ms || 0,
-      transcription: monitor.stages.stage_1_transcript?.execution_time_ms || 0,
-      classification: monitor.stages.stage_1_5?.execution_time_ms || 0,
-      ai_segmentation: monitor.stages.stage_3_segment_generation?.execution_time_ms || 0,
-      nexus_analysis: monitor.stages.stage_2_to_12_nexus_modules?.execution_time_ms || 0,
-      ranking: monitor.stages.stage_6_ranking?.execution_time_ms || 0,
+      download: monitor.stages.stage_0_input?.durationMs || 0,
+      transcription: monitor.stages.stage_1_transcript?.durationMs || 0,
+      classification: monitor.stages.stage_1_5?.durationMs || 0,
+      ai_segmentation: monitor.stages.stage_3_segment_generation?.durationMs || 0,
+      nexus_analysis: monitor.stages.stage_2_to_12_nexus_modules?.durationMs || 0,
+      ranking: monitor.stages.stage_6_ranking?.durationMs || 0,
       total: totalExecutionTimeMs,
     };
     const pipelineSummary = {

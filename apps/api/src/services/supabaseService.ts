@@ -481,7 +481,7 @@ export class DatabaseService {
       .from('jobs')
       .update(updates)
       .in('status', ['processing', 'cutting', 'captioning', 'transcribing', 'detecting_clips', 'recovering'])
-      .lt('updated_at', staleTimestamp)
+      .lt('heartbeat_at', staleTimestamp)
       .select('id');
 
     let { data, error } = await reclaimQuery({
