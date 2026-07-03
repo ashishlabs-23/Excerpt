@@ -132,14 +132,18 @@ async function validateDatabaseSchema() {
 function validateEnvironmentVariables() {
   const requiredEnvVars = [
     'SUPABASE_URL',
-    'GROQ_API_KEY',
-    'GEMINI_API_KEY'
   ];
   
   const missing = requiredEnvVars.filter(key => !process.env[key]);
   
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables:\n - ${missing.join('\n - ')}\nPlease configure these in your .env file before starting the system.`);
+  }
+
+  const aiKeys = ['GROQ_API_KEY', 'GEMINI_API_KEY'];
+  const missingAi = aiKeys.filter(key => !process.env[key]);
+  if (missingAi.length > 0) {
+    console.warn(`[SystemValidator]: ⚠️ Warning: Missing AI keys: ${missingAi.join(', ')}. AI features will be disabled.`);
   }
 }
 
