@@ -38,8 +38,12 @@ async function sleep(ms: number) {
 
 async function claimNextRenderJob() {
   try {
-    const { data, error } = await db.getSupabase()
-      .rpc('claim_next_render_job', { worker_id_text: workerInstanceId });
+      const workerEnv = process.env.WORKER_ENV || 'development';
+      const { data, error } = await db.getSupabase()
+        .rpc('claim_next_render_job', { 
+          worker_id_text: workerInstanceId,
+          worker_env_text: workerEnv
+        });
     if (error) throw error;
     if (data && data.length > 0) return data[0];
   } catch (err: any) {
@@ -72,7 +76,11 @@ async function processRenderJob(renderJob: any) {
 
     const payload = renderJob.payload;
     const clipId = renderJob.clip_id;
-    const { videoPath, clipStart, clipEnd, clipWords, tempDir, cropPlan } = payload;
+    const { clipStart, clipEnd, clipWords, cropPlan } = payload;
+    
+    // Path Normalization: Reconstruct absolute paths dynamically
+    const tempDir = path.join(process.cwd(), 'temp', renderJob.job_id);
+    const videoPath = path.join(tempDir, 'input.mp4');
     
     // Check Render Cache (L5)
     const urlToHash = payload.videoUrl || videoPath;

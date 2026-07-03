@@ -29,6 +29,7 @@ export class QueueService {
       youtube_url: data.videoUrl,
       num_clips: data.numClips || 3,
       status: 'queued',
+      environment: process.env.WORKER_ENV || 'development',
       progress: 0,
       user_id: data.userId,
       payload: { 

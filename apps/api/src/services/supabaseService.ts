@@ -235,6 +235,7 @@ export class DatabaseService {
       const { data: clips, error } = await this.db
         .from('clips')
         .select('*, jobs(user_id, video_url)')
+        .eq('environment', process.env.WORKER_ENV || 'development')
         .eq('is_archived', false)
         .order('created_at', { ascending: false })
         .limit(limit);
@@ -253,6 +254,7 @@ export class DatabaseService {
     const { data: clips, error } = await this.db
       .from('clips')
       .select('*, jobs(user_id, video_url)')
+      .eq('environment', process.env.WORKER_ENV || 'development')
       .in('job_id', jobIds)
       .eq('is_archived', false)
       .order('created_at', { ascending: false })
@@ -292,7 +294,8 @@ export class DatabaseService {
 
   async getStats(userId: string) {
     const isDevBypass = process.env.DISABLE_OWNERSHIP_CHECKS === 'true';
-    const userFilter = isDevBypass ? {} : { user_id: userId };
+    const envFilter = { environment: process.env.WORKER_ENV || 'development' };
+    const userFilter = isDevBypass ? envFilter : { user_id: userId, ...envFilter };
 
     const [
       { count: jobsCount },
@@ -310,11 +313,11 @@ export class DatabaseService {
     
     let clipsCount = 0;
     if (isDevBypass) {
-      const { count } = await this.db.from('clips').select('*', { count: 'exact', head: true });
+      const { count } = await this.db.from('clips').select('*', { count: 'exact', head: true }).match(envFilter);
       clipsCount = count || 0;
     } else if (jobIds.length > 0) {
       // Chunking if needed, but for now just use 'in'
-      const { count } = await this.db.from('clips').select('*', { count: 'exact', head: true }).in('job_id', jobIds.slice(0, 500));
+      const { count } = await this.db.from('clips').select('*', { count: 'exact', head: true }).match(envFilter).in('job_id', jobIds.slice(0, 500));
       clipsCount = count || 0;
     }
 
@@ -347,11 +350,12 @@ export class DatabaseService {
     );
   }
 
-  private async getNextQueuedJobLegacy() {
+  private async getNextQueuedJobLegacy(workerEnv: string) {
     const { data: candidates, error: selectError } = await this.db
       .from('jobs')
       .select('*')
       .eq('status', 'queued')
+      .eq('environment', workerEnv)
       .order('created_at', { ascending: true })
       .limit(1);
 
@@ -388,10 +392,13 @@ export class DatabaseService {
     return claimedJob;
   }
 
-  async getNextQueuedJob() {
+  async getNextQueuedJob(workerEnv: string) {
     try {
       const { data, error } = await this.db
-        .rpc('claim_next_job', { worker_id_text: DatabaseService.workerInstanceId });
+        .rpc('claim_next_job', { 
+          worker_id_text: DatabaseService.workerInstanceId,
+          worker_env_text: workerEnv
+        });
       
       if (error) {
         if (this.isMissingClaimRpcError(error)) {
@@ -399,7 +406,7 @@ export class DatabaseService {
             console.warn('[Supabase]: ⚠️ claim_next_job RPC missing! Falling back to legacy queue claiming. Run the queue_locking_migration.sql to enable safe distributed locking.');
             DatabaseService.legacyQueueWarningShown = true;
           }
-          return this.getNextQueuedJobLegacy();
+          return this.getNextQueuedJobLegacy(workerEnv);
         }
         throw error;
       }
