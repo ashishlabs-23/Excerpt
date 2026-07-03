@@ -26,6 +26,7 @@ export class QueueService {
     await db.createJob({
       id: jobId,
       video_url: data.videoUrl,
+      youtube_url: data.videoUrl,
       num_clips: data.numClips || 3,
       status: 'queued',
       progress: 0,
