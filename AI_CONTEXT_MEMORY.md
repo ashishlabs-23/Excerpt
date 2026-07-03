@@ -9,49 +9,53 @@
 
 ## 📊 Project Status
 **Production Readiness**
-*   **Infrastructure**: 95%
-*   **Generation**: 82%
+*   **Infrastructure**: 98%
+*   **Generation**: 85%
 *   **Voiceover**: 95%
-*   **Deployment**: Web App launched on Netlify, Backend launched on Render.
+*   **Deployment Architecture**: 
+    *   **Frontend**: Web App hosted on **Netlify** (auto-deployed via `git push`).
+    *   **Backend**: API and Workers hosted on **Render** (`https://excerpt-api.onrender.com`), triggered by `git push` to `master`.
+    *   **Database**: **Supabase** (PostgreSQL) acts as the single source of truth for the job state machine.
+    *   **Storage**: **Backblaze B2** is fully integrated using a private bucket approach. `@aws-sdk/s3-request-presigner` is used for secure signed URLs, Object Existence Checks, and Bucket Purging, avoiding Supabase storage limits.
 
 **Pending Focus Areas:**
-*   AI quota reliability
-*   Concurrent load testing
+*   PV-2 Cloud Execution Validation
+*   PV-3 (Consecutive Jobs) & PV-4 (Concurrent Jobs parallel execution)
+*   Persisting `LearningEngine` statistics to a database table.
 
 ---
 
-## 🧠 Recent Memory & Active Focus (Updated: June 2026)
+## 🧠 Recent Memory & Active Focus (Updated: July 2026)
 
 The development has matured from a Python-scripted prototype into a highly reliable, distributed micro-worker architecture.
 
-### Recent Fixes & Truth Phase Updates (June 2026):
-*   **Vision Engine V2 (Truth Mode):** Deprecated monolithic `FootballCropPlanner` for a domain-agnostic `UnifiedCropPlanner`. Implemented `PersistentTrackManager`, `CameraMotionEstimator`, separated `KalmanFilter` (prediction) & `EMAFilter` (smoothing), and built a `TemporalConsistencyEngine`. Verified tracking via FFmpeg side-by-side overlay (`truth_renderer.ts`).
-*   **Database Hardening:** Applied `v5_hardening_part4` migration, adding `debug_data`, `performance_metrics`, and `pipeline_summary` to the `jobs` table to unblock the state machine.
-*   **Storage Integration:** Backblaze B2 is now fully integrated using a private bucket approach. `@aws-sdk/s3-request-presigner` is used for secure signed URLs, Object Existence Checks, and Bucket Purging in `storageService.ts`, avoiding Supabase storage quotas.
+### Recent Fixes & Pipeline Refactoring (July 2026):
+*   **Database Trigger State Machine (`enforce_job_status_transition`)**: Enforced a strict semantic lifecycle in PostgreSQL. Solved the 10% media download stall where jobs were erroneously trying to bypass strict transition logic.
+*   **Option B Queue Architecture**: Completely rewrote the internal worker retry mechanism (`videoWorker.ts`). Jobs no longer bounce back to `queued` upon transient failures (like HTTP 429s). Instead, they remain in the `processing` state, holding their lock while retrying internally. This ensures the database accurately reflects the semantic lifecycle of the job.
+*   **JobAttempt Telemetry**: Implemented detailed telemetry arrays inside the job payload. The `attempts` array records the exact `startedAt`, `completedAt`, `durationMs`, `success`, and `error` for every retry iteration without blindly overwriting previous failures. Added `successfulAttempt` property to clearly identify which retry resolved the issue.
+*   **Zero Data-Loss Persistence**: Telemetry updates are now flushed to Supabase immediately after an attempt fails or succeeds, *before* the jittered exponential backoff sleep. If the Render container crashes during a backoff window, exact progress is preserved.
+*   **Schema Cache & NOT NULL Fixes**: Solved catastrophic job submission failures by migrating missing columns (`num_clips`, `video_url`) into the cloud database and modifying `queueService.ts` to supply both `video_url` and `youtube_url` to satisfy strict Postgres `NOT NULL` constraints.
+
 ### Active Working Files:
 *   `apps/api/src/workers/videoWorker.ts`
+*   `apps/api/src/services/queueService.ts`
+*   `apps/api/src/services/download/DownloadEngine.ts`
+*   `supabase/migrations/20260703000000_v9_retry_trigger.sql` (and recent patches)
 *   `apps/api/src/workers/renderWorker.ts`
-*   `apps/api/src/workers/voiceoverWorker.ts`
-*   `apps/api/src/services/aiService.ts`
-*   `apps/api/src/services/StorageIntegrityMonitor.ts`
-*   `apps/api/src/services/ZombieSweeperService.ts`
-*   `apps/api/src/services/ScriptGenerationService.ts`
-*   `apps/api/src/services/VoiceoverService.ts`
-*   `apps/web/src/components/RecentClips.tsx`
-*   `apps/web/src/components/CreateVoiceoverModal.tsx`
+*   `apps/api/src/services/supabaseService.ts`
 
 ---
 
 ## 🏗 Core Production Architecture
 
 ### 1. Root Orchestration & Workers
-The previous monolithic `viral_pipeline.py` has been superseded by a robust, TypeScript-driven distributed worker model running in Docker:
-*   **`videoWorker.ts`**: Handles heavy analysis, transcription, intelligence scoring, and crop planning.
+The previous monolithic `viral_pipeline.py` has been superseded by a robust, TypeScript-driven distributed worker model running in Docker on Render:
+*   **`videoWorker.ts`**: Handles heavy analysis, transcription, intelligence scoring, and crop planning. Manages jittered exponential backoff and tracks granular retry telemetry.
 *   **`renderWorker.ts`**: Dedicated to FFmpeg video manipulation and final clip assembly.
 *   **`voiceoverWorker.ts`**: Independent subsystem handling AI voiceover generation and audio-merging.
 
 ### 2. Queue Architecture & Database
-The queue system has moved away from simple Redis-BullMQ to a resilient, Supabase-backed persistent queue model:
+The queue system relies on a resilient, Supabase-backed persistent queue model:
 
 **Current Database Tables:**
 *   `jobs` (Primary analysis/clip generation queue)
@@ -88,9 +92,7 @@ Analysis Cache
 
 ### 5. Analysis Cache (`video_analysis_cache`)
 One of the most important optimization systems. Before hitting external APIs, the system checks the cache for:
-*   `raw_analysis`
-*   `candidate_moments`
-*   `render_plans`
+*   `raw_analysis`, `candidate_moments`, `render_plans`
 *   `provider` / `latency` / `cache_version`
 
 ---
@@ -99,6 +101,10 @@ One of the most important optimization systems. Before hitting external APIs, th
 
 ### 1. The Main Video Pipeline
 The real production flow resembles this robust sequence:
+```text
+queued -> processing -> (Retry 1..Max) -> completed/failed
+```
+**Internal Pipeline:**
 ```text
 YouTube Download -> Audio Verification -> Transcription
       ↓
@@ -130,18 +136,16 @@ Voiceover Gallery
 ## 🧪 Generation Truth Tests & Verification
 The following documents are now part of the project's strict verification process. Refer to these logs to understand systemic health:
 *   `Generation Truth Test V3`
+*   `PV-1` & `PV-2` Production Operational Validation (Render Cloud)
 *   `Queue Health Report`
 *   `Zombie Recovery Report`
 *   `Storage Integrity Report`
 *   `Voiceover Truth Test`
-*   `Football Crop Scorecard`
-*   `Caption Audit`
-*   `Thumbnail Audit`
 
 ---
-## 🐛 Production Issues (July 2026)
-1. **UX Navigation Issue**: The "Excerpt Arena" page (`/arena`) lacks the sidebar navigation menu or a "Back" button, preventing users from returning to the dashboard/home without manual URL input.
-2. **Core Functionality Error (State Machine)**: When generating clips, the job fails at 16% (during "Media Download") with error: `Job execution failed: Invalid transition from processing to recovering`. This indicates a state machine transition issue on the backend when downloading fails or faces rate limits.
+## 🐛 Production Issues & Resolutions (July 2026)
+1. **[RESOLVED] State Machine Transition Error**: Jobs were stalling at 10-16% due to an `Invalid transition from processing to recovering` or `queued`. Fixed by implementing Option B: keeping jobs in `processing` and tracking retry mechanics internally within the worker (`JobAttempt` telemetry).
+2. **[RESOLVED] Schema Column `NOT NULL` Violations**: Fixed database schema mismatches where the remote Supabase cache rejected jobs missing `youtube_url` and `num_clips`. Corrected both the Supabase schema and `queueService.ts` insertion payloads.
 
 ---
 *Note for AI Agents: When starting a new task, refer to this file first to understand the boundaries and roles of the system's files. It represents the ultimate ground truth of the production architecture.*

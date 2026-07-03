@@ -1769,8 +1769,14 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     };
   } catch (error: any) {
     const isCancel = error.message === 'Job was cancelled by the user.';
+    const attempt = data.attempt || 1;
+    const maxAttempts = data.maxAttempts || 3;
+    const isFinalAttempt = attempt >= maxAttempts;
+    const retryable = !isCancel && error.retryable !== false;
+    const isTerminal = !retryable || isFinalAttempt || isCancel;
+    
     const terminalStatus = isCancel ? JobStatus.CANCELLED : JobStatus.FAILED;
-    console.error(`[Worker]: ❌ Job ${jobId} ${isCancel ? 'CANCELLED' : 'FAILED'}:`, error.message);
+    console.error(`[Worker]: ❌ Job ${jobId} ${isCancel ? 'CANCELLED' : 'FAILED'} (Attempt ${attempt}/${maxAttempts}):`, error.message);
     const totalExecutionTimeMs = Date.now() - monitor.startedAt;
     const performanceMetrics = {
       download: monitor.stages.stage_0_input?.durationMs || 0,
@@ -1804,20 +1810,33 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     };
 
     try {
-      await JobStateMachine.transition(db, jobId, terminalStatus, {
-        failed_reason: error.message,
-        debug_data: debugData,
-        performance_metrics: performanceMetrics,
-        pipeline_summary: pipelineSummary,
-      });
+      if (isTerminal) {
+        // IMPORTANT: If we are already in failed/cancelled state, do not override
+        const { data: latestJob } = await db.getJob(jobId);
+        if (latestJob?.status !== JobStatus.FAILED && latestJob?.status !== JobStatus.CANCELLED) {
+          await JobStateMachine.transition(db, jobId, terminalStatus, {
+            failed_reason: error.message,
+            debug_data: debugData,
+            performance_metrics: performanceMetrics,
+            pipeline_summary: pipelineSummary,
+          });
+        }
+      } else {
+        // Option B: Keep job in PROCESSING during internal retries, but persist telemetry
+        await db.updateJob(jobId, {
+          debug_data: debugData,
+          performance_metrics: performanceMetrics,
+          pipeline_summary: pipelineSummary,
+        });
+      }
     } catch (dbError: any) {
       console.warn(`[Worker]: Failed to update job telemetry in DB: ${dbError.message}`);
     }
 
     return {
-      status: terminalStatus,
+      status: isTerminal ? terminalStatus : JobStatus.PROCESSING,
       failedReason: error.message,
-      retryable: !isCancel && error.retryable !== false,
+      retryable,
       totalExecutionTimeMs,
     };
   } finally {
@@ -1835,38 +1854,34 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
 let isPolling = false;
 let stopRequested = false;
 
-async function processClaimedJobWithRetries(job: any) {
-  let payload =
-    job.payload && typeof job.payload === 'object' && !Array.isArray(job.payload)
-      ? { ...job.payload }
-      : {};
-  const initialRetryPayload =
-    payload.retry && typeof payload.retry === 'object' && !Array.isArray(payload.retry)
-      ? payload.retry
-      : {};
-
-  const initialAttempt = Number(initialRetryPayload.attempt || 0);
-  const configuredMaxAttempts = Number(initialRetryPayload.maxAttempts || JOB_MAX_ATTEMPTS);
-  let attempt = Number.isFinite(initialAttempt) ? Math.max(0, initialAttempt) : 0;
-  const maxAttempts = Number.isFinite(configuredMaxAttempts)
-    ? Math.max(1, configuredMaxAttempts)
-    : JOB_MAX_ATTEMPTS;
+async function processClaimedJobWithRetries(job: any, workerId: number) {
+  let payload = job.payload && typeof job.payload === 'object' && !Array.isArray(job.payload) ? { ...job.payload } : {};
+  
+  const configuredMaxAttempts = Number(payload.maxAttempts || JOB_MAX_ATTEMPTS);
+  const maxAttempts = Number.isFinite(configuredMaxAttempts) ? Math.max(1, configuredMaxAttempts) : JOB_MAX_ATTEMPTS;
+  
+  // Load existing attempts from payload if present
+  let attemptsHistory: any[] = Array.isArray(payload.attempts) ? payload.attempts : [];
+  let attempt = attemptsHistory.length;
+  
   let lastResult: any = null;
 
   while (attempt < maxAttempts && !stopRequested) {
-    const currentRetryPayload =
-      payload.retry && typeof payload.retry === 'object' && !Array.isArray(payload.retry)
-        ? payload.retry
-        : {};
     attempt += 1;
+    const attemptStartedAt = new Date().toISOString();
+    
+    // Update the DB immediately to reflect the start of the retry
+    const currentAttemptObj = {
+      attempt,
+      startedAt: attemptStartedAt,
+      worker: workerId,
+      success: false,
+    };
+    
     const attemptPayload = {
       ...payload,
-      retry: {
-        ...currentRetryPayload,
-        attempt,
-        maxAttempts,
-        last_started_at: new Date().toISOString(),
-      },
+      attempts: [...attemptsHistory, currentAttemptObj],
+      maxAttempts
     };
 
     const jobData = {
@@ -1878,82 +1893,83 @@ async function processClaimedJobWithRetries(job: any) {
     };
 
     try {
+      // Because we use Option B, the status is ALWAYS 'processing' when retrying.
+      // This is allowed by the strict state machine trigger.
       await JobStateMachine.transition(db, job.id, JobStatus.PROCESSING, {
-        progress: Math.max(0, Number(job.progress || 0)),
+        progress: attempt === 1 ? Math.max(0, Number(job.progress || 0)) : 0,
         payload: attemptPayload,
       });
     } catch (err: any) {
-      console.warn(`[Worker]: Failed to persist retry attempt ${attempt}/${maxAttempts}:`, err);
+      console.warn(`[Worker]: Failed to persist retry attempt ${attempt}/${maxAttempts} start:`, err.message);
     }
 
     console.log(`[Worker]: Attempt ${attempt}/${maxAttempts} starting for job ${job.id}`);
     
+    let attemptDurationMs = 0;
+    
     if (job.job_type === 'voiceover' || job.payload?.job_type === 'voiceover') {
       console.warn(`[Worker]: Ignoring voiceover job ${job.id} as videoWorker no longer handles voiceovers.`);
-      lastResult = { status: 'failed', failedReason: 'Voiceovers are handled by a dedicated worker.', retryable: false };
+      lastResult = { status: 'failed', failedReason: 'Voiceovers are handled by a dedicated worker.', retryable: false, totalExecutionTimeMs: 0 };
     } else {
       lastResult = await processVideoJob(job.id, jobData);
     }
+    
+    attemptDurationMs = lastResult?.totalExecutionTimeMs || 0;
+    
+    // Finalize attempt
+    const completedAt = new Date().toISOString();
+    const isSuccess = lastResult?.status === 'completed';
+    const retryable = lastResult?.retryable !== false;
+    const failedReason = lastResult?.failedReason || (isSuccess ? undefined : 'Job failed before completion.');
 
-    if (lastResult?.status === 'completed') {
+    const finalizedAttemptObj = {
+      ...currentAttemptObj,
+      completedAt,
+      success: isSuccess,
+      retryable: isSuccess ? undefined : retryable,
+      error: isSuccess ? undefined : failedReason,
+      durationMs: attemptDurationMs
+    };
+    
+    attemptsHistory.push(finalizedAttemptObj);
+    payload = {
+      ...payload,
+      attempts: attemptsHistory,
+      successfulAttempt: isSuccess ? attempt : undefined
+    };
+
+    if (isSuccess) {
+      // The DB is already updated to completed by processVideoJob, but let's just make sure payload is synced
+      try {
+        await db.updateJob(job.id, { payload });
+      } catch(e) {}
       return lastResult;
     }
 
-    const retryable = lastResult?.retryable !== false;
-    const failedReason = lastResult?.failedReason || 'Job failed before completion.';
-
     if (!retryable || attempt >= maxAttempts || stopRequested) {
-      const terminalStatus = lastResult?.status === 'cancelled'
-        ? JobStatus.CANCELLED
-        : (retryable && attempt >= maxAttempts ? JobStatus.DEAD_LETTER : JobStatus.FAILED);
-        
-      const terminalPayload = {
-        ...payload,
-        retry: {
-          ...currentRetryPayload,
-          attempt,
-          maxAttempts,
-          dead_letter: terminalStatus === JobStatus.DEAD_LETTER,
-          exhausted_at: new Date().toISOString(),
-          error: failedReason,
-        },
-      };
-
+      // Terminated. The DB was already updated to failed by processVideoJob.
+      // Just sync the final payload
+      payload.exhausted_at = new Date().toISOString();
       try {
-        await JobStateMachine.transition(db, job.id, terminalStatus, {
-          failed_reason: failedReason,
-          payload: terminalPayload,
-        });
+        await db.updateJob(job.id, { payload });
       } catch (err: any) {
-        console.warn(`[Worker]: Failed to persist terminal retry state for ${job.id}:`, err);
+        console.warn(`[Worker]: Failed to sync terminal payload for ${job.id}:`, err.message);
       }
-
-      return { ...lastResult, status: terminalStatus, failedReason };
+      return { ...lastResult, status: JobStatus.FAILED, failedReason };
     }
 
     const retryDelayMs = getRetryDelayMs(attempt);
-    const nextRetryAt = new Date(Date.now() + retryDelayMs).toISOString();
-    payload = {
-      ...payload,
-      retry: {
-        ...currentRetryPayload,
-        attempt,
-        maxAttempts,
-        next_retry_at: nextRetryAt,
-        error: failedReason,
-      },
-    };
-
+    console.log(`[Worker]: Job ${job.id} failed attempt ${attempt}/${maxAttempts} - ${failedReason}. Retrying in ${retryDelayMs/1000}s...`);
+    
+    payload.next_retry_at = new Date(Date.now() + retryDelayMs).toISOString();
+    
+    // As requested: At the end of every retry cycle persist immediately!
     try {
-      await JobStateMachine.transition(db, job.id, 'retrying' as any, {
-        failed_reason: failedReason,
-        payload,
-      });
-    } catch (err: any) {
-      console.warn(`[Worker]: Failed to persist retry backoff for ${job.id}:`, err);
+      await db.updateJob(job.id, { payload });
+    } catch(e: any) {
+      console.warn(`[Worker]: Failed to persist retry payload for ${job.id}:`, e.message);
     }
 
-    console.warn(`[Worker]: Job ${job.id} failed attempt ${attempt}/${maxAttempts}. Retrying in ${retryDelayMs}ms.`);
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
     await sleep(retryDelayMs);
   }
@@ -1972,7 +1988,7 @@ const pollForJobs = async (workerId: number) => {
       
       if (job) {
         console.log(`[Worker-${workerId}]: ⚡ Processing Job ${job.id}`);
-        const result = await processClaimedJobWithRetries(job);
+        const result = await processClaimedJobWithRetries(job, workerId);
         if (result?.status === 'completed') {
           console.log(`[Worker-${workerId}]: ✅ Job ${job.id} finished.`);
         } else {
