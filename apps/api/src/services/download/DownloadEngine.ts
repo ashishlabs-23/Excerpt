@@ -192,7 +192,7 @@ export class DownloadIntelligenceEngine {
       let isThrottled = false;
       let lastSpeedBps = -1;
       
-      childProcess = execFile(bin, args, { maxBuffer: 1024 * 1024 * 500, timeout: 1000 * 60 * 30 }, (error, stdout, stderr) => {
+      childProcess = execFile(bin, args, { maxBuffer: 1024 * 1024 * 10, timeout: 1000 * 60 * 30 }, (error, stdout, stderr) => {
         if (slowTimer) clearTimeout(slowTimer);
         
         if (error || isThrottled) {
