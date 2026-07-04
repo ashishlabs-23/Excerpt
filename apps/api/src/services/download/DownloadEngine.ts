@@ -1,4 +1,4 @@
-import { execFile, ChildProcess } from 'child_process';
+import { execFile, spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { assertSafeRemoteVideoUrl } from '../urlSafety';
@@ -32,11 +32,11 @@ export class DownloadIntelligenceEngine {
     try {
       const bin = getBinaryPath('yt-dlp');
       return await new Promise((resolve) => {
-        execFile(bin, ['--dump-json', url], { timeout: 30000 }, (err, stdout) => {
+        execFile(bin, ['--print', 'duration', '--no-playlist', url], { timeout: 30000 }, (err, stdout) => {
           if (err) return resolve(null);
           try {
-            const data = JSON.parse(stdout);
-            resolve(data.duration || null);
+            const duration = parseFloat(stdout.trim());
+            resolve(isNaN(duration) ? null : duration);
           } catch {
             resolve(null);
           }
@@ -192,56 +192,23 @@ export class DownloadIntelligenceEngine {
       let isThrottled = false;
       let lastSpeedBps = -1;
       
-      childProcess = execFile(bin, args, { maxBuffer: 1024 * 1024 * 10, timeout: 1000 * 60 * 30 }, (error, stdout, stderr) => {
-        if (slowTimer) clearTimeout(slowTimer);
-        
-        if (error || isThrottled) {
-          if (isThrottled || error?.signal === 'SIGTERM' || (error?.message && error.message.includes('KILLED_THROTTLED'))) {
-            const err = new Error('KILLED_THROTTLED: Download was too slow (< 100KiB/s)');
-            (err as any).command = command;
-            return reject(err);
-          }
-          if (fs.existsSync(outputPath)) {
-            return resolve({ outputPath, command, finalSpeedBps: lastSpeedBps }); // Partial success edgecase
-          }
-          const rawMessage = [stderr, stdout, error?.message].filter(Boolean).join('\n');
-          const err = new Error(rawMessage);
-          (err as any).command = command;
-          return reject(err);
-        }
+      childProcess = spawn(bin, args);
 
-        if (!fs.existsSync(outputPath)) {
-          const dir = path.dirname(outputPath);
-          const files = fs.readdirSync(dir);
-          const matches = files
-            .filter(f => f.startsWith('input') && (f.endsWith('.mp4') || f.endsWith('.webm') || f.endsWith('.mkv') || f.includes('.mp4') || f.includes('.mkv')))
-            .map(f => ({ name: f, size: fs.statSync(path.join(dir, f)).size }))
-            .sort((a, b) => b.size - a.size);
-
-          if (matches.length > 0) {
-            const matchPath = path.join(dir, matches[0].name);
-            try {
-              fs.renameSync(matchPath, outputPath);
-              return resolve({ outputPath, command, finalSpeedBps: lastSpeedBps });
-            } catch {
-              return resolve({ outputPath: matchPath, command, finalSpeedBps: lastSpeedBps });
-            }
-          } else {
-            const err = new Error(`File not found at ${outputPath}`);
-            (err as any).command = command;
-            return reject(err);
-          }
-        }
-
-        resolve({ outputPath, command, finalSpeedBps: lastSpeedBps });
-      });
-
+      let stdoutStr = '';
+      let stderrStr = '';
+      
       childProcess.stdout?.on('data', (data) => {
-        const msg = data.toString().trim();
-        if (msg.includes('%')) {
-          const percentMatch = msg.match(/(\d+(\.\d+)?)%/);
-          const speedMatch = msg.match(/at\s+([\d.]+)(KiB|MiB|GiB|B)\/s/);
-          const etaMatch = msg.match(/ETA\s+([\d:]+)/);
+        const msg = data.toString();
+        if (stdoutStr.length < 50000) stdoutStr += msg;
+        
+        const lines = msg.split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.includes('%')) continue;
+          
+          const percentMatch = trimmed.match(/(\d+(\.\d+)?)%/);
+          const speedMatch = trimmed.match(/at\s+([\d.]+)(KiB|MiB|GiB|B)\/s/);
+          const etaMatch = trimmed.match(/ETA\s+([\d:]+)/);
 
           let speedBps = -1;
           if (speedMatch) {
@@ -279,6 +246,65 @@ export class DownloadIntelligenceEngine {
           }
         }
       });
+
+      childProcess.stderr?.on('data', (data) => {
+        const msg = data.toString();
+        if (stderrStr.length < 50000) stderrStr += msg;
+      });
+
+      const killTimeout = setTimeout(() => {
+        if (childProcess && !childProcess.killed) {
+          childProcess.kill('SIGKILL');
+          reject(new Error('Process timed out after 30 minutes'));
+        }
+      }, 1000 * 60 * 30);
+
+      childProcess.on('close', (code, signal) => {
+        clearTimeout(killTimeout);
+        if (slowTimer) clearTimeout(slowTimer);
+        
+        if (code !== 0 || isThrottled) {
+          if (isThrottled || signal === 'SIGTERM') {
+            const err = new Error('KILLED_THROTTLED: Download was too slow (< 100KiB/s)');
+            (err as any).command = command;
+            return reject(err);
+          }
+          if (fs.existsSync(outputPath)) {
+            return resolve({ outputPath, command, finalSpeedBps: lastSpeedBps });
+          }
+          const rawMessage = [stderrStr, stdoutStr, `Exited with code ${code} signal ${signal}`].filter(Boolean).join('\n');
+          const err = new Error(rawMessage);
+          (err as any).command = command;
+          return reject(err);
+        }
+
+        if (!fs.existsSync(outputPath)) {
+          const dir = path.dirname(outputPath);
+          const files = fs.readdirSync(dir);
+          const matches = files
+            .filter(f => f.startsWith('input') && (f.endsWith('.mp4') || f.endsWith('.webm') || f.endsWith('.mkv') || f.includes('.mp4') || f.includes('.mkv')))
+            .map(f => ({ name: f, size: fs.statSync(path.join(dir, f)).size }))
+            .sort((a, b) => b.size - a.size);
+
+          if (matches.length > 0) {
+            const matchPath = path.join(dir, matches[0].name);
+            try {
+              fs.renameSync(matchPath, outputPath);
+              return resolve({ outputPath, command, finalSpeedBps: lastSpeedBps });
+            } catch {
+              return resolve({ outputPath: matchPath, command, finalSpeedBps: lastSpeedBps });
+            }
+          } else {
+            const err = new Error(`File not found at ${outputPath}`);
+            (err as any).command = command;
+            return reject(err);
+          }
+        }
+
+        resolve({ outputPath, command, finalSpeedBps: lastSpeedBps });
+      });
+
+
     });
   }
 }
