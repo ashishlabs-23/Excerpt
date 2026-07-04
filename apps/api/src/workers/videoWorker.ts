@@ -1511,7 +1511,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         id: clipId,
         job_id: jobId,
         status: 'pending',
-        environment: process.env.WORKER_ENV || 'development',
+        environment: (process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development')),
         title: clipTitle,
         start_time: renderStart,
         end_time: renderEnd,
@@ -1555,7 +1555,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         job_id: jobId,
         clip_id: dbClip.id,
         status: 'pending',
-        environment: process.env.WORKER_ENV || 'development',
+        environment: (process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development')),
         payload: {
           clipStart: renderStart,
           clipEnd: renderEnd,
@@ -1984,7 +1984,7 @@ const pollForJobs = async (workerId: number) => {
   console.log(`[Worker-${workerId}]: 🟢 Polling started.`);
   while (!stopRequested) {
     try {
-      const workerEnv = process.env.WORKER_ENV || 'development';
+      const workerEnv = (process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development'));
       const job = await db.getNextQueuedJob(workerEnv);
       
       if (job) {

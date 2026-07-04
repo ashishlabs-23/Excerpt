@@ -38,7 +38,7 @@ async function sleep(ms: number) {
 
 async function claimNextRenderJob() {
   try {
-      const workerEnv = process.env.WORKER_ENV || 'development';
+      const workerEnv = (process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development'));
       const { data, error } = await db.getSupabase()
         .rpc('claim_next_render_job', { 
           worker_id_text: workerInstanceId,

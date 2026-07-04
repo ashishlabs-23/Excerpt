@@ -235,7 +235,7 @@ export class DatabaseService {
       const { data: clips, error } = await this.db
         .from('clips')
         .select('*, jobs(user_id, video_url)')
-        .eq('environment', process.env.WORKER_ENV || 'development')
+        .eq('environment', (process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development')))
         .eq('is_archived', false)
         .order('created_at', { ascending: false })
         .limit(limit);
@@ -254,7 +254,7 @@ export class DatabaseService {
     const { data: clips, error } = await this.db
       .from('clips')
       .select('*, jobs(user_id, video_url)')
-      .eq('environment', process.env.WORKER_ENV || 'development')
+      .eq('environment', (process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development')))
       .in('job_id', jobIds)
       .eq('is_archived', false)
       .order('created_at', { ascending: false })
@@ -294,7 +294,7 @@ export class DatabaseService {
 
   async getStats(userId: string) {
     const isDevBypass = process.env.DISABLE_OWNERSHIP_CHECKS === 'true';
-    const envFilter = { environment: process.env.WORKER_ENV || 'development' };
+    const envFilter = { environment: (process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development')) };
     const userFilter = isDevBypass ? envFilter : { user_id: userId, ...envFilter };
 
     const [
