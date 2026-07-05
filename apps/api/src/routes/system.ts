@@ -8,6 +8,10 @@ const router = Router();
 const db = new DatabaseService();
 const aiService = new AIService();
 
+// Git commit SHA injected at build time by Render / CI, or read from env.
+// Used to correlate dashboard data with a specific deployment for debugging.
+const GIT_COMMIT = process.env.GIT_COMMIT || process.env.RENDER_GIT_COMMIT || 'local';
+
 // GET /api/system/health
 router.get('/health', requireUserJWT, async (req: Request, res: Response) => {
   try {
@@ -444,6 +448,8 @@ router.get('/dashboard', requireUserJWT, async (req: Request, res: Response) => 
   res.json({
     version: 1,
     generatedAt: new Date().toISOString(),
+    serverTime: new Date().toISOString(),
+    commit: GIT_COMMIT,
     deployment: deploymentInfo,
     workers: workersData,
     pipeline: pipelineStages,
@@ -528,6 +534,8 @@ router.get('/live', requireUserJWT, async (req: Request, res: Response) => {
   res.json({
     version: 1,
     generatedAt: new Date().toISOString(),
+    serverTime: new Date().toISOString(),
+    commit: GIT_COMMIT,
     workers: workersData,
     activeJobCount,
     processingJobs,
@@ -711,6 +719,8 @@ router.get('/alerts', requireUserJWT, async (req: Request, res: Response) => {
   res.json({
     version: 1,
     generatedAt: now.toISOString(),
+    serverTime: now.toISOString(),
+    commit: GIT_COMMIT,
     count: alerts.length,
     alerts,
   });
