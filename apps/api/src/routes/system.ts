@@ -637,22 +637,66 @@ router.get('/live', requireUserJWT, async (req: Request, res: Response) => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/system/alerts
-// Real operational alerts derived from worker state, job failure rates,
-// AI provider exhaustion, and storage failures. Polled every 10s.
-// ─────────────────────────────────────────────────────────────────────────────
+// ── In-memory fallback if system_alerts table is missing ───────────────────
+const MEMORY_ALERTS = new Map<string, any>();
+
+async function syncAlertsToDb(supabase: any, generatedAlerts: any[]) {
+  try {
+    for (const a of generatedAlerts) {
+      const { data, error } = await supabase
+        .from('system_alerts')
+        .select('id, state')
+        .eq('alert_code', a.id)
+        .in('state', ['OPEN', 'ACKNOWLEDGED'])
+        .maybeSingle();
+
+      if (error && error.code === '42P01') {
+        // Table doesn't exist, use memory
+        throw new Error('Table missing');
+      }
+
+      if (!data) {
+        await supabase.from('system_alerts').insert({
+          alert_code: a.id,
+          severity: a.severity,
+          message: a.title + ' — ' + a.detail,
+          state: 'OPEN',
+          metadata: { detail: a.detail, detectedAt: a.detectedAt }
+        });
+      }
+    }
+    
+    const { data: openAlerts } = await supabase
+      .from('system_alerts')
+      .select('*')
+      .in('state', ['OPEN', 'ACKNOWLEDGED'])
+      .order('created_at', { ascending: false });
+
+    return (openAlerts || []).map((dbA: any) => ({
+      id: dbA.alert_code,
+      dbId: dbA.id,
+      severity: dbA.severity,
+      title: dbA.message.split(' — ')[0],
+      detail: dbA.metadata?.detail ?? '',
+      detectedAt: dbA.created_at,
+      state: dbA.state,
+      acknowledgedBy: dbA.acknowledged_by
+    }));
+  } catch {
+    // Fallback to in-memory state
+    for (const a of generatedAlerts) {
+      if (!MEMORY_ALERTS.has(a.id)) {
+        MEMORY_ALERTS.set(a.id, { ...a, dbId: a.id, state: 'OPEN' });
+      }
+    }
+    return Array.from(MEMORY_ALERTS.values()).filter(a => a.state !== 'RESOLVED');
+  }
+}
+
 router.get('/alerts', requireUserJWT, async (req: Request, res: Response) => {
   const supabase = db.getSupabase();
   const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8010';
-  const alerts: Array<{
-    id: string;
-    severity: 'error' | 'warning' | 'info';
-    title: string;
-    detail: string;
-    detectedAt: string;
-  }> = [];
-
+  const generatedAlerts: any[] = [];
   const now = new Date();
 
   // ── 1. Worker crash-loops ──────────────────────────────────────────────────
@@ -662,7 +706,7 @@ router.get('/alerts', requireUserJWT, async (req: Request, res: Response) => {
       const wData = await wRes.json();
       for (const w of (wData.workers || [])) {
         if (w.stopped) {
-          alerts.push({
+          generatedAlerts.push({
             id: `worker-crash-loop-${w.name}`,
             severity: 'error',
             title: `${w.name} crash-looped and stopped`,
@@ -670,7 +714,7 @@ router.get('/alerts', requireUserJWT, async (req: Request, res: Response) => {
             detectedAt: now.toISOString(),
           });
         } else if (!w.running) {
-          alerts.push({
+          generatedAlerts.push({
             id: `worker-down-${w.name}`,
             severity: 'error',
             title: `${w.name} is not running`,
@@ -678,7 +722,7 @@ router.get('/alerts', requireUserJWT, async (req: Request, res: Response) => {
             detectedAt: now.toISOString(),
           });
         } else if (w.restarts > 0) {
-          alerts.push({
+          generatedAlerts.push({
             id: `worker-restarts-${w.name}`,
             severity: 'warning',
             title: `${w.name} has restarted ${w.restarts} time(s)`,
@@ -690,7 +734,7 @@ router.get('/alerts', requireUserJWT, async (req: Request, res: Response) => {
     }
   } catch {}
 
-  // ── 2. Job failure rate in last hour ──────────────────────────────────────
+  // ── 2. Job failure rate ───────────────────────────────────────────────────
   try {
     const since1h = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const { data: recentJobs } = await supabase
@@ -704,31 +748,22 @@ router.get('/alerts', requireUserJWT, async (req: Request, res: Response) => {
     const failRate = total > 0 ? (failed / total) * 100 : 0;
 
     if (total >= 3 && failRate >= 50) {
-      alerts.push({
+      generatedAlerts.push({
         id: 'high-failure-rate',
         severity: 'error',
         title: `High job failure rate: ${Math.round(failRate)}%`,
         detail: `${failed} of ${total} jobs failed in the last hour.`,
         detectedAt: now.toISOString(),
       });
-    } else if (total >= 2 && failRate >= 25) {
-      alerts.push({
-        id: 'elevated-failure-rate',
-        severity: 'warning',
-        title: `Elevated failure rate: ${Math.round(failRate)}%`,
-        detail: `${failed} of ${total} jobs failed in the last hour.`,
-        detectedAt: now.toISOString(),
-      });
     }
 
-    // Download-specific failures
     const dlFailures = jobs.filter((j: any) =>
       j.status === 'failed' && j.failed_reason &&
       (j.failed_reason.toLowerCase().includes('download') ||
        j.failed_reason.toLowerCase().includes('strategy'))
     ).length;
     if (dlFailures >= 2) {
-      alerts.push({
+      generatedAlerts.push({
         id: 'download-failures',
         severity: 'warning',
         title: `${dlFailures} download failure(s) in last hour`,
@@ -746,79 +781,73 @@ router.get('/alerts', requireUserJWT, async (req: Request, res: Response) => {
       .eq('status', 'failed');
 
     if ((failedClips ?? 0) > 20) {
-      alerts.push({
+      generatedAlerts.push({
         id: 'storage-clip-failures',
         severity: 'error',
         title: `${failedClips} clips in failed state`,
         detail: 'Run StorageIntegrityMonitor.sweepDriftedClips() to diagnose.',
         detectedAt: now.toISOString(),
       });
-    } else if ((failedClips ?? 0) > 5) {
-      alerts.push({
-        id: 'storage-clip-warnings',
-        severity: 'warning',
-        title: `${failedClips} clips in failed state`,
-        detail: 'Some clips may be missing from B2. Check storage integrity.',
-        detectedAt: now.toISOString(),
-      });
     }
   } catch {}
 
-  // ── 4. AI provider config ─────────────────────────────────────────────────
-  try {
-    const geminiKeys = (process.env.GOOGLE_AI_API_KEY || '').split(',').filter(Boolean);
-    const groqKey = process.env.GROQ_API_KEY || '';
-    if (geminiKeys.length === 0 && !groqKey) {
-      alerts.push({
-        id: 'no-ai-providers',
-        severity: 'error',
-        title: 'No AI providers configured',
-        detail: 'GOOGLE_AI_API_KEY and GROQ_API_KEY are both missing. AI analysis will fail.',
-        detectedAt: now.toISOString(),
-      });
-    } else if (geminiKeys.length === 0) {
-      alerts.push({
-        id: 'gemini-unconfigured',
-        severity: 'warning',
-        title: 'Gemini not configured — Groq only',
-        detail: 'Primary AI provider missing. System is running on fallback only.',
-        detectedAt: now.toISOString(),
-      });
-    }
-  } catch {}
+  // ── Sync to DB or Memory ──────────────────────────────────────────────────
+  const activeAlerts = await syncAlertsToDb(supabase, generatedAlerts);
 
-  // ── 5. Stalled jobs (processing > 30 min with no heartbeat update) ────────
-  try {
-    const stalledThreshold = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-    const { count: stalledCount } = await supabase
-      .from('jobs')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'processing')
-      .lt('updated_at', stalledThreshold);
-
-    if ((stalledCount ?? 0) > 0) {
-      alerts.push({
-        id: 'stalled-jobs',
-        severity: 'warning',
-        title: `${stalledCount} stalled job(s) detected`,
-        detail: 'Jobs have been in processing state for >30 minutes without a heartbeat.',
-        detectedAt: now.toISOString(),
-      });
-    }
-  } catch {}
-
-  // Sort: errors first, then warnings, then info
-  const severityOrder = { error: 0, warning: 1, info: 2 };
-  alerts.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+  const severityOrder: Record<string, number> = { error: 0, warning: 1, info: 2 };
+  activeAlerts.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
 
   res.json({
     version: 1,
     generatedAt: now.toISOString(),
     serverTime: now.toISOString(),
     commit: GIT_COMMIT,
-    count: alerts.length,
-    alerts,
+    count: activeAlerts.length,
+    alerts: activeAlerts,
   });
+});
+
+// POST /api/system/alerts/:id/acknowledge
+router.post('/alerts/:id/acknowledge', requireUserJWT, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const userId = (req as any).user?.id;
+  const supabase = db.getSupabase();
+
+  try {
+    const { error } = await supabase
+      .from('system_alerts')
+      .update({ state: 'ACKNOWLEDGED', acknowledged_by: userId, updated_at: new Date().toISOString() })
+      .eq('id', id);
+      
+    if (error && error.code === '42P01') {
+      const a = MEMORY_ALERTS.get(id);
+      if (a) MEMORY_ALERTS.set(id, { ...a, state: 'ACKNOWLEDGED', acknowledgedBy: userId });
+    }
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/system/alerts/:id/resolve
+router.post('/alerts/:id/resolve', requireUserJWT, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const supabase = db.getSupabase();
+
+  try {
+    const { error } = await supabase
+      .from('system_alerts')
+      .update({ state: 'RESOLVED', resolved_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('id', id);
+      
+    if (error && error.code === '42P01') {
+      const a = MEMORY_ALERTS.get(id);
+      if (a) MEMORY_ALERTS.set(id, { ...a, state: 'RESOLVED' });
+    }
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -105,10 +105,12 @@ export interface AlertData {
   count: number;
   alerts: Array<{
     id: string;
+    dbId: string;
     severity: "error" | "warning" | "info";
     title: string;
     detail: string;
     detectedAt: string;
+    state: "OPEN" | "ACKNOWLEDGED" | "RESOLVED";
   }>;
 }
 

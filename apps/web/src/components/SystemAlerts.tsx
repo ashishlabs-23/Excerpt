@@ -11,6 +11,7 @@ import {
   RefreshCcw,
 } from "lucide-react";
 import { useAlerts } from "@/lib/useDashboard";
+import { authFetch } from "@/lib/api";
 
 const SEVERITY_CONFIG = {
   error: {
@@ -138,15 +139,18 @@ export function SystemAlerts() {
               {alerts.map((alert, i) => {
                 const cfg = SEVERITY_CONFIG[alert.severity];
                 const Icon = cfg.icon;
+                const isAck = alert.state === 'ACKNOWLEDGED';
 
                 return (
                   <motion.div
-                    key={alert.id}
+                    key={alert.dbId}
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 8 }}
                     transition={{ delay: i * 0.05 }}
-                    className={`flex items-start gap-4 p-4 rounded-2xl border ${cfg.card} relative overflow-hidden`}
+                    className={`flex items-start gap-4 p-4 rounded-2xl border relative overflow-hidden ${
+                      isAck ? "border-white/[0.05] bg-white/[0.02] opacity-60 hover:opacity-100" : cfg.card
+                    }`}
                   >
                     {/* Left severity bar */}
                     <div
@@ -154,28 +158,61 @@ export function SystemAlerts() {
                     />
 
                     <div className="pl-1 shrink-0 mt-0.5">
-                      <Icon size={15} className={cfg.badge.split(" ")[0]} />
+                      <Icon size={15} className={isAck ? "text-white/40" : cfg.badge.split(" ")[0]} />
                     </div>
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <p className="text-sm font-bold text-white leading-tight">
+                        <p className={`text-sm font-bold leading-tight ${isAck ? "text-white/60" : "text-white"}`}>
                           {alert.title}
                         </p>
                         <span
-                          className={`text-[7px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border ${cfg.badge}`}
+                          className={`text-[7px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border ${isAck ? "text-white/40 border-white/10" : cfg.badge}`}
                         >
                           {cfg.label}
                         </span>
+                        {isAck && (
+                          <span className="text-[7px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border text-emerald-400/80 border-emerald-500/20 bg-emerald-500/10">
+                            Acknowledged
+                          </span>
+                        )}
                       </div>
-                      <p className="text-[10px] text-white/40 leading-relaxed">
+                      <p className={`text-[10px] leading-relaxed ${isAck ? "text-white/30" : "text-white/40"}`}>
                         {alert.detail}
                       </p>
                     </div>
 
-                    <span className="text-[8px] text-white/20 shrink-0 mt-0.5">
-                      {timeAgo(alert.detectedAt)}
-                    </span>
+                    <div className="flex flex-col items-end gap-2 shrink-0 mt-0.5">
+                      <span className="text-[8px] text-white/20">
+                        {timeAgo(alert.detectedAt)}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {!isAck && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                await authFetch(`/api/system/alerts/${alert.dbId}/acknowledge`, { method: "POST" });
+                                refresh();
+                              } catch {}
+                            }}
+                            className="text-[8px] font-bold text-white/40 hover:text-white transition-colors"
+                          >
+                            ACKNOWLEDGE
+                          </button>
+                        )}
+                        <button
+                          onClick={async () => {
+                            try {
+                              await authFetch(`/api/system/alerts/${alert.dbId}/resolve`, { method: "POST" });
+                              refresh();
+                            } catch {}
+                          }}
+                          className="text-[8px] font-bold text-emerald-400 hover:text-emerald-300 transition-colors bg-emerald-500/10 px-2 py-1 rounded"
+                        >
+                          RESOLVE
+                        </button>
+                      </div>
+                    </div>
                   </motion.div>
                 );
               })}
