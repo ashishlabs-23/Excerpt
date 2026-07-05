@@ -7,16 +7,12 @@ import {
   AlertTriangle,
   CheckCircle2,
   XCircle,
-  RefreshCcw,
   Clock,
   Cpu,
   RotateCcw,
+  Loader2,
 } from "lucide-react";
-import { DashboardData } from "@/lib/useDashboard";
-
-interface Props {
-  workers: DashboardData["workers"];
-}
+import { useWorkerLive } from "@/lib/useDashboard";
 
 function formatUptime(seconds: number | null): string {
   if (seconds === null) return "—";
@@ -42,7 +38,28 @@ const WORKER_META: Record<string, { color: string; desc: string }> = {
   },
 };
 
-export const WorkerHeartbeatPanel: React.FC<Props> = ({ workers }) => {
+
+// Self-contained: polls /api/system/live every 5s independently of the parent dashboard
+export function WorkerHeartbeatPanel() {
+  const { data, loading, error } = useWorkerLive();
+  const workers = data?.workers ?? { healthy: false, workers: [] };
+  const activeJobCount = data?.activeJobCount ?? 0;
+
+  if (loading && !data) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="p-6 rounded-[28px] glass-card border-white/5 flex items-center justify-center h-48"
+      >
+        <div className="flex items-center gap-3 text-white/30">
+          <Loader2 size={16} className="animate-spin" />
+          <span className="text-sm">Connecting to workers…</span>
+        </div>
+      </motion.div>
+    );
+  }
+
   const workerList = workers.workers ?? [];
   const allHealthy = workers.healthy;
 
@@ -65,21 +82,31 @@ export const WorkerHeartbeatPanel: React.FC<Props> = ({ workers }) => {
         <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
           <div>
             <p className="text-[9px] font-black uppercase tracking-[0.3em] text-white/30 mb-1">
-              Worker Heartbeats
+              Worker Heartbeats · 5s
             </p>
             <h2 className="text-xl font-black text-white uppercase tracking-tight">
               Pipeline Workers
             </h2>
           </div>
-          <div className="flex items-center gap-2">
-            <span
-              className={`w-2 h-2 rounded-full animate-pulse ${
-                allHealthy ? "bg-emerald-500" : "bg-rose-500"
-              }`}
-            />
-            <span className="text-[9px] font-bold uppercase tracking-widest text-white/40">
-              {allHealthy ? "All Systems Nominal" : "Degraded"}
-            </span>
+          <div className="flex items-center gap-4">
+            {activeJobCount > 0 && (
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                <span className="text-[9px] font-black uppercase tracking-widest text-amber-400">
+                  {activeJobCount} active
+                </span>
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <span
+                className={`w-2 h-2 rounded-full animate-pulse ${
+                  allHealthy ? "bg-emerald-500" : "bg-rose-500"
+                }`}
+              />
+              <span className="text-[9px] font-bold uppercase tracking-widest text-white/40">
+                {allHealthy ? "All Systems Nominal" : "Degraded"}
+              </span>
+            </div>
           </div>
         </div>
 

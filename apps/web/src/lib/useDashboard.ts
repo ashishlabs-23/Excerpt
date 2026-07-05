@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { authFetch } from "@/lib/api";
 
 export interface DashboardData {
+  version: number;
   generatedAt: string;
   deployment: {
     environment?: string;
@@ -43,7 +44,6 @@ export interface DashboardData {
     avgDurationMs?: number | null;
     failures24h?: number;
     status?: string;
-    // summary fields
     total24h?: number;
     completed24h?: number;
     failed24h?: number;
@@ -85,39 +85,84 @@ export interface DashboardData {
   }>;
 }
 
-export function useDashboard(pollMs = 30000) {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastFetchedAt, setLastFetchedAt] = useState<Date | null>(null);
-  const isMounted = useRef(true);
-
-  const fetch_ = useCallback(async () => {
-    try {
-      const res = await authFetch("/api/system/dashboard");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json: DashboardData = await res.json();
-      if (isMounted.current) {
-        setData(json);
-        setError(null);
-        setLastFetchedAt(new Date());
-      }
-    } catch (e: any) {
-      if (isMounted.current) setError(e.message || "Failed to fetch dashboard");
-    } finally {
-      if (isMounted.current) setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    isMounted.current = true;
-    fetch_();
-    const interval = setInterval(fetch_, pollMs);
-    return () => {
-      isMounted.current = false;
-      clearInterval(interval);
-    };
-  }, [fetch_, pollMs]);
-
-  return { data, loading, error, lastFetchedAt, refresh: fetch_ };
+export interface LiveData {
+  version: number;
+  generatedAt: string;
+  workers: DashboardData["workers"];
+  activeJobCount: number;
+  processingJobs: Array<{
+    id: string;
+    status: string;
+    progress: number;
+    video_url?: string;
+    updated_at: string;
+  }>;
 }
+
+export interface AlertData {
+  version: number;
+  generatedAt: string;
+  count: number;
+  alerts: Array<{
+    id: string;
+    severity: "error" | "warning" | "info";
+    title: string;
+    detail: string;
+    detectedAt: string;
+  }>;
+}
+
+function makePoller<T>(path: string, intervalMs: number) {
+  return function usePoll(enabled = true) {
+    const [data, setData] = useState<T | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [lastFetchedAt, setLastFetchedAt] = useState<Date | null>(null);
+    const isMounted = useRef(true);
+
+    const fetch_ = useCallback(async () => {
+      try {
+        const res = await authFetch(path);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json: T = await res.json();
+        if (isMounted.current) {
+          setData(json);
+          setError(null);
+          setLastFetchedAt(new Date());
+        }
+      } catch (e: any) {
+        if (isMounted.current) setError(e.message || "Fetch failed");
+      } finally {
+        if (isMounted.current) setLoading(false);
+      }
+    }, []);
+
+    useEffect(() => {
+      if (!enabled) return;
+      isMounted.current = true;
+      fetch_();
+      if (intervalMs > 0) {
+        const interval = setInterval(fetch_, intervalMs);
+        return () => {
+          isMounted.current = false;
+          clearInterval(interval);
+        };
+      }
+      return () => { isMounted.current = false; };
+    }, [fetch_, enabled]);
+
+    return { data, loading, error, lastFetchedAt, refresh: fetch_ };
+  };
+}
+
+// Full dashboard: deployment info, pipeline, storage, AI providers, download strategies.
+// Polled every 60s — these change slowly and each poll runs Supabase analytics queries.
+export const useDashboard = makePoller<DashboardData>("/api/system/dashboard", 60_000);
+
+// Live heartbeat: worker process state + active job count.
+// Polled every 5s — in-memory only, zero Supabase queries.
+export const useWorkerLive = makePoller<LiveData>("/api/system/live", 5_000);
+
+// Operational alerts: derived from worker state, job failure rates, storage.
+// Polled every 10s — lightweight Supabase COUNT queries.
+export const useAlerts = makePoller<AlertData>("/api/system/alerts", 10_000);

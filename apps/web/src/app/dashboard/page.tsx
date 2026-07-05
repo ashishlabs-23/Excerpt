@@ -22,6 +22,7 @@ import { PipelineHealthMonitor } from "@/components/PipelineHealthMonitor";
 import { StorageIntegrityCard } from "@/components/StorageIntegrityCard";
 import { DownloadStrategyExplorer } from "@/components/DownloadStrategyExplorer";
 import { RetryTelemetryCard } from "@/components/RetryTelemetryCard";
+import { SystemAlerts } from "@/components/SystemAlerts";
 
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "dead_letter", "cancelled"]);
 
@@ -407,20 +408,34 @@ export default function DashboardPage() {
           <DashboardMetrics />
 
           {/* ═══════════════════════════════════════════════════════
-              OPERATIONS ROW 1: Deployment + AI Providers + Workers
+              SYSTEM ALERTS — top of ops zone, 10s poll
              ═══════════════════════════════════════════════════════ */}
-          {!dashLoading && dashboardData && (
-            <motion.section
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              className="grid grid-cols-1 md:grid-cols-3 gap-6"
-            >
-              <DeploymentInfoCard deployment={dashboardData.deployment} />
-              <AIProviderStatusBar providers={dashboardData.providers} />
-              <WorkerHeartbeatPanel workers={dashboardData.workers} />
-            </motion.section>
-          )}
+          <SystemAlerts />
+
+          {/* ═══════════════════════════════════════════════════════
+              OPERATIONS ROW 1: Deployment + AI Providers + Workers
+              Workers self-poll at 5s — sits beside the 60s cards
+             ═══════════════════════════════════════════════════════ */}
+          <motion.section
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="grid grid-cols-1 md:grid-cols-3 gap-6"
+          >
+            {dashboardData ? (
+              <>
+                <DeploymentInfoCard deployment={dashboardData.deployment} />
+                <AIProviderStatusBar providers={dashboardData.providers} />
+              </>
+            ) : (
+              <>
+                <div className="h-48 rounded-[28px] glass-card border-white/5 animate-pulse" />
+                <div className="h-48 rounded-[28px] glass-card border-white/5 animate-pulse" />
+              </>
+            )}
+            {/* WorkerHeartbeatPanel always renders — it self-polls at 5s */}
+            <WorkerHeartbeatPanel />
+          </motion.section>
 
           {/* ═══════════════════════════════════════════════════════
               PIPELINE HEALTH — centrepiece of operations dashboard

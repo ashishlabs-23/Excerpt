@@ -440,7 +440,9 @@ router.get('/dashboard', requireUserJWT, async (req: Request, res: Response) => 
   }
 
   // ── Compose response ───────────────────────────────────────────────────────
+  // version: bumped when shape changes so older frontends can adapt gracefully
   res.json({
+    version: 1,
     generatedAt: new Date().toISOString(),
     deployment: deploymentInfo,
     workers: workersData,
@@ -492,6 +494,226 @@ router.get('/jobs/retry-telemetry', requireUserJWT, async (req: Request, res: Re
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/system/live
+// Lightweight endpoint polled every 5s by WorkerHeartbeatPanel.
+// Returns only worker heartbeats + active job count — no Supabase analytics.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/live', requireUserJWT, async (req: Request, res: Response) => {
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8010';
+  const supabase = db.getSupabase();
+
+  let workersData: any = { healthy: false, workers: [] };
+  let activeJobCount = 0;
+  let processingJobs: any[] = [];
+
+  try {
+    const wRes = await fetch(`${apiBase}/health/workers`);
+    if (wRes.ok) workersData = await wRes.json();
+  } catch {}
+
+  try {
+    const { data: activeJobs } = await supabase
+      .from('jobs')
+      .select('id, status, progress, video_url, updated_at')
+      .in('status', ['processing', 'queued'])
+      .order('updated_at', { ascending: false })
+      .limit(10);
+    processingJobs = activeJobs || [];
+    activeJobCount = processingJobs.length;
+  } catch {}
+
+  res.json({
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    workers: workersData,
+    activeJobCount,
+    processingJobs,
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/system/alerts
+// Real operational alerts derived from worker state, job failure rates,
+// AI provider exhaustion, and storage failures. Polled every 10s.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/alerts', requireUserJWT, async (req: Request, res: Response) => {
+  const supabase = db.getSupabase();
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8010';
+  const alerts: Array<{
+    id: string;
+    severity: 'error' | 'warning' | 'info';
+    title: string;
+    detail: string;
+    detectedAt: string;
+  }> = [];
+
+  const now = new Date();
+
+  // ── 1. Worker crash-loops ──────────────────────────────────────────────────
+  try {
+    const wRes = await fetch(`${apiBase}/health/workers`);
+    if (wRes.ok) {
+      const wData = await wRes.json();
+      for (const w of (wData.workers || [])) {
+        if (w.stopped) {
+          alerts.push({
+            id: `worker-crash-loop-${w.name}`,
+            severity: 'error',
+            title: `${w.name} crash-looped and stopped`,
+            detail: `Restarted ${w.restarts} times. Manual restart required.`,
+            detectedAt: now.toISOString(),
+          });
+        } else if (!w.running) {
+          alerts.push({
+            id: `worker-down-${w.name}`,
+            severity: 'error',
+            title: `${w.name} is not running`,
+            detail: `Worker is stopped with ${w.restarts} restart(s).`,
+            detectedAt: now.toISOString(),
+          });
+        } else if (w.restarts > 0) {
+          alerts.push({
+            id: `worker-restarts-${w.name}`,
+            severity: 'warning',
+            title: `${w.name} has restarted ${w.restarts} time(s)`,
+            detail: `Uptime: ${w.uptimeSeconds ? Math.floor(w.uptimeSeconds / 60) + 'm' : 'unknown'}. Investigate logs.`,
+            detectedAt: now.toISOString(),
+          });
+        }
+      }
+    }
+  } catch {}
+
+  // ── 2. Job failure rate in last hour ──────────────────────────────────────
+  try {
+    const since1h = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { data: recentJobs } = await supabase
+      .from('jobs')
+      .select('status, failed_reason')
+      .gte('created_at', since1h);
+
+    const jobs = recentJobs || [];
+    const total = jobs.length;
+    const failed = jobs.filter((j: any) => j.status === 'failed').length;
+    const failRate = total > 0 ? (failed / total) * 100 : 0;
+
+    if (total >= 3 && failRate >= 50) {
+      alerts.push({
+        id: 'high-failure-rate',
+        severity: 'error',
+        title: `High job failure rate: ${Math.round(failRate)}%`,
+        detail: `${failed} of ${total} jobs failed in the last hour.`,
+        detectedAt: now.toISOString(),
+      });
+    } else if (total >= 2 && failRate >= 25) {
+      alerts.push({
+        id: 'elevated-failure-rate',
+        severity: 'warning',
+        title: `Elevated failure rate: ${Math.round(failRate)}%`,
+        detail: `${failed} of ${total} jobs failed in the last hour.`,
+        detectedAt: now.toISOString(),
+      });
+    }
+
+    // Download-specific failures
+    const dlFailures = jobs.filter((j: any) =>
+      j.status === 'failed' && j.failed_reason &&
+      (j.failed_reason.toLowerCase().includes('download') ||
+       j.failed_reason.toLowerCase().includes('strategy'))
+    ).length;
+    if (dlFailures >= 2) {
+      alerts.push({
+        id: 'download-failures',
+        severity: 'warning',
+        title: `${dlFailures} download failure(s) in last hour`,
+        detail: 'All download strategies may be blocked. Check yt-dlp and cookies.',
+        detectedAt: now.toISOString(),
+      });
+    }
+  } catch {}
+
+  // ── 3. Storage failures ───────────────────────────────────────────────────
+  try {
+    const { count: failedClips } = await supabase
+      .from('clips')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'failed');
+
+    if ((failedClips ?? 0) > 20) {
+      alerts.push({
+        id: 'storage-clip-failures',
+        severity: 'error',
+        title: `${failedClips} clips in failed state`,
+        detail: 'Run StorageIntegrityMonitor.sweepDriftedClips() to diagnose.',
+        detectedAt: now.toISOString(),
+      });
+    } else if ((failedClips ?? 0) > 5) {
+      alerts.push({
+        id: 'storage-clip-warnings',
+        severity: 'warning',
+        title: `${failedClips} clips in failed state`,
+        detail: 'Some clips may be missing from B2. Check storage integrity.',
+        detectedAt: now.toISOString(),
+      });
+    }
+  } catch {}
+
+  // ── 4. AI provider config ─────────────────────────────────────────────────
+  try {
+    const geminiKeys = (process.env.GOOGLE_AI_API_KEY || '').split(',').filter(Boolean);
+    const groqKey = process.env.GROQ_API_KEY || '';
+    if (geminiKeys.length === 0 && !groqKey) {
+      alerts.push({
+        id: 'no-ai-providers',
+        severity: 'error',
+        title: 'No AI providers configured',
+        detail: 'GOOGLE_AI_API_KEY and GROQ_API_KEY are both missing. AI analysis will fail.',
+        detectedAt: now.toISOString(),
+      });
+    } else if (geminiKeys.length === 0) {
+      alerts.push({
+        id: 'gemini-unconfigured',
+        severity: 'warning',
+        title: 'Gemini not configured — Groq only',
+        detail: 'Primary AI provider missing. System is running on fallback only.',
+        detectedAt: now.toISOString(),
+      });
+    }
+  } catch {}
+
+  // ── 5. Stalled jobs (processing > 30 min with no heartbeat update) ────────
+  try {
+    const stalledThreshold = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const { count: stalledCount } = await supabase
+      .from('jobs')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'processing')
+      .lt('updated_at', stalledThreshold);
+
+    if ((stalledCount ?? 0) > 0) {
+      alerts.push({
+        id: 'stalled-jobs',
+        severity: 'warning',
+        title: `${stalledCount} stalled job(s) detected`,
+        detail: 'Jobs have been in processing state for >30 minutes without a heartbeat.',
+        detectedAt: now.toISOString(),
+      });
+    }
+  } catch {}
+
+  // Sort: errors first, then warnings, then info
+  const severityOrder = { error: 0, warning: 1, info: 2 };
+  alerts.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+
+  res.json({
+    version: 1,
+    generatedAt: now.toISOString(),
+    count: alerts.length,
+    alerts,
+  });
 });
 
 export default router;
