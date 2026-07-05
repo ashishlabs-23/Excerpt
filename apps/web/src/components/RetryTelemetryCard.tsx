@@ -69,6 +69,53 @@ const STRATEGY_BADGE: Record<string, string> = {
   android: "bg-amber-500/10 text-amber-400 border-amber-500/20",
 };
 
+// Color-codes an attempt row by outcome: green = success, amber = 4xx client error,
+// rose-red = 429/5xx/timeout/bot-detect, so operators can parse a retry cascade at a glance.
+function getAttemptColors(attempt: DownloadAttempt): {
+  row: string;
+  dot: string;
+  dotAnim: string;
+  statusText: string;
+} {
+  const isSuccess = attempt.result === "success";
+  const http = attempt.httpStatus ?? 0;
+  const cat = (attempt.failureCategory ?? "").toLowerCase();
+
+  if (isSuccess) {
+    return {
+      row: "border-emerald-500/15 bg-emerald-500/[0.03]",
+      dot: "bg-emerald-400",
+      dotAnim: "",
+      statusText: "text-emerald-400",
+    };
+  }
+  // 429 rate-limit / bot-detection / quota
+  if (http === 429 || cat.includes("rate") || cat.includes("quota") || cat.includes("bot")) {
+    return {
+      row: "border-rose-500/20 bg-rose-500/[0.04]",
+      dot: "bg-rose-500",
+      dotAnim: "animate-pulse",
+      statusText: "text-rose-400",
+    };
+  }
+  // Generic 4xx client errors
+  if (http >= 400 && http < 500) {
+    return {
+      row: "border-amber-500/15 bg-amber-500/[0.03]",
+      dot: "bg-amber-400",
+      dotAnim: "",
+      statusText: "text-amber-400",
+    };
+  }
+  // 5xx / timeout / network
+  return {
+    row: "border-rose-500/15 bg-rose-500/[0.03]",
+    dot: "bg-rose-400",
+    dotAnim: "",
+    statusText: "text-rose-400",
+  };
+}
+
 function DownloadAttemptTimeline({
   attempts,
 }: {
@@ -83,85 +130,79 @@ function DownloadAttemptTimeline({
   }
 
   return (
-    <div className="flex flex-col gap-2 mt-2">
+    <div className="flex flex-col gap-1 mt-2">
       {attempts.map((attempt, i) => {
         const isSuccess = attempt.result === "success";
         const badge =
           STRATEGY_BADGE[attempt.strategyId] ??
           "bg-white/5 text-white/40 border-white/10";
+        const colors = getAttemptColors(attempt);
+        const isLast = i === attempts.length - 1;
 
         return (
           <React.Fragment key={i}>
-            {/* Connector line */}
-            {i > 0 && (
-              <div className="flex justify-start pl-4">
-                <div className="w-px h-3 bg-white/10" />
-              </div>
-            )}
             <motion.div
               initial={{ opacity: 0, x: -6 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: i * 0.06 }}
-              className={`flex items-start gap-3 p-3 rounded-xl border transition-all ${
-                isSuccess
-                  ? "border-emerald-500/15 bg-emerald-500/[0.03]"
-                  : "border-rose-500/15 bg-rose-500/[0.03]"
-              }`}
+              className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${colors.row}`}
             >
-              {/* Status icon */}
-              <div className="shrink-0 mt-0.5">
-                {isSuccess ? (
-                  <CheckCircle2 size={13} className="text-emerald-400" />
-                ) : (
-                  <XCircle size={13} className="text-rose-400" />
-                )}
+              {/* Attempt number + dot */}
+              <div className="flex flex-col items-center gap-1 shrink-0">
+                <span className={`w-2.5 h-2.5 rounded-full ${colors.dot} ${colors.dotAnim}`} />
+                <span className="text-[7px] font-black text-white/20">#{i + 1}</span>
               </div>
 
-              {/* Content */}
-              <div className="flex-1 min-w-0">
-                <div className="flex flex-wrap items-center gap-2 mb-1">
-                  <span
-                    className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border ${badge}`}
-                  >
-                    {attempt.strategyId}
-                  </span>
-                  {attempt.httpStatus && (
-                    <span className="text-[8px] font-bold text-rose-400/80">
-                      HTTP {attempt.httpStatus}
-                    </span>
-                  )}
-                  {attempt.failureCategory && (
-                    <span className="text-[8px] text-white/30">
-                      {attempt.failureCategory.replace(/_/g, " ")}
-                    </span>
-                  )}
-                </div>
+              {/* Strategy badge */}
+              <span
+                className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border shrink-0 ${badge}`}
+              >
+                {attempt.strategyId}
+              </span>
 
-                <div className="flex items-center gap-4 text-[9px] text-white/30">
-                  <div className="flex items-center gap-1">
-                    <Clock size={9} />
-                    {fmtMs(attempt.duration_ms)}
-                  </div>
-                  {attempt.downloadSpeedMbps != null && (
-                    <span>
-                      {attempt.downloadSpeedMbps.toFixed(1)} Mbps
-                    </span>
-                  )}
-                  <span
-                    className={`font-bold ${
-                      isSuccess ? "text-emerald-400" : "text-rose-400"
-                    }`}
-                  >
-                    {isSuccess ? "Success" : "Failed"}
-                  </span>
-                </div>
+              {/* HTTP status */}
+              {attempt.httpStatus && (
+                <span className={`text-[9px] font-black ${colors.statusText} shrink-0`}>
+                  {attempt.httpStatus}
+                </span>
+              )}
+
+              {/* Failure category */}
+              {attempt.failureCategory && (
+                <span className="text-[8px] text-white/30 truncate hidden sm:block">
+                  {attempt.failureCategory.replace(/_/g, " ")}
+                </span>
+              )}
+
+              {/* Spacer */}
+              <div className="flex-1" />
+
+              {/* Duration */}
+              <div className="flex items-center gap-1 text-[9px] text-white/30 shrink-0">
+                <Clock size={8} />
+                {fmtMs(attempt.duration_ms)}
               </div>
 
-              {/* Attempt number */}
-              <span className="text-[8px] font-black text-white/15 shrink-0">
-                #{i + 1}
+              {/* Speed */}
+              {attempt.downloadSpeedMbps != null && (
+                <span className="text-[8px] text-white/25 shrink-0 hidden sm:block">
+                  {attempt.downloadSpeedMbps.toFixed(1)} Mbps
+                </span>
+              )}
+
+              {/* Result */}
+              <span className={`text-[9px] font-black shrink-0 ${colors.statusText}`}>
+                {isSuccess ? "✓" : "✗"}
               </span>
             </motion.div>
+
+            {/* Connector arrow between attempts */}
+            {!isLast && (
+              <div className="flex items-center gap-1 pl-4">
+                <div className="w-px h-2 bg-white/10" />
+                <span className="text-[7px] text-white/15 uppercase tracking-widest">retry</span>
+              </div>
+            )}
           </React.Fragment>
         );
       })}
@@ -357,7 +398,7 @@ export const RetryTelemetryCard: React.FC = () => {
       }
     };
     load();
-    const iv = setInterval(load, 20000);
+    const iv = setInterval(load, 15_000);
     return () => clearInterval(iv);
   }, []);
 
