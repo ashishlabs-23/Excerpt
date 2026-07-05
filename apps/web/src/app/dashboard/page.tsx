@@ -14,6 +14,14 @@ import { HowItWorksModal } from "@/components/HowItWorksModal";
 import { authFetch } from "@/lib/api";
 import { useRealtimeSync } from "@/lib/useRealtimeSync";
 import { AuthGate } from "@/components/AuthGate";
+import { useDashboard } from "@/lib/useDashboard";
+import { DeploymentInfoCard } from "@/components/DeploymentInfoCard";
+import { WorkerHeartbeatPanel } from "@/components/WorkerHeartbeatPanel";
+import { AIProviderStatusBar } from "@/components/AIProviderStatusBar";
+import { PipelineHealthMonitor } from "@/components/PipelineHealthMonitor";
+import { StorageIntegrityCard } from "@/components/StorageIntegrityCard";
+import { DownloadStrategyExplorer } from "@/components/DownloadStrategyExplorer";
+import { RetryTelemetryCard } from "@/components/RetryTelemetryCard";
 
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "dead_letter", "cancelled"]);
 
@@ -22,6 +30,7 @@ function isTerminalJobStatus(status?: string) {
 }
 
 export default function DashboardPage() {
+  const { data: dashboardData, loading: dashLoading } = useDashboard(30000);
   const [activeJob, setActiveJob] = useState<any>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -396,7 +405,35 @@ export default function DashboardPage() {
           </motion.section>
 
           <DashboardMetrics />
-          <QualityDashboard />
+
+          {/* ═══════════════════════════════════════════════════════
+              OPERATIONS ROW 1: Deployment + AI Providers + Workers
+             ═══════════════════════════════════════════════════════ */}
+          {!dashLoading && dashboardData && (
+            <motion.section
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+              className="grid grid-cols-1 md:grid-cols-3 gap-6"
+            >
+              <DeploymentInfoCard deployment={dashboardData.deployment} />
+              <AIProviderStatusBar providers={dashboardData.providers} />
+              <WorkerHeartbeatPanel workers={dashboardData.workers} />
+            </motion.section>
+          )}
+
+          {/* ═══════════════════════════════════════════════════════
+              PIPELINE HEALTH — centrepiece of operations dashboard
+             ═══════════════════════════════════════════════════════ */}
+          {!dashLoading && dashboardData && (
+            <motion.section
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.1 }}
+            >
+              <PipelineHealthMonitor pipeline={dashboardData.pipeline} />
+            </motion.section>
+          )}
 
           {/* Success Notification - Cyber Style */}
           <AnimatePresence>
@@ -443,6 +480,17 @@ export default function DashboardPage() {
               <ActiveJobs />
             </motion.section>
 
+            {/* ═════════════════════════════════════════════════
+                RETRY TELEMETRY (merged with Job Attempt Timeline)
+               ═════════════════════════════════════════════════ */}
+            <motion.section
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+            >
+              <RetryTelemetryCard />
+            </motion.section>
+
             <motion.section
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
@@ -451,6 +499,27 @@ export default function DashboardPage() {
               <RecentClips clips={activeJob?.result} />
             </motion.section>
           </div>
+
+          {/* ═══════════════════════════════════════════════════════
+              STORAGE INTEGRITY + DOWNLOAD STRATEGY EXPLORER
+             ═══════════════════════════════════════════════════════ */}
+          {!dashLoading && dashboardData && (
+            <motion.section
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.2 }}
+              className="grid grid-cols-1 lg:grid-cols-3 gap-6"
+            >
+              <div className="lg:col-span-1">
+                <StorageIntegrityCard storage={dashboardData.storage} />
+              </div>
+              <div className="lg:col-span-2">
+                <DownloadStrategyExplorer strategies={dashboardData.downloadStrategies} />
+              </div>
+            </motion.section>
+          )}
+
+          <QualityDashboard />
         </div>
       </main>
 
