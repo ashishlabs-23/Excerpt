@@ -726,4 +726,110 @@ router.get('/alerts', requireUserJWT, async (req: Request, res: Response) => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/system/queue-pressure
+// Real-time queue depth: per-status counts, avg wait, pipeline throughput.
+// Polled every 10s. Uses lightweight COUNT queries — no analytics aggregation.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/queue-pressure', requireUserJWT, async (req: Request, res: Response) => {
+  const supabase = db.getSupabase();
+  const now = Date.now();
+
+  try {
+    // ── Status counts ───────────────────────────────────────────────────────
+    const statusList = ['queued', 'processing', 'rendering', 'uploading', 'completed', 'failed'];
+    const countResults: Record<string, number> = {};
+
+    await Promise.all(statusList.map(async (status) => {
+      try {
+        const { count } = await supabase
+          .from('jobs')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', status);
+        countResults[status] = count ?? 0;
+      } catch {
+        countResults[status] = 0;
+      }
+    }));
+
+    // ── Average queue wait (queued jobs: time since created_at) ────────────
+    let avgWaitMs: number | null = null;
+    try {
+      const { data: queuedJobs } = await supabase
+        .from('jobs')
+        .select('created_at')
+        .eq('status', 'queued')
+        .order('created_at', { ascending: true })
+        .limit(50);
+
+      if (queuedJobs && queuedJobs.length > 0) {
+        const totalWaitMs = queuedJobs.reduce((sum: number, j: any) => {
+          return sum + (now - new Date(j.created_at).getTime());
+        }, 0);
+        avgWaitMs = Math.round(totalWaitMs / queuedJobs.length);
+      }
+    } catch {}
+
+    // ── Throughput: jobs completed in last 1h and last 24h ─────────────────
+    let completedLastHour = 0;
+    let completedLast24h = 0;
+    try {
+      const since1h = new Date(now - 60 * 60 * 1000).toISOString();
+      const since24h = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+
+      const [r1h, r24h] = await Promise.all([
+        supabase.from('jobs').select('*', { count: 'exact', head: true })
+          .eq('status', 'completed').gte('updated_at', since1h),
+        supabase.from('jobs').select('*', { count: 'exact', head: true })
+          .eq('status', 'completed').gte('updated_at', since24h),
+      ]);
+      completedLastHour = r1h.count ?? 0;
+      completedLast24h = r24h.count ?? 0;
+    } catch {}
+
+    // ── Oldest queued job ──────────────────────────────────────────────────
+    let oldestQueuedAt: string | null = null;
+    try {
+      const { data: oldest } = await supabase
+        .from('jobs')
+        .select('created_at, video_url')
+        .eq('status', 'queued')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .single();
+      oldestQueuedAt = oldest?.created_at ?? null;
+    } catch {}
+
+    const pressure = countResults['queued'] + countResults['processing'];
+    const pressureLevel =
+      pressure > 20 ? 'critical' :
+      pressure > 10 ? 'high' :
+      pressure > 3  ? 'normal' : 'low';
+
+    res.json({
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      serverTime: new Date().toISOString(),
+      commit: GIT_COMMIT,
+      pressureLevel,
+      counts: {
+        queued:     countResults['queued']     ?? 0,
+        processing: countResults['processing'] ?? 0,
+        rendering:  countResults['rendering']  ?? 0,
+        uploading:  countResults['uploading']  ?? 0,
+        completed:  countResults['completed']  ?? 0,
+        failed:     countResults['failed']     ?? 0,
+      },
+      avgWaitMs,
+      throughput: {
+        completedLastHour,
+        completedLast24h,
+      },
+      oldestQueuedAt,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

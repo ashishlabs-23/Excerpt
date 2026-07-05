@@ -23,6 +23,7 @@ import { StorageIntegrityCard } from "@/components/StorageIntegrityCard";
 import { DownloadStrategyExplorer } from "@/components/DownloadStrategyExplorer";
 import { RetryTelemetryCard } from "@/components/RetryTelemetryCard";
 import { SystemAlerts } from "@/components/SystemAlerts";
+import { QueuePressureCard } from "@/components/QueuePressureCard";
 
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "dead_letter", "cancelled"]);
 
@@ -31,7 +32,7 @@ function isTerminalJobStatus(status?: string) {
 }
 
 export default function DashboardPage() {
-  const { data: dashboardData, loading: dashLoading } = useDashboard(30000);
+  const { data: dashboardData, loading: dashLoading } = useDashboard();
   const [activeJob, setActiveJob] = useState<any>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -411,6 +412,11 @@ export default function DashboardPage() {
               SYSTEM ALERTS — top of ops zone, 10s poll
              ═══════════════════════════════════════════════════════ */}
           <SystemAlerts />
+
+          {/* ═══════════════════════════════════════════════════════
+              QUEUE PRESSURE — self-polls 10s, shows pipeline depth
+             ═══════════════════════════════════════════════════════ */}
+          <QueuePressureCard />
 
           {/* ═══════════════════════════════════════════════════════
               OPERATIONS ROW 1: Deployment + AI Providers + Workers
