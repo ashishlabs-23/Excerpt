@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { JobDetailInspector } from "@/components/JobDetailInspector";
 import {
   RotateCcw,
   CheckCircle2,
@@ -210,7 +211,7 @@ function DownloadAttemptTimeline({
   );
 }
 
-function JobRow({ job }: { job: TelemetryJob }) {
+function JobRow({ job, onInspect }: { job: TelemetryJob, onInspect: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const hasAttempts =
     job.downloadAttempts.length > 0 || job.jobAttempts.length > 0;
@@ -222,9 +223,9 @@ function JobRow({ job }: { job: TelemetryJob }) {
       className="rounded-2xl border border-white/[0.05] bg-black/20 overflow-hidden"
     >
       {/* Row header — always visible */}
-      <button
+      <div
         onClick={() => setExpanded((e) => !e)}
-        className="w-full flex items-center justify-between p-4 hover:bg-white/[0.02] transition-colors text-left"
+        className="w-full flex items-center justify-between p-4 hover:bg-white/[0.02] transition-colors text-left cursor-pointer"
       >
         <div className="flex items-center gap-3 min-w-0">
           {/* Status dot */}
@@ -263,20 +264,34 @@ function JobRow({ job }: { job: TelemetryJob }) {
           </div>
         </div>
 
-        {/* Right side: attempt count + chevron */}
+        {/* Right side: attempt count + inspect button + chevron */}
         <div className="flex items-center gap-3 shrink-0 ml-3">
           {hasAttempts && (
-            <span className="text-[8px] font-black text-white/25 bg-white/5 px-2 py-0.5 rounded">
+            <span className="text-[8px] font-black text-white/25 bg-white/5 px-2 py-0.5 rounded hidden sm:block">
               {job.downloadAttempts.length} dl attempt{job.downloadAttempts.length !== 1 ? "s" : ""}
               {job.jobAttempts.length > 0 &&
                 ` · ${job.jobAttempts.length} retry`}
             </span>
           )}
-          <div className="text-white/25">
+          
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onInspect();
+            }}
+            className="flex items-center gap-1.5 px-2 py-1 rounded bg-white/[0.03] hover:bg-white/[0.08] transition-colors border border-white/[0.05]"
+          >
+            <span className="text-[8px] font-black uppercase tracking-widest text-white/40">
+              Inspect
+            </span>
+            <ChevronRight size={10} className="text-white/40" />
+          </button>
+
+          <div className="text-white/25 ml-1">
             {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
           </div>
         </div>
-      </button>
+      </div>
 
       {/* Expanded telemetry */}
       <AnimatePresence>
@@ -381,6 +396,7 @@ export const RetryTelemetryCard: React.FC = () => {
   const [jobs, setJobs] = useState<TelemetryJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [inspectJobId, setInspectJobId] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -410,6 +426,14 @@ export const RetryTelemetryCard: React.FC = () => {
       className="p-6 sm:p-8 rounded-[28px] glass-card border-white/5 relative overflow-hidden"
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_right,_rgba(239,68,68,0.03),transparent_50%)] pointer-events-none" />
+
+      {/* Job Detail Inspector modal */}
+      {inspectJobId && (
+        <JobDetailInspector
+          jobId={inspectJobId}
+          onClose={() => setInspectJobId(null)}
+        />
+      )}
 
       <div className="relative z-10">
         {/* Header */}
@@ -448,7 +472,7 @@ export const RetryTelemetryCard: React.FC = () => {
         ) : (
           <div className="space-y-2">
             {jobs.map((job) => (
-              <JobRow key={job.id} job={job} />
+              <JobRow key={job.id} job={job} onInspect={() => setInspectJobId(job.id)} />
             ))}
           </div>
         )}

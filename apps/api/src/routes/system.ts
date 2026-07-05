@@ -503,6 +503,101 @@ router.get('/jobs/retry-telemetry', requireUserJWT, async (req: Request, res: Re
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /api/system/jobs/:jobId
+// Full per-job telemetry: performance_metrics, pipeline_summary, debug_data,
+// stage timings, download_attempts, clips produced.
+// Used by the Job Detail Inspector — the single debugging surface for one job.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/jobs/:jobId', requireUserJWT, async (req: Request, res: Response) => {
+  const { jobId } = req.params;
+  const supabase = db.getSupabase();
+
+  try {
+    // ── Job row ──────────────────────────────────────────────────────────────
+    const { data: job, error: jobErr } = await supabase
+      .from('jobs')
+      .select('*')
+      .eq('id', jobId)
+      .single();
+
+    if (jobErr || !job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    // ── Clips produced by this job ───────────────────────────────────────────
+    let clips: any[] = [];
+    try {
+      const { data: clipsData } = await supabase
+        .from('clips')
+        .select('id, title, status, storage_url, duration, created_at, metadata')
+        .eq('job_id', jobId)
+        .order('created_at', { ascending: true });
+      clips = clipsData || [];
+    } catch {}
+
+    // ── Reshape performance_metrics for Inspector ────────────────────────────
+    const pm = job.performance_metrics as any ?? {};
+    const ps = job.pipeline_summary as any ?? {};
+    const dd = job.debug_data as any ?? {};
+
+    const stageTimings = [
+      { stage: 'Download',        ms: pm.download_ms        ?? null },
+      { stage: 'Transcription',   ms: pm.transcription_ms   ?? null },
+      { stage: 'Classification',  ms: pm.classification_ms  ?? null },
+      { stage: 'AI Analysis',     ms: pm.ai_analysis_ms     ?? null },
+      { stage: 'Nexus Modules',   ms: pm.nexus_ms           ?? null },
+      { stage: 'Ranking',         ms: pm.ranking_ms         ?? null },
+    ].filter(s => s.ms !== null);
+
+    res.json({
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      commit: GIT_COMMIT,
+      job: {
+        id: job.id,
+        status: job.status,
+        progress: job.progress,
+        videoUrl: job.video_url,
+        failedReason: job.failed_reason,
+        createdAt: job.created_at,
+        updatedAt: job.updated_at,
+        generationMode: pm.generation_mode ?? null,
+        cacheHit: pm.cache_hit ?? null,
+      },
+      performance: {
+        totalMs: pm.total ?? null,
+        stageTimings,
+      },
+      downloadAttempts: Array.isArray(pm.download_attempts) ? pm.download_attempts : [],
+      pipeline: {
+        modulesRun:     Array.isArray(ps.modules_run)     ? ps.modules_run     : [],
+        modulesSkipped: Array.isArray(ps.modules_skipped) ? ps.modules_skipped : [],
+        modulesFailed:  Array.isArray(ps.modules_failed)  ? ps.modules_failed  : [],
+      },
+      debug: {
+        stage:       dd.stage    ?? null,
+        operation:   dd.operation ?? null,
+        errorType:   dd.error_type ?? null,
+        summary:     dd.summary  ?? null,
+        stderrTail:  dd.stderr_tail ?? null,
+        rawMessage:  dd.raw_message ?? null,
+        timestamp:   dd.timestamp ?? null,
+      },
+      clips: clips.map(c => ({
+        id:         c.id,
+        title:      c.title,
+        status:     c.status,
+        storageUrl: c.storage_url,
+        duration:   c.duration,
+        createdAt:  c.created_at,
+      })),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/system/live
 // Lightweight endpoint polled every 5s by WorkerHeartbeatPanel.
 // Returns only worker heartbeats + active job count — no Supabase analytics.
