@@ -498,11 +498,26 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           try { await db.updateJob(jobId, updatePayload); } catch {}
         });
         
+        // ── Telemetry: persist download attempt array immediately so dashboard
+        //    can surface strategy stats even if job fails later in the pipeline.
         debugData.download = { attempts: dlResult.attempts };
+        try {
+          await db.updateJob(jobId, {
+            performance_metrics: {
+              download_attempts: dlResult.attempts,
+              download_ms: monitor.stages.stage_0_input?.durationMs ?? null,
+            },
+          });
+        } catch (telErr: any) {
+          console.warn('[Worker]: Non-fatal — failed to persist download_attempts early:', telErr.message);
+        }
       } catch (dlError: any) {
         if (dlError.attempts) {
           debugData.download = { attempts: dlError.attempts };
-          await db.updateJob(jobId, { debug_data: debugData });
+          await db.updateJob(jobId, {
+            debug_data: debugData,
+            performance_metrics: { download_attempts: dlError.attempts },
+          });
         }
         throw dlError;
       }
@@ -1749,7 +1764,28 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     try {
       await JobStateMachine.transition(db, jobId, JobStatus.COMPLETED, {
         pipeline_summary: pipelineSummary,
-        performance_metrics: { total: totalExecutionTimeMs },
+        // ── Full performance_metrics: all stage timings + download attempt telemetry.
+        //    Keys match what /api/system/dashboard and /api/system/jobs/retry-telemetry
+        //    expect. Never delete existing keys — merge with spread so early writes survive.
+        performance_metrics: {
+          total: totalExecutionTimeMs,
+          // Stage timings (milliseconds)
+          download_ms:        monitor.stages.stage_0_input?.durationMs           ?? null,
+          transcription_ms:   monitor.stages.stage_1_transcript?.durationMs      ?? null,
+          ai_analysis_ms:     monitor.stages.stage_3_segment_generation?.durationMs ?? null,
+          ranking_ms:         monitor.stages.stage_6_ranking?.durationMs          ?? null,
+          // Nexus / multi-module stages
+          nexus_ms:           monitor.stages.stage_2_to_12_nexus_modules?.durationMs ?? null,
+          classification_ms:  monitor.stages.stage_1_5?.durationMs                ?? null,
+          // Download strategy telemetry — the full DownloadAttempt[] array
+          // consumed by DownloadStrategyExplorer and RetryTelemetryCard
+          download_attempts: Array.isArray(debugData.download?.attempts)
+            ? debugData.download.attempts
+            : [],
+          // Generation metadata
+          generation_mode: generationMode,
+          cache_hit:        isCacheHit,
+        },
         debug_data: debugData,
       });
     } catch (telemetryErr: any) {
@@ -1779,13 +1815,20 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     console.error(`[Worker]: ❌ Job ${jobId} ${isCancel ? 'CANCELLED' : 'FAILED'} (Attempt ${attempt}/${maxAttempts}):`, error.message);
     const totalExecutionTimeMs = Date.now() - monitor.startedAt;
     const performanceMetrics = {
-      download: monitor.stages.stage_0_input?.durationMs || 0,
-      transcription: monitor.stages.stage_1_transcript?.durationMs || 0,
-      classification: monitor.stages.stage_1_5?.durationMs || 0,
-      ai_segmentation: monitor.stages.stage_3_segment_generation?.durationMs || 0,
-      nexus_analysis: monitor.stages.stage_2_to_12_nexus_modules?.durationMs || 0,
-      ranking: monitor.stages.stage_6_ranking?.durationMs || 0,
       total: totalExecutionTimeMs,
+      // Stage timings — named consistently with success path and dashboard API expectations
+      download_ms:        monitor.stages.stage_0_input?.durationMs           ?? null,
+      transcription_ms:   monitor.stages.stage_1_transcript?.durationMs      ?? null,
+      ai_analysis_ms:     monitor.stages.stage_3_segment_generation?.durationMs ?? null,
+      ranking_ms:         monitor.stages.stage_6_ranking?.durationMs          ?? null,
+      nexus_ms:           monitor.stages.stage_2_to_12_nexus_modules?.durationMs ?? null,
+      classification_ms:  monitor.stages.stage_1_5?.durationMs                ?? null,
+      // Download attempt telemetry — preserved on failure so strategy stats stay accurate
+      download_attempts: (error as any).attempts
+        ? (error as any).attempts
+        : Array.isArray((debugData as any)?.download?.attempts)
+          ? (debugData as any).download.attempts
+          : [],
     };
     const pipelineSummary = {
       modules_run: Array.from(monitor.run),
