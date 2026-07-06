@@ -158,6 +158,29 @@ router.get('/self-test', requireUserJWT, async (req: Request, res: Response) => 
   res.json({ overall, checks });
 });
 
+// GET /api/system/metrics/history - Historical daily metrics
+router.get('/metrics/history', requireUserJWT, async (req: Request, res: Response) => {
+  try {
+    const { data, error } = await db.getSupabase()
+      .from('system_metrics_daily')
+      .select('*')
+      .order('date', { ascending: true })
+      .limit(30);
+
+    if (error) {
+      if (error.code === '42P01') {
+        // Table doesn't exist yet, return empty for dashboard safety
+        return res.json({ data: [] });
+      }
+      throw error;
+    }
+    res.json({ data: data || [] });
+  } catch (error: any) {
+    console.error('[SystemRoute]: Metrics history query failed:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // GET /api/system/quality-metrics
 router.get('/quality-metrics', requireUserJWT, async (req: Request, res: Response) => {
   try {

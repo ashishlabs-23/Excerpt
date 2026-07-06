@@ -20,6 +20,7 @@ import { RetryTelemetryCard } from "@/components/RetryTelemetryCard";
 import { SystemAlerts } from "@/components/SystemAlerts";
 import { QueuePressureCard } from "@/components/QueuePressureCard";
 import { DeploymentMetadataCard } from "@/components/DeploymentMetadataCard";
+import { TrendChartsCard } from "@/components/TrendChartsCard";
 
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "dead_letter", "cancelled"]);
 
@@ -437,6 +438,16 @@ export default function DashboardPage() {
             className="mb-12 mt-8"
           >
             <DeploymentMetadataCard />
+          </motion.section>
+
+          {/* Trend Charts */}
+          <motion.section
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.3 }}
+            className="mb-12 mt-8"
+          >
+            <TrendChartsCard />
           </motion.section>
 
           {/* Success Notification - Cyber Style */}
