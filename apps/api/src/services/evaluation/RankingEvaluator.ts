@@ -1,5 +1,5 @@
 import { IEvaluator, EvaluatorResult } from './IEvaluator';
-import { ClipSegment } from '../../aiService';
+import { ClipSegment } from '../aiService';
 
 export class RankingEvaluator implements IEvaluator {
   public evaluate(expected: any, generated: ClipSegment[]): EvaluatorResult {

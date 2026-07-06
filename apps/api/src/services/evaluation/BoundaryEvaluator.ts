@@ -1,5 +1,5 @@
 import { IEvaluator, EvaluatorResult } from './IEvaluator';
-import { ClipSegment } from '../../aiService';
+import { ClipSegment } from '../aiService';
 
 export class BoundaryEvaluator implements IEvaluator {
   public evaluate(expected: any[], generated: ClipSegment[]): EvaluatorResult {

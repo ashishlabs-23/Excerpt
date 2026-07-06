@@ -68,7 +68,7 @@ export class CandidateGenerationEngine {
     }
 
     // Filter out wildly out-of-bounds candidates
-    const validCandidates = rawArray.filter(c => 
+    const validCandidates = rawArray.filter((c: any) => 
       typeof c.start_time === 'number' && 
       typeof c.end_time === 'number' &&
       c.end_time - c.start_time >= 10 &&

@@ -1,5 +1,5 @@
 import { IEvaluator, EvaluatorResult } from './IEvaluator';
-import { SmartCropPlan } from '../../videoProcessor';
+import { SmartCropPlan } from '../videoProcessor';
 
 export class RenderEvaluator implements IEvaluator {
   public evaluate(expected: any, generated: SmartCropPlan[]): EvaluatorResult {

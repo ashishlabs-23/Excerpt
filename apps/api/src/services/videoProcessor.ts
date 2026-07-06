@@ -139,7 +139,7 @@ interface SmartCropPoint {
   confidence: number;
 }
 
-interface SmartCropPlan {
+export interface SmartCropPlan {
   mode: 'center' | 'static' | 'dynamic';
   xExpression: string;
   yExpression: string;
