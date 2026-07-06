@@ -23,7 +23,7 @@ import { StorageService } from '../services/storageService';
 import { CaptionService } from '../services/captionService';
 import { JobStateMachine, JobStatus } from '../utils/JobStateMachine';
 import { installConsoleLogger, withLogContext } from '../services/logger';
-import { DownloadIntelligenceEngine } from '../services/download/DownloadEngine';
+import { ensureSourceVideo } from '../services/download/ensureSourceVideo';
 
 installConsoleLogger();
 
@@ -81,15 +81,8 @@ async function processRenderJob(renderJob: any) {
     
     // Path Normalization: Reconstruct absolute paths dynamically
     const tempDir = path.join(process.cwd(), 'temp', renderJob.job_id);
-    const videoPath = path.join(tempDir, 'input.mp4');
-
-    // Rescue missing ephemeral file
-    if (!fs.existsSync(videoPath) && payload.videoUrl) {
-      console.log(`[RenderWorker]: input.mp4 missing (ephemeral wipe). Downloading from ${payload.videoUrl}...`);
-      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-      const downloader = new DownloadIntelligenceEngine();
-      await downloader.executeDownload(payload.videoUrl, videoPath, () => {});
-    }
+    // Rescue missing ephemeral file (Idempotent architecture helper)
+    const videoPath = await ensureSourceVideo(renderJob.job_id, payload.videoUrl, tempDir);
     
     // Check Render Cache (L5)
     const urlToHash = payload.videoUrl || videoPath;
