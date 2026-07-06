@@ -11,6 +11,7 @@ export interface SourceVideoTelemetry {
   strategy: 'local_cache' | 'redownload';
   downloaded: boolean;
   durationMs: number;
+  reason?: 'local_missing' | 'zero_byte_file' | 'ffprobe_failed';
 }
 
 export async function ensureSourceVideo(
@@ -21,10 +22,10 @@ export async function ensureSourceVideo(
   const videoPath = path.join(tempDir, 'input.mp4');
   const startMs = Date.now();
 
-  const validateMedia = async (filePath: string) => {
-    if (!fs.existsSync(filePath)) return false;
+  const validateMedia = async (filePath: string): Promise<{ valid: boolean, reason?: 'local_missing' | 'zero_byte_file' | 'ffprobe_failed' }> => {
+    if (!fs.existsSync(filePath)) return { valid: false, reason: 'local_missing' };
     const stats = fs.statSync(filePath);
-    if (stats.size === 0) return false;
+    if (stats.size === 0) return { valid: false, reason: 'zero_byte_file' };
     try {
       const { execFile } = require('child_process');
       const util = require('util');
@@ -35,13 +36,15 @@ export async function ensureSourceVideo(
         '-of', 'default=noprint_wrappers=1:nokey=1',
         filePath
       ]);
-      return stdout.includes('video');
+      if (stdout.includes('video')) return { valid: true };
+      return { valid: false, reason: 'ffprobe_failed' };
     } catch {
-      return false;
+      return { valid: false, reason: 'ffprobe_failed' };
     }
   };
 
-  if (await validateMedia(videoPath)) {
+  const initialCheck = await validateMedia(videoPath);
+  if (initialCheck.valid) {
     return {
       videoPath,
       telemetry: { strategy: 'local_cache', downloaded: false, durationMs: Date.now() - startMs }
@@ -52,7 +55,7 @@ export async function ensureSourceVideo(
     throw new Error(`[ensureSourceVideo]: Missing input.mp4 for job ${jobId} and no videoUrl provided in payload to recover it.`);
   }
 
-  console.log(`[ensureSourceVideo]: input.mp4 missing for job ${jobId}. Downloading from ${videoUrl}...`);
+  console.log(`[ensureSourceVideo]: input.mp4 invalid (${initialCheck.reason}) for job ${jobId}. Downloading from ${videoUrl}...`);
   if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir, { recursive: true });
   }
@@ -60,13 +63,32 @@ export async function ensureSourceVideo(
   const downloader = new DownloadIntelligenceEngine();
   await downloader.executeDownload(videoUrl, videoPath, (percent, speed, eta, strategy) => {});
 
-  if (!(await validateMedia(videoPath))) {
-    throw new Error(`[ensureSourceVideo]: Failed to recover valid input.mp4 for job ${jobId} after download attempt.`);
+  const postCheck = await validateMedia(videoPath);
+  if (!postCheck.valid) {
+    throw new Error(`[ensureSourceVideo]: Failed to recover valid input.mp4 for job ${jobId} after download attempt. Reason: ${postCheck.reason}`);
   }
 
-  const telemetry: SourceVideoTelemetry = { strategy: 'redownload', downloaded: true, durationMs: Date.now() - startMs };
+  const telemetry: SourceVideoTelemetry = { 
+    strategy: 'redownload', 
+    downloaded: true, 
+    durationMs: Date.now() - startMs,
+    reason: initialCheck.reason 
+  };
+  
   const stats = fs.statSync(videoPath);
-  console.log(`[Event: SOURCE_VIDEO_RECOVERY] renderJobId=unknown jobId=${jobId} strategy=${telemetry.strategy} durationMs=${telemetry.durationMs} validated=true fileSize=${stats.size}`);
+  
+  const eventLog = {
+    event: "SOURCE_VIDEO_RECOVERY",
+    jobId: jobId,
+    renderJobId: "unknown",
+    strategy: telemetry.strategy,
+    reason: telemetry.reason,
+    validated: true,
+    durationMs: telemetry.durationMs,
+    fileSize: stats.size
+  };
+  
+  console.log(JSON.stringify(eventLog));
 
   return {
     videoPath,
