@@ -684,7 +684,8 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       } catch (transcriptionError: any) {
         // ── Structured transcription failure recording ──────────────────────
         const errorCode = transcriptionError.transcriptionErrorCode || 'TRANSCRIPTION_FAILED';
-        const transcriptionTelemetry = {
+        // Prefer the richer telemetry attached by TranscriptionService if present
+        const transcriptionTelemetry = transcriptionError.telemetry ?? {
           provider: 'groq',
           model: 'whisper-large-v3-turbo',
           outcome: errorCode,
@@ -693,24 +694,26 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           retryable: transcriptionError.retryable !== false,
           recorded_at: new Date().toISOString(),
         };
-        console.warn(`[Worker]: [TRANSCRIPTION_FAILURE] code=${errorCode} retryable=${transcriptionTelemetry.retryable} jobId=${jobId}`);
+        console.warn(`[Worker]: [TRANSCRIPTION_FAILURE] code=${errorCode} retryable=${transcriptionError.retryable !== false} requestId=${transcriptionTelemetry.providerRequestId ?? 'none'} jobId=${jobId}`);
         try {
           await db.updateJob(jobId, { transcription_telemetry: transcriptionTelemetry } as any);
         } catch {}
 
         // ── Recovery gate ───────────────────────────────────────────────────
-        // Only allow heuristic-clip fallback when explicitly opted in.
-        // Timeout / provider-unavailable errors should retry with backoff,
-        // not silently produce lower-quality output.
+        // Timeout / provider-unavailable / circuit-open errors re-throw so the
+        // existing exponential backoff handles them. Only opt in to heuristic
+        // fallback via EXCERPT_TRANSCRIPTION_ALLOW_RECOVERY=true.
         const isRetryableProviderError = [
           'TRANSCRIPTION_TIMEOUT',
+          'WORKER_SHUTDOWN',
           'WHISPER_UNAVAILABLE',
           'WHISPER_HTTP_ERROR',
+          'CIRCUIT_OPEN',
         ].some(code => errorCode.startsWith(code) || transcriptionError.message?.includes(code));
 
         if (isRetryableProviderError && !TRANSCRIPTION_ALLOW_RECOVERY) {
-          console.error(`[Worker]: [TRANSCRIPTION_HARD_FAIL] errorCode=${errorCode} — not falling back to recovery mode (set EXCERPT_TRANSCRIPTION_ALLOW_RECOVERY=true to enable). Re-throwing for retry.`);
-          throw transcriptionError; // Let the outer catch handle retry with backoff
+          console.error(`[Worker]: [TRANSCRIPTION_HARD_FAIL] errorCode=${errorCode} — re-throwing for retry (set EXCERPT_TRANSCRIPTION_ALLOW_RECOVERY=true to enable draft fallback).`);
+          throw transcriptionError;
         }
 
         recoveryMode = true;
@@ -727,11 +730,16 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     // Save transcription to database if it's new or updated
     if (transcriptionText) {
       try {
+        // Collect stage-level timing from the graph build for structured metrics
+        const graphResult = pipelineContext.vig;
+        const transcriptionTelemetry = (graphResult as any)?._transcriptionTelemetry;
         await db.updateJob(jobId, {
           transcription: transcriptionText,
           transcription_status: 'completed',
-          progress: 40
-        });
+          progress: 40,
+          // Persist structured telemetry from the successful call if available
+          ...(transcriptionTelemetry ? { transcription_telemetry: transcriptionTelemetry } : {}),
+        } as any);
         console.log(`[Worker]: Transcription state synchronized with DB.`);
       } catch (dbError: any) {
         console.warn(`[Worker]: Failed to save transcription to DB: ${dbError.message}`);
