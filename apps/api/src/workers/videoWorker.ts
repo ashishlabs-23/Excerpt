@@ -1955,7 +1955,11 @@ async function processClaimedJobWithRetries(job: any, workerId: number) {
       console.warn(`[Worker]: Ignoring voiceover job ${job.id} as videoWorker no longer handles voiceovers.`);
       lastResult = { status: 'failed', failedReason: 'Voiceovers are handled by a dedicated worker.', retryable: false, totalExecutionTimeMs: 0 };
     } else {
-      lastResult = await processVideoJob(job.id, jobData);
+      try {
+        lastResult = await processVideoJob(job.id, jobData);
+      } catch (err: any) {
+        lastResult = { status: 'failed', failedReason: err.message || 'Unknown processing error', retryable: false, totalExecutionTimeMs: 0 };
+      }
     }
     
     attemptDurationMs = lastResult?.totalExecutionTimeMs || 0;
