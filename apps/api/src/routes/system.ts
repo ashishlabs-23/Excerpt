@@ -703,7 +703,7 @@ router.get('/alerts', requireUserJWT, async (req: Request, res: Response) => {
   try {
     const wRes = await fetch(`${apiBase}/health/workers`);
     if (wRes.ok) {
-      const wData = await wRes.json();
+      const wData: any = await wRes.json();
       for (const w of (wData.workers || [])) {
         if (w.stopped) {
           generatedAlerts.push({
@@ -795,7 +795,7 @@ router.get('/alerts', requireUserJWT, async (req: Request, res: Response) => {
   const activeAlerts = await syncAlertsToDb(supabase, generatedAlerts);
 
   const severityOrder: Record<string, number> = { error: 0, warning: 1, info: 2 };
-  activeAlerts.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+  activeAlerts.sort((a: any, b: any) => severityOrder[a.severity] - severityOrder[b.severity]);
 
   res.json({
     version: 1,
@@ -809,7 +809,7 @@ router.get('/alerts', requireUserJWT, async (req: Request, res: Response) => {
 
 // POST /api/system/alerts/:id/acknowledge
 router.post('/alerts/:id/acknowledge', requireUserJWT, async (req: Request, res: Response) => {
-  const { id } = req.params;
+  const id = req.params.id as string;
   const userId = (req as any).user?.id;
   const supabase = db.getSupabase();
 
@@ -831,7 +831,7 @@ router.post('/alerts/:id/acknowledge', requireUserJWT, async (req: Request, res:
 
 // POST /api/system/alerts/:id/resolve
 router.post('/alerts/:id/resolve', requireUserJWT, async (req: Request, res: Response) => {
-  const { id } = req.params;
+  const id = req.params.id as string;
   const supabase = db.getSupabase();
 
   try {

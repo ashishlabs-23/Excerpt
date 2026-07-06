@@ -1841,7 +1841,8 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     const classifiedError = classifyError(error.stderr || error.message);
     const stderrTail = error.stderr ? error.stderr.split('\n').slice(-20).join('\n') : undefined;
 
-    const debugData: JobDebugData = {
+    const errorDebugData = {
+      ...debugData,
       stage: 'failed',
       operation: error.operation || 'unknown',
       exit_code: error.exitCode || 1,
@@ -1859,7 +1860,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         if (latestJob?.status !== JobStatus.FAILED && latestJob?.status !== JobStatus.CANCELLED) {
           await JobStateMachine.transition(db, jobId, terminalStatus, {
             failed_reason: error.message,
-            debug_data: debugData,
+            debug_data: errorDebugData,
             performance_metrics: performanceMetrics,
             pipeline_summary: pipelineSummary,
           });
@@ -1867,7 +1868,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       } else {
         // Option B: Keep job in PROCESSING during internal retries, but persist telemetry
         await db.updateJob(jobId, {
-          debug_data: debugData,
+          debug_data: errorDebugData,
           performance_metrics: performanceMetrics,
           pipeline_summary: pipelineSummary,
         });
