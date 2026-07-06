@@ -7,10 +7,9 @@
     "worker": "npx tsx apps/api/src/workers/videoWorker.ts",
     "render-worker": "npx tsx apps/api/src/workers/renderWorker.ts",
     "build": "npm run build -w apps/web",
-    "test": "npm run test -w apps/api",
-    "preflight": "npx tsx apps/api/scripts/preflight.ts",
-    "evidence": "npx tsx apps/api/scripts/evidence_harness.ts",
-    "benchmark-clips": "npx tsx apps/api/scripts/benchmark.ts"
+    "start:queue": "cd apps/api && npm run start:queue",
+    "test:evaluators": "npx tsx scripts/test-evaluators.ts",
+    "benchmark:gate": "npx tsx scripts/benchmark-gate.ts"
   },
   "workspaces": [
     "apps/*",

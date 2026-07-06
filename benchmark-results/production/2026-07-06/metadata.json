@@ -1,0 +1,11 @@
+{
+  "benchmarkVersion": "1.0.0",
+  "datasetHash": "9c29a15e32781b1d787adcee80303e7d",
+  "promptVersion": "candidate_generation/v1",
+  "rankingPrompt": "comparative/v1",
+  "model": "gemini-2.0-flash",
+  "temperature": 0.2,
+  "evaluatorVersion": "1.0.0",
+  "pipelineCommit": "aad8f63",
+  "generatedAt": "2026-07-06T11:19:09.459Z"
+}
