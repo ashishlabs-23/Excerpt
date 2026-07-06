@@ -14,6 +14,12 @@ import {
   Shield,
   Trash2,
 } from "lucide-react";
+import { useDashboard } from "@/lib/useDashboard";
+import { DeploymentInfoCard } from "@/components/DeploymentInfoCard";
+import { WorkerHeartbeatPanel } from "@/components/WorkerHeartbeatPanel";
+import { AIProviderStatusBar } from "@/components/AIProviderStatusBar";
+import { StorageIntegrityCard } from "@/components/StorageIntegrityCard";
+import { DownloadStrategyExplorer } from "@/components/DownloadStrategyExplorer";
 
 function SettingsContent() {
   const [health, setHealth] = React.useState<"loading" | "online" | "offline">(
@@ -22,6 +28,8 @@ function SettingsContent() {
   const [isPurging, setIsPurging] = React.useState(false);
   const [purgeMessage, setPurgeMessage] = React.useState<string | null>(null);
   const [confirmation, setConfirmation] = React.useState("");
+  
+  const { data: dashboardData, loading: dashLoading } = useDashboard();
 
   const checkHealth = React.useCallback(async () => {
     setHealth("loading");
@@ -238,6 +246,57 @@ function SettingsContent() {
                 <p className="mt-4 text-sm text-white/55">{purgeMessage}</p>
               )}
             </motion.aside>
+          </div>
+          
+          {/* ═══════════════════════════════════════════════════════
+              SYSTEM INFRASTRUCTURE PANELS
+             ═══════════════════════════════════════════════════════ */}
+          <div className="mt-8 space-y-6">
+            <motion.header
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.15 }}
+            >
+              <h2 className="text-2xl font-bold text-white mb-6">
+                System Infrastructure
+              </h2>
+            </motion.header>
+            
+            <motion.section
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.2 }}
+              className="grid grid-cols-1 md:grid-cols-3 gap-6"
+            >
+              {dashboardData ? (
+                <>
+                  <DeploymentInfoCard deployment={dashboardData.deployment} />
+                  <AIProviderStatusBar providers={dashboardData.providers} />
+                </>
+              ) : (
+                <>
+                  <div className="h-48 rounded-[28px] glass-card border-white/5 animate-pulse" />
+                  <div className="h-48 rounded-[28px] glass-card border-white/5 animate-pulse" />
+                </>
+              )}
+              <WorkerHeartbeatPanel />
+            </motion.section>
+
+            {!dashLoading && dashboardData && (
+              <motion.section
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.3 }}
+                className="grid grid-cols-1 lg:grid-cols-3 gap-6"
+              >
+                <div className="lg:col-span-1">
+                  <StorageIntegrityCard storage={dashboardData.storage} />
+                </div>
+                <div className="lg:col-span-2">
+                  <DownloadStrategyExplorer strategies={dashboardData.downloadStrategies} />
+                </div>
+              </motion.section>
+            )}
           </div>
         </div>
       </main>

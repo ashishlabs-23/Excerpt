@@ -15,12 +15,7 @@ import { authFetch } from "@/lib/api";
 import { useRealtimeSync } from "@/lib/useRealtimeSync";
 import { AuthGate } from "@/components/AuthGate";
 import { useDashboard } from "@/lib/useDashboard";
-import { DeploymentInfoCard } from "@/components/DeploymentInfoCard";
-import { WorkerHeartbeatPanel } from "@/components/WorkerHeartbeatPanel";
-import { AIProviderStatusBar } from "@/components/AIProviderStatusBar";
 import { PipelineHealthMonitor } from "@/components/PipelineHealthMonitor";
-import { StorageIntegrityCard } from "@/components/StorageIntegrityCard";
-import { DownloadStrategyExplorer } from "@/components/DownloadStrategyExplorer";
 import { RetryTelemetryCard } from "@/components/RetryTelemetryCard";
 import { SystemAlerts } from "@/components/SystemAlerts";
 import { QueuePressureCard } from "@/components/QueuePressureCard";
@@ -418,30 +413,7 @@ export default function DashboardPage() {
              ═══════════════════════════════════════════════════════ */}
           <QueuePressureCard />
 
-          {/* ═══════════════════════════════════════════════════════
-              OPERATIONS ROW 1: Deployment + AI Providers + Workers
-              Workers self-poll at 5s — sits beside the 60s cards
-             ═══════════════════════════════════════════════════════ */}
-          <motion.section
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="grid grid-cols-1 md:grid-cols-3 gap-6"
-          >
-            {dashboardData ? (
-              <>
-                <DeploymentInfoCard deployment={dashboardData.deployment} />
-                <AIProviderStatusBar providers={dashboardData.providers} />
-              </>
-            ) : (
-              <>
-                <div className="h-48 rounded-[28px] glass-card border-white/5 animate-pulse" />
-                <div className="h-48 rounded-[28px] glass-card border-white/5 animate-pulse" />
-              </>
-            )}
-            {/* WorkerHeartbeatPanel always renders — it self-polls at 5s */}
-            <WorkerHeartbeatPanel />
-          </motion.section>
+
 
           {/* ═══════════════════════════════════════════════════════
               PIPELINE HEALTH — centrepiece of operations dashboard
@@ -521,24 +493,7 @@ export default function DashboardPage() {
             </motion.section>
           </div>
 
-          {/* ═══════════════════════════════════════════════════════
-              STORAGE INTEGRITY + DOWNLOAD STRATEGY EXPLORER
-             ═══════════════════════════════════════════════════════ */}
-          {!dashLoading && dashboardData && (
-            <motion.section
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.2 }}
-              className="grid grid-cols-1 lg:grid-cols-3 gap-6"
-            >
-              <div className="lg:col-span-1">
-                <StorageIntegrityCard storage={dashboardData.storage} />
-              </div>
-              <div className="lg:col-span-2">
-                <DownloadStrategyExplorer strategies={dashboardData.downloadStrategies} />
-              </div>
-            </motion.section>
-          )}
+
 
           <QualityDashboard />
         </div>

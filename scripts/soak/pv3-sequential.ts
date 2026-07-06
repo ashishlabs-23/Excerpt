@@ -1,6 +1,7 @@
 import { DatabaseService } from '../../apps/api/src/services/supabaseService';
 import fetch from 'node-fetch';
 
+process.env.WORKER_ENV = 'production';
 const db = new DatabaseService();
 const supabase = db.getSupabase();
 const API_URL = process.env.API_URL || 'http://localhost:8010';
@@ -11,14 +12,20 @@ const TEST_URLS = [
   // though Excerpt should handle identical URLs fine if we want them as separate jobs.
 ];
 
+import { queueService } from '../../apps/api/src/services/queueService';
+
 async function submitJob(url: string) {
-  const res = await fetch(`${API_URL}/api/video/process`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url })
+  const { data: user } = await supabase.from('users').select('id').limit(1).maybeSingle();
+  const userId = user?.id || '00000000-0000-0000-0000-000000000000';
+  
+  const jobId = await queueService.addJob({ 
+    videoUrl: url, 
+    numClips: 1, 
+    intent: 'viral',
+    userId 
   });
-  if (!res.ok) throw new Error(`Failed to submit job: ${res.statusText}`);
-  return await res.json();
+  
+  return { jobId };
 }
 
 async function waitForJobCompletion(jobId: string, timeoutMinutes: number = 10) {
