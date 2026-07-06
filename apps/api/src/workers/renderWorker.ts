@@ -270,18 +270,30 @@ async function checkParentJobCompletion(jobId: string) {
 
     if (!renderJobs || renderJobs.length === 0) return;
 
-    const allCompletedOrFailed = renderJobs.every(rj => 
-      rj.status === 'completed' || rj.status === 'failed' || rj.status === 'dead_letter'
-    );
+    const terminalStatuses = ['completed', 'failed', 'dead_letter'];
+    const allTerminal = renderJobs.every(rj => terminalStatuses.includes(rj.status));
 
-    if (allCompletedOrFailed) {
-      console.log(`[RenderWorker]: All render jobs for parent job ${jobId} are terminal. Marking parent as completed.`);
+    if (!allTerminal) return; // Still work in progress
+
+    const anySucceeded = renderJobs.some(rj => rj.status === 'completed');
+    const allFailed = renderJobs.every(rj => rj.status === 'failed' || rj.status === 'dead_letter');
+
+    if (anySucceeded) {
+      const successCount = renderJobs.filter(rj => rj.status === 'completed').length;
+      console.log(`[RenderWorker]: ${successCount}/${renderJobs.length} render jobs succeeded for job ${jobId}. Marking parent as completed.`);
       await JobStateMachine.transition(db, jobId, JobStatus.COMPLETED, { progress: 100 });
+    } else if (allFailed) {
+      console.error(`[RenderWorker]: ALL render jobs failed for job ${jobId}. Marking parent as failed.`);
+      await db.getSupabase()
+        .from('jobs')
+        .update({ status: 'failed', failed_reason: 'All render jobs failed — no clips were produced.', progress: 100 })
+        .eq('id', jobId);
     }
   } catch (err) {
     console.warn(`[RenderWorker]: Failed to check/update parent job completion for ${jobId}:`, err);
   }
 }
+
 
 async function startPolling() {
   console.log(`[RenderWorker]: Started rendering worker ${workerInstanceId}. Waiting for render jobs...`);
