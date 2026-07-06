@@ -125,11 +125,28 @@ export class GraphBuilderService {
   }
 
   private async extractVisual(videoPath: string, duration: number, tempDir: string) {
-    // Extract frames at 4fps
-    await this.processor.extractAnalysisFrames(videoPath, 0, duration, tempDir);
-    // Run Python tracking logic over the extracted frames
-    return this.cropEngine.analyze(tempDir, duration);
+    const VISUAL_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
+    const start = Date.now();
+    console.log(`[GraphBuilder]: [VISUAL_START] frames+cropEngine launching ts=${new Date().toISOString()}`);
+
+    return Promise.race([
+      (async () => {
+        // Extract frames at 4fps
+        await this.processor.extractAnalysisFrames(videoPath, 0, duration, tempDir);
+        console.log(`[GraphBuilder]: [VISUAL_FRAMES_DONE] elapsedMs=${Date.now() - start} ts=${new Date().toISOString()}`);
+        // Run Python tracking logic over the extracted frames
+        return this.cropEngine.analyze(tempDir, duration);
+      })(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => {
+          const err = new Error(`VISUAL_TIMEOUT: extractVisual exceeded ${VISUAL_TIMEOUT_MS / 1000}s`);
+          console.error(`[GraphBuilder]: [VISUAL_TIMEOUT] elapsedMs=${Date.now() - start} ts=${new Date().toISOString()}`);
+          reject(err);
+        }, VISUAL_TIMEOUT_MS)
+      )
+    ]);
   }
+
 
   private async extractAudio(videoPath: string, duration: number): Promise<GraphAudioNode[]> {
     // TODO: We could use ffmpeg `astats` or `volumedetect` to get actual dB energy per second.

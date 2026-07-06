@@ -116,6 +116,10 @@ const JOB_RETRY_MAX_MS = Math.max(
   JOB_RETRY_BASE_MS,
   envNumber('EXCERPT_JOB_RETRY_MAX_MS', 60000, JOB_RETRY_BASE_MS)
 );
+// When transcription fails (timeout / provider unavailable), allow fallback to
+// heuristic draft clips only when explicitly opted in. Default: re-throw so the
+// retry mechanism handles it with exponential backoff.
+const TRANSCRIPTION_ALLOW_RECOVERY = process.env.EXCERPT_TRANSCRIPTION_ALLOW_RECOVERY === 'true';
 
 interface PlannedClip {
   id: string;
@@ -678,10 +682,41 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
 
         }
       } catch (transcriptionError: any) {
+        // ── Structured transcription failure recording ──────────────────────
+        const errorCode = transcriptionError.transcriptionErrorCode || 'TRANSCRIPTION_FAILED';
+        const transcriptionTelemetry = {
+          provider: 'groq',
+          model: 'whisper-large-v3-turbo',
+          outcome: errorCode,
+          error_message: transcriptionError.message?.slice(0, 500),
+          http_status: transcriptionError.httpStatus ?? null,
+          retryable: transcriptionError.retryable !== false,
+          recorded_at: new Date().toISOString(),
+        };
+        console.warn(`[Worker]: [TRANSCRIPTION_FAILURE] code=${errorCode} retryable=${transcriptionTelemetry.retryable} jobId=${jobId}`);
+        try {
+          await db.updateJob(jobId, { transcription_telemetry: transcriptionTelemetry } as any);
+        } catch {}
+
+        // ── Recovery gate ───────────────────────────────────────────────────
+        // Only allow heuristic-clip fallback when explicitly opted in.
+        // Timeout / provider-unavailable errors should retry with backoff,
+        // not silently produce lower-quality output.
+        const isRetryableProviderError = [
+          'TRANSCRIPTION_TIMEOUT',
+          'WHISPER_UNAVAILABLE',
+          'WHISPER_HTTP_ERROR',
+        ].some(code => errorCode.startsWith(code) || transcriptionError.message?.includes(code));
+
+        if (isRetryableProviderError && !TRANSCRIPTION_ALLOW_RECOVERY) {
+          console.error(`[Worker]: [TRANSCRIPTION_HARD_FAIL] errorCode=${errorCode} — not falling back to recovery mode (set EXCERPT_TRANSCRIPTION_ALLOW_RECOVERY=true to enable). Re-throwing for retry.`);
+          throw transcriptionError; // Let the outer catch handle retry with backoff
+        }
+
         recoveryMode = true;
         recoveryReason = transcriptionError.message;
         await JobStateMachine.transition(db, jobId, JobStatus.RECOVERING, { progress: 35 });
-        console.warn(`[Worker]: Transcription unavailable. Switching to draft clip recovery mode.`);
+        console.warn(`[Worker]: Transcription unavailable (${errorCode}). Switching to draft clip recovery mode.`);
       }
     } else {
       recoveryReason = 'Draft mode forced for local/offline verification.';

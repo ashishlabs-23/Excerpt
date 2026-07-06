@@ -156,7 +156,7 @@ export class TranscriptionService {
     formData.append("timestamp_granularities[]", "word");
     formData.append("timestamp_granularities[]", "segment");
 
-    // 90-second timeout: if Groq hangs, abort and let the caller's catch → recoveryMode
+    // 90-second timeout: if Groq hangs, abort and let the caller's catch → recovery gate
     const GROQ_TIMEOUT_MS = 90_000;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
@@ -172,6 +172,15 @@ export class TranscriptionService {
         body: formData as any,
         signal: controller.signal,
       });
+    } catch (fetchErr: any) {
+      clearTimeout(timeoutId);
+      // AbortError means our timeout fired; any other error is a network failure
+      const isTimeout = fetchErr.name === 'AbortError';
+      const code = isTimeout ? 'TRANSCRIPTION_TIMEOUT' : 'WHISPER_UNAVAILABLE';
+      const structured = new Error(`${code}: ${fetchErr.message}`);
+      (structured as any).transcriptionErrorCode = code;
+      (structured as any).retryable = true;
+      throw structured;
     } finally {
       clearTimeout(timeoutId);
     }
@@ -182,7 +191,12 @@ export class TranscriptionService {
     if (!response.ok) {
       const body = await response.text();
       console.error(`[TranscriptionService]: [WHISPER_ERROR] status=${response.status} body=${body.slice(0, 300)}`);
-      throw new Error(`Groq HTTP Error: ${response.status} ${body}`);
+      const structured = new Error(`WHISPER_HTTP_ERROR: status=${response.status} body=${body.slice(0, 200)}`);
+      (structured as any).transcriptionErrorCode = 'WHISPER_HTTP_ERROR';
+      (structured as any).httpStatus = response.status;
+      // 429 / 503 are retryable; 400 (bad audio) is not
+      (structured as any).retryable = response.status !== 400;
+      throw structured;
     }
 
     const jsonResponse = await response.json() as any;
