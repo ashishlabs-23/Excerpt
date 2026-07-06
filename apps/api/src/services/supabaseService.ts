@@ -235,7 +235,6 @@ export class DatabaseService {
       const { data: clips, error } = await this.db
         .from('clips')
         .select('*, jobs(user_id, video_url)')
-        .eq('environment', (process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development')))
         .eq('is_archived', false)
         .order('created_at', { ascending: false })
         .limit(limit);
@@ -254,7 +253,6 @@ export class DatabaseService {
     const { data: clips, error } = await this.db
       .from('clips')
       .select('*, jobs(user_id, video_url)')
-      .eq('environment', (process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development')))
       .in('job_id', jobIds)
       .eq('is_archived', false)
       .order('created_at', { ascending: false })
@@ -262,6 +260,7 @@ export class DatabaseService {
     if (error) throw error;
     return clips;
   }
+
 
   async getClip(id: string) {
     const { data: clip, error } = await this.db
