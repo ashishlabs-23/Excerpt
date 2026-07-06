@@ -1995,11 +1995,14 @@ async function processClaimedJobWithRetries(job: any, workerId: number) {
     }
 
     if (!retryable || attempt >= maxAttempts || stopRequested) {
-      // Terminated. The DB was already updated to failed by processVideoJob.
-      // Just sync the final payload
+      // Terminated. Ensure the DB is updated to failed.
       payload.exhausted_at = new Date().toISOString();
       try {
-        await db.updateJob(job.id, { payload });
+        await db.updateJob(job.id, { 
+          payload,
+          status: JobStatus.FAILED,
+          failed_reason: failedReason || 'Job failed and retries exhausted'
+        });
       } catch (err: any) {
         console.warn(`[Worker]: Failed to sync terminal payload for ${job.id}:`, err.message);
       }
