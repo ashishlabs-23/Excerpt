@@ -28,20 +28,51 @@ async function submitJob(url: string) {
   return { jobId };
 }
 
-async function waitForJobCompletion(jobId: string, timeoutMinutes: number = 10) {
-  const timeoutMs = timeoutMinutes * 60 * 1000;
-  const start = Date.now();
-  
-  while (Date.now() - start < timeoutMs) {
-    const { data } = await supabase.from('jobs').select('status, failed_reason').eq('id', jobId).single();
+const STALL_THRESHOLD_MS = 5 * 60 * 1000;   // Fail if NO progress for 5 minutes
+const ABSOLUTE_TIMEOUT_MS = 30 * 60 * 1000; // Hard ceiling: 30 minutes total
+
+async function waitForJobCompletion(jobId: string) {
+  const absoluteStart = Date.now();
+  let lastProgress = -1;
+  let lastProgressTime = Date.now();
+
+  while (true) {
+    const { data } = await supabase
+      .from('jobs')
+      .select('status, progress, failed_reason')
+      .eq('id', jobId)
+      .single();
+
     if (data) {
-      if (data.status === 'completed') return true;
-      if (data.status === 'failed') throw new Error(`Job failed: ${data.failed_reason}`);
+      const { status, progress, failed_reason } = data;
+
+      // Terminal states
+      if (status === 'completed') return true;
+      if (status === 'failed') throw new Error(`Job failed: ${failed_reason}`);
+
+      // Track progress advances
+      if (progress !== lastProgress) {
+        lastProgress = progress;
+        lastProgressTime = Date.now();
+        console.log(`  [${jobId.slice(0,8)}] Status: ${status} | Progress: ${progress}%`);
+      }
+
+      // Stall detection: no progress for STALL_THRESHOLD_MS
+      const stallMs = Date.now() - lastProgressTime;
+      if (stallMs > STALL_THRESHOLD_MS) {
+        throw new Error(`Job stalled at ${progress}% (status: ${status}) for ${Math.round(stallMs/1000)}s with no progress`);
+      }
+
+      // Absolute ceiling
+      if (Date.now() - absoluteStart > ABSOLUTE_TIMEOUT_MS) {
+        throw new Error(`Job exceeded absolute 30-minute ceiling at ${progress}% (${status})`);
+      }
     }
-    await new Promise(resolve => setTimeout(resolve, 5000));
+
+    await new Promise(resolve => setTimeout(resolve, 10000)); // Poll every 10s
   }
-  throw new Error(`Job timed out after ${timeoutMinutes} minutes`);
 }
+
 
 async function main() {
   console.log("=== PV-3: 20 Sequential Jobs Soak Test ===");
