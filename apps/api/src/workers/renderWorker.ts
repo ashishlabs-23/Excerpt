@@ -82,7 +82,8 @@ async function processRenderJob(renderJob: any) {
     // Path Normalization: Reconstruct absolute paths dynamically
     const tempDir = path.join(process.cwd(), 'temp', renderJob.job_id);
     // Rescue missing ephemeral file (Idempotent architecture helper)
-    const videoPath = await ensureSourceVideo(renderJob.job_id, payload.videoUrl, tempDir);
+    const { videoPath, telemetry } = await ensureSourceVideo(renderJob.job_id, payload.videoUrl, tempDir);
+    console.log(`[RenderWorker]: ensureSourceVideo resolved:`, JSON.stringify(telemetry));
     
     // Check Render Cache (L5)
     const urlToHash = payload.videoUrl || videoPath;
