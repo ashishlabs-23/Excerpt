@@ -1572,6 +1572,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         status: 'pending',
         environment: (process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development')),
         payload: {
+          videoUrl: videoUrl,
           clipStart: renderStart,
           clipEnd: renderEnd,
           clipWords: (clip as any).words || [],
