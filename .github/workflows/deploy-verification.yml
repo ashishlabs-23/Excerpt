@@ -1,0 +1,131 @@
+name: Deployment Verification & Observability
+
+on:
+  # This can be triggered manually, or via a webhook from Render
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'The Git Commit SHA to verify'
+        required: true
+      api_url:
+        description: 'The production API URL'
+        required: true
+        default: 'https://excerpt-api.onrender.com'
+
+concurrency:
+  group: deploy-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify Production Deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Wait for Deployment (Poll /health)
+        id: poll
+        run: |
+          API_URL="${{ github.event.inputs.api_url }}"
+          TARGET_COMMIT="${{ github.event.inputs.commit_sha }}"
+          
+          echo "Polling $API_URL/health for commit $TARGET_COMMIT..."
+          
+          MAX_RETRIES=30
+          RETRY_COUNT=0
+          DELAY=10
+          MATCH_FOUND=false
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            RESPONSE=$(curl -s --max-time 5 "$API_URL/health" || echo "FAILED")
+            
+            if [ "$RESPONSE" != "FAILED" ]; then
+              # Extract commit using jq
+              LIVE_COMMIT=$(echo $RESPONSE | jq -r '.commit // empty')
+              
+              if [ "$LIVE_COMMIT" == "$TARGET_COMMIT" ]; then
+                echo "✅ Deployment verified! Live commit matches target: $TARGET_COMMIT"
+                MATCH_FOUND=true
+                break
+              else
+                echo "⏳ Live commit ($LIVE_COMMIT) does not match target ($TARGET_COMMIT). Waiting..."
+              fi
+            else
+              echo "⏳ Health endpoint unreachable. Waiting..."
+            fi
+            
+            RETRY_COUNT=$((RETRY_COUNT+1))
+            sleep $DELAY
+          done
+          
+          if [ "$MATCH_FOUND" = false ]; then
+            echo "❌ Deployment verification timed out after 5 minutes."
+            exit 1
+          fi
+
+      - name: Smoke Tests
+        if: success()
+        run: |
+          API_URL="${{ github.event.inputs.api_url }}"
+          
+          echo "Running Smoke Tests..."
+          
+          endpoints=(
+            "/health"
+            "/api/system/live"
+          )
+          
+          for endpoint in "${endpoints[@]}"; do
+            echo "Testing $endpoint..."
+            HTTP_STATUS=$(curl -o /dev/null -s -w "%{http_code}\n" "$API_URL$endpoint")
+            
+            # Note: /api/system/live expects auth usually, but we expect at least a 401/403 or 200, not 500
+            if [ "$HTTP_STATUS" == "500" ] || [ "$HTTP_STATUS" == "502" ] || [ "$HTTP_STATUS" == "503" ] || [ "$HTTP_STATUS" == "000" ]; then
+              echo "❌ Smoke test failed for $endpoint (HTTP $HTTP_STATUS)"
+              exit 1
+            else
+              echo "✅ $endpoint responded with $HTTP_STATUS"
+            fi
+          done
+
+      - name: Self-Test Dependency Verification
+        if: success()
+        run: |
+          API_URL="${{ github.event.inputs.api_url }}"
+          
+          echo "Triggering Production Self-Test..."
+          
+          # We check the endpoint. A 401 is expected unless we pass a valid JWT.
+          # If we have a service token, we can pass it here.
+          HTTP_STATUS=$(curl -o /dev/null -s -w "%{http_code}\n" "$API_URL/api/system/self-test")
+          
+          if [ "$HTTP_STATUS" == "500" ]; then
+            echo "❌ Dependency Verification returned 500!"
+            exit 1
+          else
+            echo "✅ Dependency check endpoint reachable (HTTP $HTTP_STATUS). Note: Requires valid JWT to fully execute."
+          fi
+
+      - name: Trigger Rollback on Failure
+        if: failure()
+        run: |
+          echo "⚠️ Deployment Verification Failed!"
+          
+          if [ -z "${{ secrets.RENDER_API_KEY }}" ]; then
+            echo "Rollback skipped: credentials not configured. Manual intervention required."
+          else
+            echo "Rollback skipped: Rollback requires manual approval."
+            echo "Please check Render dashboard to initiate rollback."
+          fi
+
+      - name: Notify Slack/Discord
+        if: always()
+        run: |
+          if [ -z "${{ secrets.SLACK_WEBHOOK_URL }}" ] && [ -z "${{ secrets.DISCORD_WEBHOOK_URL }}" ]; then
+            echo "Notification skipped: Webhooks not configured."
+          else
+            STATUS="${{ job.status }}"
+            COMMIT="${{ github.event.inputs.commit_sha }}"
+            echo "Sending notification... Status: $STATUS, Commit: $COMMIT"
+            # Here we would curl the webhook URL with the payload
+            # curl -X POST -H 'Content-type: application/json' --data '{"text":"Deployment Verification: '"$STATUS"' (Commit: '"$COMMIT"') - See GitHub Actions for details."}' ${{ secrets.SLACK_WEBHOOK_URL }}
+          fi

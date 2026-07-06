@@ -19,6 +19,7 @@ import { PipelineHealthMonitor } from "@/components/PipelineHealthMonitor";
 import { RetryTelemetryCard } from "@/components/RetryTelemetryCard";
 import { SystemAlerts } from "@/components/SystemAlerts";
 import { QueuePressureCard } from "@/components/QueuePressureCard";
+import { DeploymentMetadataCard } from "@/components/DeploymentMetadataCard";
 
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "dead_letter", "cancelled"]);
 
@@ -428,6 +429,16 @@ export default function DashboardPage() {
             </motion.section>
           )}
 
+          {/* Deployment Metadata */}
+          <motion.section
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+            className="mb-12 mt-8"
+          >
+            <DeploymentMetadataCard />
+          </motion.section>
+
           {/* Success Notification - Cyber Style */}
           <AnimatePresence>
             {activeJob && activeJob.status === "completed" && !showProcessingOverlay && (
@@ -471,17 +482,6 @@ export default function DashboardPage() {
               transition={{ delay: 0.2 }}
             >
               <ActiveJobs />
-            </motion.section>
-
-            {/* ═════════════════════════════════════════════════
-                RETRY TELEMETRY (merged with Job Attempt Timeline)
-               ═════════════════════════════════════════════════ */}
-            <motion.section
-              initial={{ opacity: 0, y: 30 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
-            >
-              <RetryTelemetryCard />
             </motion.section>
 
             <motion.section

@@ -61,7 +61,7 @@ interface WorkerState {
   stopped:      boolean; // crash-loop disabled
 }
 
-const workerRegistry: WorkerState[] = [];
+export const workerRegistry: WorkerState[] = [];
 
 function spawnWorker(scriptPath: string, label: string): void {
   const crashTimestamps: number[] = [];

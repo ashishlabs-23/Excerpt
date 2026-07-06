@@ -3,7 +3,7 @@ import os from 'os';
 import { DatabaseService } from '../services/supabaseService';
 import { requireUserJWT } from '../middleware/supabaseAuth';
 import { AIService } from '../services/aiService';
-
+import { workerRegistry } from '../index';
 const router = Router();
 const db = new DatabaseService();
 const aiService = new AIService();
@@ -11,9 +11,28 @@ const aiService = new AIService();
 // Git commit SHA injected at build time by Render / CI, or read from env.
 // Used to correlate dashboard data with a specific deployment for debugging.
 const GIT_COMMIT = process.env.GIT_COMMIT || process.env.RENDER_GIT_COMMIT || 'local';
+const BUILD_TIMESTAMP = process.env.BUILD_TIMESTAMP || new Date().toISOString();
+const API_VERSION = process.env.API_VERSION || '1.0.0';
+const SCHEMA_VERSION = process.env.SCHEMA_VERSION || '1.0.0';
+const WORKER_PROTOCOL_VERSION = process.env.WORKER_PROTOCOL_VERSION || '1.0.0';
+const DASHBOARD_PROTOCOL_VERSION = process.env.DASHBOARD_PROTOCOL_VERSION || '1.0.0';
 
-// GET /api/system/health
-router.get('/health', requireUserJWT, async (req: Request, res: Response) => {
+import { execSync } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+
+// GET /api/system/health - Liveness only. Fast, no external services.
+router.get('/health', (req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    commit: GIT_COMMIT,
+    buildTime: BUILD_TIMESTAMP,
+    version: API_VERSION
+  });
+});
+
+// GET /api/system/live - Operational runtime state
+router.get('/live', requireUserJWT, async (req: Request, res: Response) => {
   try {
     // 1. Calculate system memory usage
     const totalMem = os.totalmem();
@@ -22,20 +41,16 @@ router.get('/health', requireUserJWT, async (req: Request, res: Response) => {
     const memUsagePercent = (usedMem / totalMem) * 100;
 
     // 2. Count active background jobs across the system
-    // Using a raw query to check for processing jobs across tables. 
-    // We query the jobs table to check processing load.
     let activeJobCount = 0;
     try {
-      const { count: activeJobCount2, error } = await db.getSupabase()
+      const { count, error } = await db.getSupabase()
         .from('jobs')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'processing');
       if (error) throw error;
-      activeJobCount = activeJobCount2 || 0;
+      activeJobCount = count || 0;
     } catch (err: any) {
-      console.warn('[SystemRoute]: Health check Supabase query failed, falling back to local DB:', err.message);
-      const fs = require('fs');
-      const path = require('path');
+      console.warn('[SystemRoute]: Live check Supabase query failed, falling back to local DB:', err.message);
       const localDbPath = path.join(process.cwd(), 'temp', 'local_db.json');
       if (fs.existsSync(localDbPath)) {
         try {
@@ -45,36 +60,102 @@ router.get('/health', requireUserJWT, async (req: Request, res: Response) => {
       }
     }
 
-    // 3. Calculate "AI Capacity"
-    // Base capacity is 100%. 
-    // Each active job reduces capacity by 15% (assuming parallel limit of ~6-7 jobs).
-    // High memory usage also reduces capacity.
+    // 3. Determine system status based on load
     let capacity = 100 - (activeJobCount * 15);
-    
-    // Add a tiny bit of random jitter (±2%) so it feels "alive" even when idle
-    const jitter = Math.floor(Math.random() * 5) - 2; 
-    capacity = capacity + jitter;
-
-    // Cap between 5% and 99%
-    capacity = Math.max(5, Math.min(99, capacity));
-
-    // Determine system status
-    let status = 'active';
-    if (capacity < 20) {
-      status = 'degraded';
-    } else if (capacity < 5) {
-      status = 'offline';
-    }
+    capacity = Math.max(5, Math.min(99, capacity + (Math.floor(Math.random() * 5) - 2)));
+    let status = capacity < 20 ? 'degraded' : 'active';
+    if (capacity < 5) status = 'offline';
 
     res.json({
       status,
       capacity: Math.round(capacity),
       activeJobs: activeJobCount,
-      memoryUsage: Math.round(memUsagePercent)
+      memoryUsage: Math.round(memUsagePercent),
+      uptime: process.uptime(),
+      workerRegistry: workerRegistry.map(w => ({
+        label: w.label,
+        pid: w.pid,
+        running: w.running,
+        restartCount: w.restartCount,
+        uptime: w.startedAt ? Date.now() - w.startedAt : 0
+      })),
+      versions: {
+        commit: GIT_COMMIT,
+        branch: process.env.GIT_BRANCH || process.env.RENDER_GIT_BRANCH || 'unknown',
+        tag: process.env.GIT_TAG || 'none',
+        buildNumber: process.env.BUILD_NUMBER || 'local',
+        nodeVersion: process.version,
+        workerVersion: process.env.WORKER_VERSION || '1.0.0',
+        downloadEngineVersion: process.env.DOWNLOAD_ENGINE_VERSION || 'yt-dlp',
+        apiVersion: API_VERSION,
+        schemaVersion: SCHEMA_VERSION,
+        workerProtocolVersion: WORKER_PROTOCOL_VERSION,
+        dashboardProtocolVersion: DASHBOARD_PROTOCOL_VERSION,
+        buildTimestamp: BUILD_TIMESTAMP
+      }
     });
   } catch (error: any) {
     res.status(500).json({ status: 'degraded', capacity: 0, error: error.message });
   }
+});
+
+// GET /api/system/self-test - Active dependency verification
+router.get('/self-test', requireUserJWT, async (req: Request, res: Response) => {
+  const checks: any[] = [];
+  let overall = 'PASS';
+
+  // Helper to run checks
+  const runCheck = async (name: string, fn: () => Promise<void>) => {
+    const start = Date.now();
+    try {
+      await fn();
+      checks.push({ name, status: 'PASS', latency_ms: Date.now() - start });
+    } catch (err: any) {
+      checks.push({ name, status: 'FAIL', latency_ms: Date.now() - start, error: err.message });
+      overall = 'FAIL';
+    }
+  };
+
+  // 1. Supabase Check
+  await runCheck('Supabase', async () => {
+    const { error } = await db.getSupabase().from('jobs').select('id').limit(1);
+    if (error) throw error;
+  });
+
+  // 2. FFmpeg Check
+  await runCheck('FFmpeg', async () => {
+    execSync('ffmpeg -version', { stdio: 'ignore' });
+  });
+
+  // 3. yt-dlp Check
+  await runCheck('yt-dlp', async () => {
+    execSync('yt-dlp --version', { stdio: 'ignore' });
+  });
+
+  // 4. B2 Check
+  await runCheck('Backblaze B2', async () => {
+    if (!process.env.B2_KEY_ID || !process.env.B2_APPLICATION_KEY) {
+      throw new Error('B2 credentials missing');
+    }
+  });
+
+  // 5. Groq / AI Check
+  await runCheck('AI Providers (Groq)', async () => {
+    if (!process.env.GROQ_API_KEY) {
+      throw new Error('GROQ_API_KEY missing');
+    }
+  });
+
+  // 6. Filesystem Check
+  await runCheck('Filesystem (Temp Dir)', async () => {
+    const tempDir = path.join(process.cwd(), 'temp');
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+    const testFile = path.join(tempDir, '.self-test');
+    fs.writeFileSync(testFile, 'ok');
+    fs.unlinkSync(testFile);
+  });
+
+  res.json({ overall, checks });
 });
 
 // GET /api/system/quality-metrics
