@@ -230,11 +230,13 @@ export class DatabaseService {
 
   async getRecentClips(userId: string, limit = 10) {
     const devModeBypass = process.env.DISABLE_OWNERSHIP_CHECKS === 'true';
+    const workerEnv = process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development');
 
     if (devModeBypass) {
       const { data: clips, error } = await this.db
         .from('clips')
         .select('*, jobs(user_id, video_url)')
+        .eq('environment', workerEnv)
         .eq('is_archived', false)
         .order('created_at', { ascending: false })
         .limit(limit);
@@ -253,6 +255,7 @@ export class DatabaseService {
     const { data: clips, error } = await this.db
       .from('clips')
       .select('*, jobs(user_id, video_url)')
+      .eq('environment', workerEnv)
       .in('job_id', jobIds)
       .eq('is_archived', false)
       .order('created_at', { ascending: false })

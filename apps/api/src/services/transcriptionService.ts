@@ -34,9 +34,11 @@ export class TranscriptionService {
    * Transcribes a video file. Now uses 'Neural Chunking' for massive videos.
    */
   async transcribe(videoPath: string): Promise<TranscriptionResult> {
+    const transcribeStart = Date.now();
     const audioPath = videoPath.replace(/\.[^.]+$/, '_audio.mp3');
-    console.log(`[TranscriptionService]: 🎙️ Extracting 'Neural HD' (64kbps) audio...`);
+    console.log(`[TranscriptionService]: [AUDIO_EXTRACT_START] ts=${new Date().toISOString()}`);
     await processor.extractAudio(videoPath, audioPath);
+    console.log(`[TranscriptionService]: [AUDIO_EXTRACT_DONE] elapsedMs=${Date.now() - transcribeStart} ts=${new Date().toISOString()}`);
 
     const audioSize = fs.statSync(audioPath).size;
     const sizeMB = audioSize / 1024 / 1024;
@@ -142,6 +144,9 @@ export class TranscriptionService {
   }
 
   private async _transcribeChunk(audioPath: string): Promise<TranscriptionResult> {
+    const chunkStart = Date.now();
+    console.log(`[TranscriptionService]: [WHISPER_REQUEST_START] audioPath=${path.basename(audioPath)} ts=${new Date().toISOString()}`);
+
     const fileBuffer = fs.readFileSync(audioPath);
     const fileBlob = new Blob([fileBuffer], { type: 'audio/mpeg' });
     const formData = new FormData();
@@ -151,14 +156,33 @@ export class TranscriptionService {
     formData.append("timestamp_granularities[]", "word");
     formData.append("timestamp_granularities[]", "segment");
 
-    const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${process.env.GROQ_API_KEY}` },
-      body: formData as any
-    });
+    // 90-second timeout: if Groq hangs, abort and let the caller's catch → recoveryMode
+    const GROQ_TIMEOUT_MS = 90_000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+      console.error(`[TranscriptionService]: [WHISPER_TIMEOUT] Groq fetch aborted after ${GROQ_TIMEOUT_MS / 1000}s ts=${new Date().toISOString()}`);
+    }, GROQ_TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${process.env.GROQ_API_KEY}` },
+        body: formData as any,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    const groqElapsedMs = Date.now() - chunkStart;
+    console.log(`[TranscriptionService]: [WHISPER_RESPONSE] status=${response.status} elapsedMs=${groqElapsedMs} ts=${new Date().toISOString()}`);
 
     if (!response.ok) {
-      throw new Error(`Groq HTTP Error: ${response.status} ${await response.text()}`);
+      const body = await response.text();
+      console.error(`[TranscriptionService]: [WHISPER_ERROR] status=${response.status} body=${body.slice(0, 300)}`);
+      throw new Error(`Groq HTTP Error: ${response.status} ${body}`);
     }
 
     const jsonResponse = await response.json() as any;
@@ -166,7 +190,9 @@ export class TranscriptionService {
     const words = jsonResponse.words || [];
     const text = segments.map((seg: any) => `[${seg.start.toFixed(1)}s - ${seg.end.toFixed(1)}s]: ${seg.text.trim()}`).join('\n');
 
+    console.log(`[TranscriptionService]: [WHISPER_COMPLETE] segments=${segments.length} words=${words.length} totalElapsedMs=${Date.now() - chunkStart} ts=${new Date().toISOString()}`);
     return { text, segments, words };
   }
 
 }
+

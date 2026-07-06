@@ -597,10 +597,37 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           segments = cachedData.segments || (parsedGraph?.transcript ? parsedGraph.transcript.map((s: any) => ({ text: s.text, start: s.start, end: s.end, speaker: s.speaker })) : []);
           words = cachedData.words || [];
         } else {
-          await JobStateMachine.transition(db, jobId, JobStatus.TRANSCRIBING, { progress: 20 });
+          await JobStateMachine.transition(db, jobId, JobStatus.TRANSCRIBING, { progress: 20, stage_label: 'Extracting audio & preparing analysis frames' });
           console.log(`[Worker]: 🌪️ Groq / Neural Decode & Spatial Graph Build START...`);
-          
-          const graph = await graphBuilderService.build(inputPath, sourceDuration);
+          const graphBuildStart = Date.now();
+
+          // Heartbeat: write substage to DB every 30s so ops can see where we are
+          const transcriptionHeartbeat = setInterval(async () => {
+            const elapsedSec = Math.round((Date.now() - graphBuildStart) / 1000);
+            try {
+              await db.updateJob(jobId, { stage_label: `Transcription in progress (${elapsedSec}s elapsed)` });
+              console.log(`[Worker]: [TRANSCRIPTION_HEARTBEAT] jobId=${jobId} elapsed=${elapsedSec}s`);
+            } catch {}
+          }, 30_000);
+
+          // Hard timeout — 5 minutes on the full graph build
+          const GRAPH_BUILD_TIMEOUT_MS = 5 * 60 * 1000;
+          let graph: any;
+          try {
+            graph = await Promise.race([
+              graphBuilderService.build(inputPath, sourceDuration),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`TRANSCRIPTION_TIMEOUT: graphBuilderService.build exceeded ${GRAPH_BUILD_TIMEOUT_MS / 1000}s`)), GRAPH_BUILD_TIMEOUT_MS)
+              )
+            ]);
+          } finally {
+            clearInterval(transcriptionHeartbeat);
+          }
+
+          const graphBuildMs = Date.now() - graphBuildStart;
+          console.log(`[Worker]: [TRANSCRIPTION_COMPLETE] jobId=${jobId} durationMs=${graphBuildMs} transcriptSegments=${graph?.transcript?.length ?? 0}`);
+          await db.updateJob(jobId, { stage_label: `Transcription complete (${Math.round(graphBuildMs / 1000)}s)`, progress: 40 });
+
           pipelineContext.vig = graph;
 
           console.log(`[Worker]: 🧠 Distilling VIG into Causal Event Graph...`);
@@ -631,14 +658,14 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           pipelineContext.rankedCandidates = rankedCandidates;
 
           // Backwards compatibility for existing tools
-          transcriptionText = graph.transcript.map(s => s.text).join(' ');
-          segments = graph.transcript.map(s => ({
+          transcriptionText = graph.transcript.map((s: any) => s.text).join(' ');
+          segments = graph.transcript.map((s: any) => ({
             text: s.text,
             start: s.start,
             end: s.end,
             speaker: s.speaker
           }));
-          words = graph.transcript.flatMap(s => s.words) as any;
+          words = graph.transcript.flatMap((s: any) => s.words) as any;
 
           // Serialize and cache the pipeline context for future bypassing
           const cacheData = {

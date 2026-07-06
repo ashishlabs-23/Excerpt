@@ -22,7 +22,8 @@ export class GraphBuilderService {
    * Video Intelligence Graph.
    */
   public async build(videoPath: string, durationSeconds: number): Promise<VideoIntelligenceGraph> {
-    console.log(`[GraphBuilder]: Starting intelligence graph build for ${path.basename(videoPath)}...`);
+    const buildStart = Date.now();
+    console.log(`[GraphBuilder]: [BUILD_START] videoPath=${path.basename(videoPath)} duration=${durationSeconds}s ts=${new Date().toISOString()}`);
     const graph = new VideoIntelligenceGraph(path.basename(videoPath), durationSeconds);
     
     // Create a temporary analysis directory for visual processing
@@ -30,11 +31,29 @@ export class GraphBuilderService {
 
     try {
       // 1. Run Core Modality Extraction (Concurrent)
-      console.log(`[GraphBuilder]: Triggering multimodal extractors...`);
+      console.log(`[GraphBuilder]: [EXTRACTORS_START] transcript+visual+audio launching concurrently ts=${new Date().toISOString()}`);
       const [transcriptionResult, visualResult, audioResult] = await Promise.allSettled([
-        this.extractTranscript(videoPath),
-        this.extractVisual(videoPath, durationSeconds, analysisDir),
-        this.extractAudio(videoPath, durationSeconds)
+        this.extractTranscript(videoPath).then(r => {
+          console.log(`[GraphBuilder]: [TRANSCRIPT_DONE] elapsed=${Date.now() - buildStart}ms segments=${r?.segments?.length ?? 0} ts=${new Date().toISOString()}`);
+          return r;
+        }).catch(e => {
+          console.error(`[GraphBuilder]: [TRANSCRIPT_FAILED] elapsed=${Date.now() - buildStart}ms error=${e?.message} ts=${new Date().toISOString()}`);
+          throw e;
+        }),
+        this.extractVisual(videoPath, durationSeconds, analysisDir).then(r => {
+          console.log(`[GraphBuilder]: [VISUAL_DONE] elapsed=${Date.now() - buildStart}ms ts=${new Date().toISOString()}`);
+          return r;
+        }).catch(e => {
+          console.error(`[GraphBuilder]: [VISUAL_FAILED] elapsed=${Date.now() - buildStart}ms error=${e?.message} ts=${new Date().toISOString()}`);
+          throw e;
+        }),
+        this.extractAudio(videoPath, durationSeconds).then(r => {
+          console.log(`[GraphBuilder]: [AUDIO_DONE] elapsed=${Date.now() - buildStart}ms ts=${new Date().toISOString()}`);
+          return r;
+        }).catch(e => {
+          console.error(`[GraphBuilder]: [AUDIO_FAILED] elapsed=${Date.now() - buildStart}ms error=${e?.message} ts=${new Date().toISOString()}`);
+          throw e;
+        }),
       ]);
 
       // 2. Fuse Transcript
@@ -86,7 +105,7 @@ export class GraphBuilderService {
         graph.audio = audioResult.value;
       }
 
-      console.log(`[GraphBuilder]: Unified Graph Built successfully. Nodes: ${graph.transcript.length} transcript, ${graph.visual.length} visual.`);
+      console.log(`[GraphBuilder]: [BUILD_COMPLETE] elapsed=${Date.now() - buildStart}ms transcript=${graph.transcript.length} visual=${graph.visual.length} ts=${new Date().toISOString()}`);
       return graph;
     } finally {
       // Cleanup analysis frames
@@ -99,6 +118,7 @@ export class GraphBuilderService {
       }
     }
   }
+
 
   private async extractTranscript(videoPath: string) {
     return this.transcriptionService.transcribe(videoPath);
