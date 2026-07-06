@@ -1,6 +1,8 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import Groq from "groq-sdk";
 import { parseJsonWithRepair } from "../ollamaService";
+import fs from 'fs';
+import path from 'path';
 import { TranscriptionResult } from "../transcriptionService";
 
 export interface ClipCandidate {
@@ -36,25 +38,8 @@ export class CandidateGenerationEngine {
     // For cost/context window reasons, we might chunk the transcript if it's too long,
     // but for now we assume it fits in an 8k/32k window.
     
-    const systemPrompt = `You are an elite short-form clip curator.
-Your task is to scan the following transcript and generate 20 to 30 highly engaging clip candidate windows.
-
-EACH CANDIDATE MUST HAVE:
-- start_time: Number in seconds (exact start of the hook).
-- end_time: Number in seconds (exact end of the payoff).
-- hook: The exact spoken line that grabs attention.
-- payoff: The exact spoken line that concludes the thought.
-- emotion: The dominant emotion (e.g., 'Humorous', 'Tense', 'Educational').
-- curiosity_gap: Why the viewer will keep watching after the hook.
-- visual_importance: 1-10 (How important is it to see the speaker's face or action here?).
-- confidence: 1-100 (Your confidence that this is a viral moment).
-- summary: A 1-sentence summary of the candidate.
-
-RULES:
-- Length MUST be between 15 and 60 seconds.
-- Do not cut mid-sentence.
-- Find curiosity gaps, emotional peaks, and laughter.
-- Return strictly a JSON array of these objects.`;
+    const systemPromptPath = path.join(process.cwd(), 'prompts', 'candidate_generation', 'v1.md');
+    const systemPrompt = fs.readFileSync(systemPromptPath, 'utf-8');
 
     const userPrompt = `Transcript:\n<transcript>\n${transcription.text}\n</transcript>\n\nReturn 20-30 candidates in JSON.`;
 

@@ -1,0 +1,13 @@
+{
+  "invalid_prefixes": [
+    "so",
+    "because",
+    "then",
+    "and"
+  ],
+  "incomplete_suffixes": [
+    "and that's why",
+    "so basically",
+    "which means"
+  ]
+}

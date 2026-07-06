@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { TranscriptionResult } from "../transcriptionService";
 
 export interface PaddingConfig {
@@ -41,6 +43,13 @@ export class BoundaryEngine {
     const finalConfig = { ...DEFAULT_CONFIG, ...config };
     const padding = finalConfig.intents[intent.toLowerCase()] || finalConfig.defaultPadding;
     
+    // Load external heuristic rules
+    const rulesPath = path.join(process.cwd(), 'prompts', 'boundary_rules.json');
+    let boundaryRules: any = { invalid_prefixes: [], incomplete_suffixes: [] };
+    if (fs.existsSync(rulesPath)) {
+      boundaryRules = JSON.parse(fs.readFileSync(rulesPath, 'utf-8'));
+    }
+    
     // If we don't have word-level timestamps, just apply basic padding.
     if (!transcription.words || transcription.words.length === 0) {
       console.warn('[BoundaryEngine] No word-level timestamps available. Falling back to basic padding.');
@@ -62,16 +71,25 @@ export class BoundaryEngine {
       
       // Semantic snapping (optional: push back to start of sentence if mid-sentence)
       if (finalConfig.ensureCompleteSentences && startWordIdx > 0) {
-        // Look back up to 10 words to find a punctuation mark (. ? !) indicating a sentence boundary
+        let sentenceStartFound = false;
         for (let i = startWordIdx - 1; i >= Math.max(0, startWordIdx - 10); i--) {
           const prevWord = transcription.words[i];
           if (/[.?!]$/.test(prevWord.word)) {
-            // We found the end of the previous sentence. The current sentence starts at i + 1.
             const newStartWord = transcription.words[i + 1];
-            if (newStartWord && newStartWord.start < exactStart + 5) { // Don't shift by more than 5s
+            if (newStartWord && newStartWord.start < exactStart + 5) {
               exactStart = Math.max(0, newStartWord.start - padding.lead);
+              sentenceStartFound = true;
             }
             break;
+          }
+        }
+        
+        // Check invalid prefixes
+        const currentWordStr = startWord.word.replace(/[^a-zA-Z]/g, '').toLowerCase();
+        if (boundaryRules.invalid_prefixes.includes(currentWordStr)) {
+          // Push start boundary forward to skip the prefix
+          if (startWordIdx + 1 < transcription.words.length) {
+            exactStart = Math.max(0, transcription.words[startWordIdx + 1].start - padding.lead);
           }
         }
       }
@@ -90,10 +108,20 @@ export class BoundaryEngine {
       
       // Semantic snapping: Push forward to end of sentence if mid-sentence
       if (finalConfig.ensureCompleteSentences) {
-        for (let i = endWordIdx - 1; i < Math.min(transcription.words.length, endWordIdx + 15); i++) {
+        let currentSuffix = endWord.word;
+        if (endWordIdx > 1) {
+           currentSuffix = `${transcription.words[endWordIdx-2].word} ${transcription.words[endWordIdx-1].word}`.toLowerCase().replace(/[^a-z ]/g, '');
+        }
+
+        // Check if suffix matches incomplete_suffixes and needs extension
+        const needsExtension = boundaryRules.incomplete_suffixes.some((suffix: string) => currentSuffix.includes(suffix));
+        
+        let searchLimit = needsExtension ? 30 : 15; // Search further if we know it's incomplete
+
+        for (let i = endWordIdx - 1; i < Math.min(transcription.words.length, endWordIdx + searchLimit); i++) {
           const w = transcription.words[i];
           if (/[.?!]$/.test(w.word)) {
-            if (w.end > exactEnd && w.end < exactEnd + 5) {
+            if (w.end > exactEnd && w.end < exactEnd + (needsExtension ? 10 : 5)) {
               exactEnd = w.end + padding.tail;
             }
             break;
