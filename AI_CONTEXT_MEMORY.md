@@ -29,14 +29,13 @@
 
 The development has matured from a Python-scripted prototype into a highly reliable, distributed micro-worker architecture.
 
-### 🛑 CURRENT PHASE: Production Hardening & Feature Freeze
-We have shifted from adding features to **proving reliability**. The system is undergoing a 13-phase hardening process which includes:
-1. **Zero-Drift Database Guarantees**: Strict checks against Tables, Columns, RPCs, Triggers, Policies, etc. (Repository = Production = Local).
-2. **Comprehensive Self-Tests**: `/api/system/self-test` validates DB, Storage, Workers, AI Providers, Memory, Disk Space, and Queue pressure.
-3. **Render Resiliency**: Handling SIGTERM, SIGINT, Uncaught exceptions, Crash-loops, and memory ceilings.
-4. **End-to-End Telemetry Validation**: Proving telemetry correctly records HTTP 429s, Timeouts, Copyright blocks, AI fallbacks, etc.
-5. **CI/CD Automation**: Automated Lint → TSC → Tests → Schema Checks → Docker Build → Deploy → Post-Deploy Checks.
-6. **Benchmark Tracking**: Historical tracking of latencies (median, p95) and regression alerts.
+### 🛑 CURRENT PHASE: Evidence-Driven Quality Optimization
+We have officially completed the infrastructure hardening phase and transitioned into **Clip Quality Optimization**. All future changes to the AI pipeline must be proven via the automated benchmark suite.
+1. **Modular Evaluation Pipeline**: Quality is graded across 5 distinct axes: Boundaries, Subtitles, Render Plans, Ranking Reasoning, and Diversity.
+2. **Strict Subtitle QA**: Subtitles are penalized for character overflows, high reading speed (CPS), overlapping dialogue, and orphan words.
+3. **Immutable Benchmarks**: All benchmark runs are saved to `benchmark-results/production/YYYY-MM-DD/` with git commit hashes and exact dataset hashes.
+4. **A/B Promotion Gate**: Experimental pipelines are evaluated against baselines via `ab-evaluator.ts`. Pipelines are only promoted if they increase overall score by >1.0% without degrading any individual component by >2.0%.
+5. **Append-Only Arena**: Human feedback is collected immutably via `human_arena` and `human_reviews` tables for future RLHF training.
 
 ### Recent Fixes & Pipeline Refactoring (July 2026):
 *   **Database Trigger State Machine (`enforce_job_status_transition`)**: Enforced a strict semantic lifecycle in PostgreSQL. Solved the 10% media download stall where jobs were erroneously trying to bypass strict transition logic.
