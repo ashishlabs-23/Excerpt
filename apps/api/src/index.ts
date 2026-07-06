@@ -143,15 +143,30 @@ function setupGracefulShutdown(): void {
     console.log(`[WorkerManager]: Received ${signal}. Shutting down ${running.length} worker(s)...`);
     for (const w of workerRegistry) {
       if (w.child) {
+        // Send SIGTERM to let workers cancel gracefully (e.g. abort ffmpeg)
         try { w.child.kill('SIGTERM'); } catch (_) { /* already dead */ }
       }
     }
-    // Give workers 2s to clean up, then exit the main process
-    setTimeout(() => process.exit(0), 2000);
+    // Give workers 25s to clean up (Render allows 30s before SIGKILL)
+    setTimeout(() => {
+      console.log(`[WorkerManager]: Forced exit after 25s timeout.`);
+      process.exit(0);
+    }, 25000);
   };
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT',  () => shutdown('SIGINT'));
+
+  // Catch unhandled errors so they don't instantly blow up without cleanup
+  process.on('uncaughtException', (err) => {
+    console.error(`[WorkerManager]: Uncaught Exception:`, err);
+    shutdown('uncaughtException');
+  });
+  
+  process.on('unhandledRejection', (reason, promise) => {
+    console.error(`[WorkerManager]: Unhandled Rejection at:`, promise, `reason:`, reason);
+    // Don't necessarily shutdown on rejection unless strict, but log it heavily
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

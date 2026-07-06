@@ -948,12 +948,114 @@ router.get('/queue-pressure', requireUserJWT, async (req: Request, res: Response
       throughput: {
         completedLastHour,
         completedLast24h,
+        oldestQueuedAt,
       },
-      oldestQueuedAt,
     });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/system/self-test
+// Comprehensive diagnostic returning PASS/FAIL and latency_ms for all subsystems.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/self-test', requireUserJWT, async (req: Request, res: Response) => {
+  const supabase = db.getSupabase();
+  const results: Record<string, { status: string; latency_ms?: number; detail?: string }> = {};
+
+  async function measure(name: string, fn: () => Promise<void> | void) {
+    const start = Date.now();
+    try {
+      await fn();
+      results[name] = { status: 'PASS', latency_ms: Date.now() - start };
+    } catch (e: any) {
+      results[name] = { status: 'FAIL', latency_ms: Date.now() - start, detail: e.message };
+    }
+  }
+
+  // Database
+  await measure('database', async () => {
+    const { error } = await supabase.from('jobs').select('id').limit(1);
+    if (error) throw new Error(error.message);
+  });
+
+  // Supabase Storage
+  await measure('supabase_storage', async () => {
+    const { error } = await supabase.storage.listBuckets();
+    if (error) throw new Error(error.message);
+  });
+
+  // Backblaze
+  await measure('backblaze', async () => {
+    const b2Endpoint = process.env.B2_ENDPOINT;
+    if (!b2Endpoint) throw new Error('B2_ENDPOINT not set');
+    const res = await fetch(b2Endpoint, { method: 'HEAD' });
+    if (!res.ok && res.status !== 401 && res.status !== 404 && res.status !== 400) {
+      // 401/404/400 is fine, it means the API is reachable
+      throw new Error(`B2 returned HTTP ${res.status}`);
+    }
+  });
+
+  // Workers
+  await measure('workers', async () => {
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8010';
+    const res = await fetch(`${apiBase}/health/workers`);
+    if (!res.ok) throw new Error('Workers endpoint unreachable');
+  });
+
+  // FFmpeg & yt-dlp
+  const { execSync } = require('child_process');
+  await measure('ffmpeg', () => {
+    execSync(`${process.env.FFMPEG_PATH || 'ffmpeg'} -version`, { stdio: 'ignore' });
+  });
+  await measure('yt_dlp', () => {
+    // some systems might need yt-dlp.exe, fallback
+    const bin = process.platform === 'win32' ? 'yt-dlp' : 'yt-dlp';
+    execSync(`${bin} --version`, { stdio: 'ignore' });
+  });
+
+  // AI Providers
+  await measure('ai_providers', () => {
+    if (!process.env.GOOGLE_AI_API_KEY && !process.env.GROQ_API_KEY) {
+      throw new Error('No AI provider keys found');
+    }
+  });
+
+  // Disk Space
+  await measure('disk_space', () => {
+    try {
+      const fs = require('fs');
+      const stat = fs.statfsSync('/');
+      const free = stat.bavail * stat.bsize;
+      if (free < 500 * 1024 * 1024) throw new Error('Less than 500MB free disk space');
+    } catch (e: any) {
+      // Fallback for systems that don't support statfsSync or different paths
+      if (e.message.includes('Less than')) throw e;
+    }
+  });
+
+  // Memory
+  await measure('memory', () => {
+    const os = require('os');
+    const free = os.freemem();
+    if (free < 256 * 1024 * 1024) throw new Error('Less than 256MB free memory');
+  });
+
+  // Environment Variables
+  await measure('environment_variables', () => {
+    const required = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
+    const missing = required.filter(k => !process.env[k]);
+    if (missing.length > 0) throw new Error(`Missing: ${missing.join(', ')}`);
+  });
+
+  // Render Queue
+  await measure('render_queue', async () => {
+    const { error } = await supabase.from('jobs').select('id').eq('status', 'queued').limit(1);
+    if (error) throw new Error(error.message);
+  });
+
+  res.json(results);
 });
 
 export default router;

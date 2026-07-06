@@ -1,0 +1,124 @@
+name: Production Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  validate:
+    name: Validation Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: TypeScript Check
+        run: npx tsc --noEmit
+
+      - name: Unit Tests
+        run: npm run test:unit --if-present
+
+      - name: Integration Tests
+        run: npm run test:integration --if-present
+
+  schema_checks:
+    name: Database Integrity
+    runs-on: ubuntu-latest
+    needs: validate
+    env:
+      LOCAL_DB_URL: postgresql://postgres:postgres@localhost:54322/postgres
+      PROD_DB_URL: ${{ secrets.PROD_DB_URL }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start Local DB
+        run: supabase start
+
+      - name: Migration Validation
+        run: supabase db lint
+
+      - name: Schema Drift Check
+        run: npx ts-node scripts/verify-schema-drift.ts
+
+  docker_build:
+    name: Container Build
+    runs-on: ubuntu-latest
+    needs: schema_checks
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Worker Image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile.render
+          push: false
+          tags: excerpt-worker:latest
+
+  deploy:
+    name: Render Deployment
+    runs-on: ubuntu-latest
+    needs: docker_build
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Trigger Render Deploy
+        env:
+          RENDER_HOOK_URL: ${{ secrets.RENDER_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_HOOK_URL" ]; then
+            echo "RENDER_HOOK_URL not set"
+            exit 1
+          fi
+          curl -X POST -d "" "$RENDER_HOOK_URL"
+
+  post_deploy_checks:
+    name: Post-Deploy Verification
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
+      - name: Await Deployment (Sleep)
+        run: sleep 120 # Wait for Render to spin up
+
+      - name: Run Self-Test
+        env:
+          API_URL: ${{ secrets.PROD_API_URL }}
+          JWT_TOKEN: ${{ secrets.PROD_ADMIN_TOKEN }}
+        run: |
+          RES=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $JWT_TOKEN" "$API_URL/api/system/self-test")
+          BODY=$(echo "$RES" | head -n -1)
+          CODE=$(echo "$RES" | tail -n 1)
+          
+          if [ "$CODE" -ne 200 ]; then
+            echo "Self-test failed with HTTP $CODE"
+            echo "$BODY"
+            exit 1
+          fi
+          
+          if echo "$BODY" | grep -q '"status":"FAIL"'; then
+            echo "Self-test reported failure in one or more subsystems:"
+            echo "$BODY"
+            exit 1
+          fi
+          
+          echo "Self-test passed!"
