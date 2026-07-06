@@ -23,6 +23,7 @@ import { StorageService } from '../services/storageService';
 import { CaptionService } from '../services/captionService';
 import { JobStateMachine, JobStatus } from '../utils/JobStateMachine';
 import { installConsoleLogger, withLogContext } from '../services/logger';
+import { DownloadIntelligenceEngine } from '../services/download/DownloadEngine';
 
 installConsoleLogger();
 
@@ -81,6 +82,14 @@ async function processRenderJob(renderJob: any) {
     // Path Normalization: Reconstruct absolute paths dynamically
     const tempDir = path.join(process.cwd(), 'temp', renderJob.job_id);
     const videoPath = path.join(tempDir, 'input.mp4');
+
+    // Rescue missing ephemeral file
+    if (!fs.existsSync(videoPath) && payload.videoUrl) {
+      console.log(`[RenderWorker]: input.mp4 missing (ephemeral wipe). Downloading from ${payload.videoUrl}...`);
+      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+      const downloader = new DownloadIntelligenceEngine();
+      await downloader.executeDownload(payload.videoUrl, videoPath, () => {});
+    }
     
     // Check Render Cache (L5)
     const urlToHash = payload.videoUrl || videoPath;
@@ -244,10 +253,10 @@ async function processRenderJob(renderJob: any) {
 
       await db.logProductionFailure({
         job_id: renderJob.job_id,
-        failure_type: 'RENDER_ERROR',
-        stacktrace: err.stack,
-        worker: workerInstanceId,
-        stage: 'rendering'
+        clip_id: clipId,
+        error_message: err.message,
+        stack_trace: err.stack,
+        component: 'renderWorker'
       });
     } finally {
       clearInterval(heartbeatInterval);
