@@ -1,8 +1,10 @@
 import dotenv from 'dotenv';
 import path from 'path';
 
-// Load variables from .env if running locally
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+// Load variables from .env if NOT running in CI
+if (!process.env.CI) {
+  dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+}
 
 const REQUIRED_ENV_VARS = [
   'SUPABASE_URL',

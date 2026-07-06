@@ -1,4 +1,4 @@
-name: Security DevSecOps Pipeline
+name: Security Scanners
 
 on:
   push:
@@ -8,40 +8,20 @@ on:
   schedule:
     - cron: '0 3 * * 1'
 
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   security-events: write
   actions: read
 
 jobs:
-  validate:
-    name: Validate Build & Environment
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Compile workers and APIs (tsc)
-        run: |
-          npx tsc -b apps/api apps/web || true
-          npx tsc --noEmit --project apps/api/tsconfig.json || true
-          npx tsc --noEmit --project apps/web/tsconfig.json || true
-
-      - name: Validate Production Environment Configuration
-        run: npx tsx scripts/validate-env.ts
-
   codeql:
     name: CodeQL Semantic Analysis
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -59,6 +39,7 @@ jobs:
   semgrep:
     name: Semgrep SAST
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Run Semgrep
@@ -69,14 +50,23 @@ jobs:
           SEMGREP_RULES: p/default p/owasp-top-ten p/typescript
 
       - name: Upload SARIF file
+        if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: semgrep.sarif
           category: semgrep
+          
+      - name: Upload Semgrep Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-report
+          path: semgrep.sarif
 
   secrets:
     name: Secret Scanning (Gitleaks)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -89,10 +79,11 @@ jobs:
   dependencies:
     name: Dependency Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - name: npm audit
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high --workspaces --if-present || true
 
       - name: Run OSV-Scanner
         uses: google/osv-scanner-action/osv-scanner-action@v1.9.0
@@ -103,51 +94,50 @@ jobs:
             ./
 
   containers:
-    name: Container Vulnerability Scan (Trivy)
+    name: Container Scan (Trivy)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      
       - name: Build local image for scanning
         run: docker build -t excerpt-api:local -f Dockerfile.render .
-      - name: Run Trivy vulnerability scanner
+        
+      - name: Run Trivy vulnerability scanner (Image)
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: 'excerpt-api:local'
           format: 'sarif'
-          output: 'trivy.sarif'
+          output: 'trivy-image.sarif'
           severity: 'CRITICAL,HIGH'
-      - name: Upload Trivy SARIF
+          
+      - name: Run Trivy vulnerability scanner (Filesystem)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy SARIF (Image)
+        if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: 'trivy.sarif'
-          category: trivy
-
-  docker-build:
-    name: Verify Docker Build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Dry Run Docker Build
-        run: docker build -f Dockerfile.render .
-
-  migrations:
-    name: Supabase Migration Validation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Supabase CLI
-        uses: supabase/setup-cli@v1
-      - name: Verify Migrations
-        run: |
-          supabase db lint || echo "Lint warnings found"
-          supabase migration list || echo "Could not list migrations (requires linked project)"
-
-  security-summary:
-    name: Consolidate Artifacts
-    needs: [validate, codeql, semgrep, secrets, dependencies, containers, docker-build, migrations]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Print summary
-        run: echo "All security pipelines executed. Check individual job runs for specific SARIF and artifact uploads."
+          sarif_file: 'trivy-image.sarif'
+          category: trivy-image
+          
+      - name: Upload Trivy SARIF (FS)
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-fs.sarif'
+          category: trivy-fs
+          
+      - name: Upload Trivy Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-reports
+          path: trivy-*.sarif

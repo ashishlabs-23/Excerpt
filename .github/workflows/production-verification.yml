@@ -1,0 +1,84 @@
+name: Production Operational Readiness
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+concurrency:
+  group: prod-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Operational Readiness Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Web App
+        run: npm run build --if-present --workspace=apps/web
+
+      - name: Build API
+        run: npm run build --if-present --workspace=apps/api
+
+      - name: Verify Docker Build
+        run: docker build -f Dockerfile.render -t excerpt-api:prod .
+
+      - name: Check FFmpeg and yt-dlp Availability in Container
+        run: |
+          docker run --rm excerpt-api:prod ffmpeg -version
+          docker run --rm excerpt-api:prod yt-dlp --version
+
+      - name: Verify Environment Variables
+        run: npx tsx scripts/validate-env.ts
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+          B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+          B2_BUCKET_NAME: ${{ secrets.B2_BUCKET_NAME }}
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+      
+      - name: Validate Supabase Migrations
+        run: |
+          supabase db lint
+          supabase migration list || true
+
+      - name: Verify Startup Sanity
+        run: |
+          # Start the container in detached mode
+          docker run -d --name excerpt-api-test -p 8010:8010 -e EXCERPT_ALLOW_SERVICE_KEY=true excerpt-api:prod
+          
+          # Wait a few seconds to let it initialize
+          sleep 10
+          
+          # Check if the container is still running
+          if [ "$(docker inspect -f '{{.State.Running}}' excerpt-api-test)" != "true" ]; then
+            echo "Container crashed on startup!"
+            docker logs excerpt-api-test
+            exit 1
+          fi
+          
+          # Clean up
+          docker stop excerpt-api-test
+          docker rm excerpt-api-test
