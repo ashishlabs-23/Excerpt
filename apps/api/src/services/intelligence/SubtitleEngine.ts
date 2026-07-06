@@ -1,5 +1,4 @@
 import fs from 'fs';
-import path from 'path';
 
 export interface SubtitleWord {
   word: string;
@@ -8,122 +7,152 @@ export interface SubtitleWord {
 }
 
 export interface SubtitleConfig {
-  primaryColor?: string;     // e.g. &H0000FFFF (AABBGGRR)
-  highlightColor?: string;   // e.g. &H0000D7FF (Gold)
-  fontName?: string;         // e.g. "Montserrat-Black"
-  fontSize?: number;         // e.g. 24
-  maxCharsPerLine?: number;  // e.g. 20
-  safeAreaCenterY?: number;  // e.g. 288 (out of 1920x1080 typical portait size)
+  primaryColor?: string;
+  highlightColor?: string;
+  fontName?: string;
+  fontSize?: number;
+  maxCharsPerLine?: number;
+  safeAreaCenterY?: number;
 }
 
 const DEFAULT_CONFIG: SubtitleConfig = {
-  primaryColor: '&H00FFFFFF', // White
-  highlightColor: '&H0000D7FF', // Gold/Yellow
+  primaryColor: '&H00FFFFFF',
+  highlightColor: '&H0000D7FF',
   fontName: 'Montserrat-Black',
   fontSize: 24,
   maxCharsPerLine: 20,
-  safeAreaCenterY: 150 // Placed roughly at the center-third
+  safeAreaCenterY: 150
 };
 
-export class SubtitleEngine {
-  
-  /**
-   * Generates a premium .ass subtitle file with karaoke-style word highlighting,
-   * safe-area placement, and balanced line breaking.
-   */
-  public async generateASS(
-    words: SubtitleWord[], 
-    outputPath: string,
-    config: Partial<SubtitleConfig> = {}
-  ): Promise<string> {
-    const finalConfig = { ...DEFAULT_CONFIG, ...config };
-    
-    let assContent = this.getASSHeader(finalConfig);
-    
-    // 1. Group words into balanced lines
-    const lines = this.groupWordsIntoLines(words, finalConfig.maxCharsPerLine!);
-    
-    // 2. Generate ASS dialogue lines with karaoke override tags
-    for (const line of lines) {
-      if (line.words.length === 0) continue;
-      
-      const lineStart = this.formatTime(line.words[0].start);
-      const lineEnd = this.formatTime(line.words[line.words.length - 1].end);
-      
-      // We render the line multiple times (if needed) or use standard karaoke tags {\k10}
-      // For a premium look without complex Lua scripts, we will use ASS karaoke tags {\kX} 
-      // or \c&H...& color overrides per word.
-      
-      // Let's use explicit color overrides for active word highlighting because it allows 
-      // smooth "pop" effects if we wanted to add \t tags later.
-      // For simplicity, we just color the "active" word. This means we duplicate the Dialogue line 
-      // for each active word, changing the color of that specific word.
+// ---------------------------------------------------------
+// Pipeline Data Structures
+// ---------------------------------------------------------
+
+export interface TimedWord extends SubtitleWord {
+  duration: number;
+  pauseAfter: number;
+}
+
+export interface LayoutLine {
+  words: TimedWord[];
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface StyledLine extends LayoutLine {
+  assLines: string[]; // Intermediate ASS dialog representation (before full generation)
+}
+
+// ---------------------------------------------------------
+// Engine Modules
+// ---------------------------------------------------------
+
+export class TimingEngine {
+  public process(words: SubtitleWord[]): TimedWord[] {
+    return words.map((w, i) => {
+      const nextWord = words[i + 1];
+      const pauseAfter = nextWord ? nextWord.start - w.end : 0;
+      return {
+        ...w,
+        duration: w.end - w.start,
+        pauseAfter: Math.max(0, pauseAfter)
+      };
+    });
+  }
+}
+
+export class LayoutEngine {
+  public process(timedWords: TimedWord[], maxChars: number): LayoutLine[] {
+    const lines: LayoutLine[] = [];
+    let currentLineWords: TimedWord[] = [];
+    let currentChars = 0;
+
+    for (const word of timedWords) {
+      const isLongPause = word.pauseAfter > 0.5;
+      const exceedsLength = currentChars + word.word.length > maxChars;
+
+      if ((exceedsLength && currentLineWords.length > 0) || (currentLineWords.length > 0 && currentLineWords[currentLineWords.length - 1].pauseAfter > 0.5)) {
+        lines.push(this.createLayoutLine(currentLineWords));
+        currentLineWords = [];
+        currentChars = 0;
+      }
+
+      currentLineWords.push(word);
+      currentChars += word.word.length + 1; // +1 for space
+    }
+
+    if (currentLineWords.length > 0) {
+      lines.push(this.createLayoutLine(currentLineWords));
+    }
+
+    return lines;
+  }
+
+  private createLayoutLine(words: TimedWord[]): LayoutLine {
+    return {
+      words,
+      start: words[0].start,
+      end: words[words.length - 1].end,
+      text: words.map(w => w.word).join(' ')
+    };
+  }
+}
+
+export class StylingEngine {
+  public process(layoutLines: LayoutLine[], config: SubtitleConfig): StyledLine[] {
+    return layoutLines.map(line => {
+      const assLines: string[] = [];
       
       for (let i = 0; i < line.words.length; i++) {
         const activeWord = line.words[i];
-        const activeStart = this.formatTime(activeWord.start);
-        const activeEnd = this.formatTime(activeWord.end);
         
-        let textLine = '';
+        let styledText = '';
         for (let j = 0; j < line.words.length; j++) {
           const w = line.words[j];
-          const isEmphasized = w.word.length > 5; // Simple heuristic for keyword emphasis
+          const isEmphasized = w.word.length > 5;
           
           if (j === i) {
-            // Active word
-            textLine += `{\\c${finalConfig.highlightColor}}{\\b1}${w.word}{\\b0}{\\c${finalConfig.primaryColor}} `;
+            styledText += `{\\c${config.highlightColor}}{\\b1}${w.word}{\\b0}{\\c${config.primaryColor}} `;
           } else {
-            // Inactive word
-            textLine += isEmphasized ? `{\\b1}${w.word}{\\b0} ` : `${w.word} `;
+            styledText += isEmphasized ? `{\\b1}${w.word}{\\b0} ` : `${w.word} `;
           }
         }
         
-        // Add the dialogue line for the duration this word is spoken
-        assContent += `Dialogue: 0,${activeStart},${activeEnd},Default,,0,0,0,,${textLine.trim()}\n`;
-      }
-    }
-    
-    fs.writeFileSync(outputPath, assContent, 'utf-8');
-    return outputPath;
-  }
-  
-  private groupWordsIntoLines(words: SubtitleWord[], maxChars: number) {
-    const lines: { words: SubtitleWord[] }[] = [];
-    let currentLine: SubtitleWord[] = [];
-    let currentChars = 0;
-    
-    for (const word of words) {
-      // If adding this word exceeds max chars, or there is a long pause (>0.5s), break line
-      const pauseDuration = currentLine.length > 0 
-        ? word.start - currentLine[currentLine.length - 1].end 
-        : 0;
-        
-      if ((currentChars + word.word.length > maxChars && currentLine.length > 0) || pauseDuration > 0.5) {
-        lines.push({ words: currentLine });
-        currentLine = [];
-        currentChars = 0;
+        assLines.push(
+          `Dialogue: 0,${this.formatTime(activeWord.start)},${this.formatTime(activeWord.end)},Default,,0,0,0,,${styledText.trim()}`
+        );
       }
       
-      currentLine.push(word);
-      currentChars += word.word.length + 1; // +1 for space
-    }
-    
-    if (currentLine.length > 0) {
-      lines.push({ words: currentLine });
-    }
-    
-    return lines;
+      return {
+        ...line,
+        assLines
+      };
+    });
   }
-  
+
   private formatTime(seconds: number): string {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = Math.floor(seconds % 60);
     const cs = Math.floor((seconds % 1) * 100);
-    
     return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${cs.toString().padStart(2, '0')}`;
   }
-  
+}
+
+export class ASSGenerator {
+  public generate(styledLines: StyledLine[], config: SubtitleConfig): string {
+    let content = this.getASSHeader(config);
+    
+    for (const line of styledLines) {
+      for (const ass of line.assLines) {
+        content += ass + '\n';
+      }
+    }
+    
+    return content;
+  }
+
   private getASSHeader(config: SubtitleConfig): string {
     return `[Script Info]
 ScriptType: v4.00+
@@ -138,5 +167,32 @@ Style: Default,${config.fontName},${config.fontSize},${config.primaryColor},&H00
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
+  }
+}
+
+// ---------------------------------------------------------
+// Main Engine Orchestrator
+// ---------------------------------------------------------
+
+export class SubtitleEngine {
+  private timingEngine = new TimingEngine();
+  private layoutEngine = new LayoutEngine();
+  private stylingEngine = new StylingEngine();
+  private assGenerator = new ASSGenerator();
+
+  public async generateASS(
+    words: SubtitleWord[], 
+    outputPath: string,
+    config: Partial<SubtitleConfig> = {}
+  ): Promise<string> {
+    const finalConfig = { ...DEFAULT_CONFIG, ...config };
+    
+    const timed = this.timingEngine.process(words);
+    const layout = this.layoutEngine.process(timed, finalConfig.maxCharsPerLine!);
+    const styled = this.stylingEngine.process(layout, finalConfig);
+    const assContent = this.assGenerator.generate(styled, finalConfig);
+    
+    fs.writeFileSync(outputPath, assContent, 'utf-8');
+    return outputPath;
   }
 }

@@ -43,10 +43,19 @@ Compare them holistically. Return exactly the top ${targetCount} clips as a JSON
 OUTPUT FORMAT:
 [
   {
-    "candidate_index": 3, // The index of the candidate you selected (1-indexed based on the input)
-    "reason_for_selection": "This clip has the strongest curiosity gap because...",
-    "clip_score": 98,
-    "title": "Platform ready title (max 50 chars)"
+    "candidate_index": 3,
+    "title": "Platform ready title (max 50 chars)",
+    "rank": 1,
+    "retention": 94,
+    "curiosity": 91,
+    "emotion": 88,
+    "payoff": 96,
+    "context_required": "low",
+    "reason": [
+      "Strong curiosity gap",
+      "Clear payoff",
+      "High emotional energy"
+    ]
   }
 ]`;
 
@@ -67,6 +76,9 @@ OUTPUT FORMAT:
       const idx = (selection.candidate_index as number) - 1;
       if (idx >= 0 && idx < candidates.length) {
         const source = candidates[idx];
+        const overallScore = Math.round(((selection.retention || 90) + (selection.curiosity || 90) + (selection.payoff || 90)) / 3);
+        const reasonText = Array.isArray(selection.reason) ? selection.reason.join(" | ") : (selection.reason || source.curiosity_gap);
+
         finalClips.push({
           id: `clip_${Date.now()}_${idx}`,
           video_url: videoUrl,
@@ -75,11 +87,18 @@ OUTPUT FORMAT:
           title: selection.title || `Ranked Clip ${idx + 1}`,
           content: source.summary,
           hook: source.hook,
-          reason: selection.reason_for_selection || source.curiosity_gap,
-          virality_score: selection.clip_score || source.confidence,
-          clip_score: selection.clip_score || source.confidence,
-          face_focus_score: source.visual_importance * 10
-        });
+          reason: reasonText,
+          virality_score: overallScore,
+          clip_score: overallScore,
+          face_focus_score: source.visual_importance * 10,
+          score_breakdown: {
+            retention: selection.retention,
+            curiosity: selection.curiosity,
+            emotion_score: selection.emotion,
+            payoff: selection.payoff,
+            context_required: selection.context_required
+          }
+        } as any); // Casting as any to pass extended score_breakdown
       }
     }
 

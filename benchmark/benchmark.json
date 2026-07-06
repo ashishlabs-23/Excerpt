@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "1.0.0",
+  "name": "Excerpt Quality Benchmark Dataset",
+  "description": "Ground-truth evaluation datasets for Excerpt AI video clipping engine.",
+  "categories": [
+    "podcast",
+    "gaming",
+    "interview",
+    "tutorial",
+    "football"
+  ]
+}
