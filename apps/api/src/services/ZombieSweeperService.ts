@@ -1,6 +1,8 @@
 import { DatabaseService } from './supabaseService';
 import { StorageIntegrityMonitor } from './StorageIntegrityMonitor';
 import { RetentionService } from './RetentionService';
+import fs from 'fs';
+import path from 'path';
 
 export class ZombieSweeperService {
   private db: DatabaseService;
@@ -177,6 +179,36 @@ export class ZombieSweeperService {
             error_message: 'Timeout: Voiceover generation stalled',
             updated_at: new Date().toISOString() 
           }).eq('id', vo.id);
+        }
+      }
+
+      // 5. Sweep Orphaned Temp Files
+      const tempDirBase = path.join(process.cwd(), 'temp');
+      if (fs.existsSync(tempDirBase)) {
+        const tempFiles = fs.readdirSync(tempDirBase);
+        let deletedCount = 0;
+        const now = Date.now();
+        const FILE_STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+        for (const file of tempFiles) {
+          const filePath = path.join(tempDirBase, file);
+          try {
+            const stats = fs.statSync(filePath);
+            if (now - stats.mtimeMs > FILE_STALE_THRESHOLD_MS) {
+              if (stats.isDirectory()) {
+                fs.rmSync(filePath, { recursive: true, force: true });
+              } else {
+                fs.unlinkSync(filePath);
+              }
+              deletedCount++;
+            }
+          } catch (e) {
+            console.warn(`[ZombieSweeper]: Failed to clean up temp file ${filePath}:`, e);
+          }
+        }
+        
+        if (deletedCount > 0) {
+          console.log(`[ZombieSweeper]: Cleaned up ${deletedCount} orphaned files/directories in temp directory.`);
         }
       }
 
