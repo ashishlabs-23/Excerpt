@@ -64,8 +64,12 @@ export async function ensureSourceVideo(
     throw new Error(`[ensureSourceVideo]: Failed to recover valid input.mp4 for job ${jobId} after download attempt.`);
   }
 
+  const telemetry: SourceVideoTelemetry = { strategy: 'redownload', downloaded: true, durationMs: Date.now() - startMs };
+  const stats = fs.statSync(videoPath);
+  console.log(`[Event: SOURCE_VIDEO_RECOVERY] renderJobId=unknown jobId=${jobId} strategy=${telemetry.strategy} durationMs=${telemetry.durationMs} validated=true fileSize=${stats.size}`);
+
   return {
     videoPath,
-    telemetry: { strategy: 'redownload', downloaded: true, durationMs: Date.now() - startMs }
+    telemetry
   };
 }
