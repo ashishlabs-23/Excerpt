@@ -30,6 +30,8 @@ function isTerminalJobStatus(status?: string) {
 
 export default function DashboardPage() {
   const { data: dashboardData, loading: dashLoading } = useDashboard();
+  const [activeJobFailed, setActiveJobFailed] = useState(false);
+  const userClickedCompletedJob = useRef(false);
   const [activeJob, setActiveJob] = useState<any>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -143,7 +145,10 @@ export default function DashboardPage() {
           setLastJobId(null); // Stop polling
           localStorage.removeItem("lastJobId");
           localStorage.removeItem(`minimizeOverlay_${lastJobId}`);
-          setTimeout(() => setShowProcessingOverlay(false), 1500);
+          if (!userClickedCompletedJob.current) {
+            setTimeout(() => setShowProcessingOverlay(false), 1500);
+          }
+          userClickedCompletedJob.current = false;
         } else if (data.status === "failed" || data.status === "dead_letter") {
           console.error("[Dashboard]: Job execution failed:", data.failedReason);
           setActiveJob(data);
@@ -492,11 +497,20 @@ export default function DashboardPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
             >
-              <ActiveJobs onJobSelect={(jobId) => {
+              <ActiveJobs onJobSelect={(job) => {
+                const jobId = job.id;
                 localStorage.setItem("lastJobId", jobId);
                 localStorage.removeItem(`minimizeOverlay_${jobId}`);
                 setLastJobId(jobId);
-                setActiveJob({ status: 'initiating', progress: 0, id: jobId });
+                
+                if (job.status === 'completed') {
+                  userClickedCompletedJob.current = true;
+                  setActiveJob(job);
+                } else {
+                  userClickedCompletedJob.current = false;
+                  setActiveJob(job);
+                }
+                
                 consecutive404s.current = 0;
                 setShowProcessingOverlay(true);
               }} />

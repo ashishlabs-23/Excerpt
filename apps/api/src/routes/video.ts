@@ -522,6 +522,26 @@ router.post(
           userId: req.user.id
         });
 
+        // Fire-and-forget title extraction so the UI updates faster
+        if (!/^local:/i.test(videoUrl) && /^https?:\/\//i.test(videoUrl)) {
+          (async () => {
+             try {
+               const processor = new VideoProcessor();
+               const metadata = await processor.getVideoMetadata(videoUrl);
+               if (metadata && metadata.title) {
+                 const shortTitle = metadata.title.length > 50 ? metadata.title.substring(0, 47) + '...' : metadata.title;
+                 const { data: job } = await db.getSupabase().from('jobs').select('payload').eq('id', jobId).single();
+                 if (job && job.payload) {
+                   const updatedPayload = { ...job.payload, title: shortTitle };
+                   await db.updateJob(jobId, { payload: updatedPayload });
+                 }
+               }
+             } catch (err) {
+               console.warn('[VideoRoute]: Fast metadata fetch failed:', err);
+             }
+          })();
+        }
+
       return res.status(202).json({ 
         message: 'Job submitted to queue', 
         jobId 
@@ -1035,10 +1055,10 @@ router.post('/admin/reset-workspace', requireUserJWT, async (req: Request, res: 
     const jobIds = jobs?.map(j => j.id) || [];
     
     if (jobIds.length > 0) {
-      // Soft archive all clips by setting is_archived = true
+      // Hard delete all clips since is_archived column doesn't exist
       const { error: updateError } = await db.getSupabase()
         .from('clips')
-        .update({ is_archived: true })
+        .delete()
         .in('job_id', jobIds);
         
       if (updateError) throw updateError;

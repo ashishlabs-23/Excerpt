@@ -237,7 +237,6 @@ export class DatabaseService {
         .from('clips')
         .select('*, jobs(user_id, video_url)')
         .eq('environment', workerEnv)
-        .eq('is_archived', false)
         .order('created_at', { ascending: false })
         .limit(limit);
       if (error) throw error;
@@ -257,7 +256,6 @@ export class DatabaseService {
       .select('*, jobs(user_id, video_url)')
       .eq('environment', workerEnv)
       .in('job_id', jobIds)
-      .eq('is_archived', false)
       .order('created_at', { ascending: false })
       .limit(limit);
     if (error) throw error;
