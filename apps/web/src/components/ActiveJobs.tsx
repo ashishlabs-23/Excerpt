@@ -19,7 +19,7 @@ interface Job {
   created_at: string;
 }
 
-export const ActiveJobs: React.FC = () => {
+export const ActiveJobs: React.FC<{ onJobSelect?: (jobId: string) => void }> = ({ onJobSelect }) => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
@@ -219,8 +219,8 @@ export const ActiveJobs: React.FC = () => {
                   initial={{ opacity: 0, scale: 0.98 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.95 }}
-                  className="w-[320px] sm:w-[360px] shrink-0 snap-start relative p-5 rounded-[24px] glass-card border-white/5 bg-white/[0.01] hover:border-primary/20 transition-all duration-300 flex flex-col justify-between overflow-hidden shadow-lg"
-                >
+                  className={`w-[320px] sm:w-[360px] shrink-0 snap-start relative p-5 rounded-[24px] glass-card border-white/5 bg-white/[0.01] hover:border-primary/20 transition-all duration-300 flex flex-col justify-between overflow-hidden shadow-lg ${onJobSelect ? 'cursor-pointer' : ''}`}
+                  onClick={() => onJobSelect && onJobSelect(job.id)}
                   <div>
                     {/* Visual Header */}
                     <div className="flex items-start gap-4 mb-4">

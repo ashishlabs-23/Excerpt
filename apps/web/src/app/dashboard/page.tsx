@@ -492,7 +492,14 @@ export default function DashboardPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
             >
-              <ActiveJobs />
+              <ActiveJobs onJobSelect={(jobId) => {
+                localStorage.setItem("lastJobId", jobId);
+                localStorage.removeItem(`minimizeOverlay_${jobId}`);
+                setLastJobId(jobId);
+                setActiveJob({ status: 'initiating', progress: 0, id: jobId });
+                consecutive404s.current = 0;
+                setShowProcessingOverlay(true);
+              }} />
             </motion.section>
 
             <motion.section
