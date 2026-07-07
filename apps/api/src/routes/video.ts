@@ -582,10 +582,12 @@ router.post('/purge', jobSubmissionRateLimit, requireUserJWT, async (req: Reques
  */
 router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
   try {
+    const workerEnv = process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development');
     const { data, error } = await supabase()
       .from('jobs')
       .select('*')
       .eq('user_id', req.user.id)
+      .eq('environment', workerEnv)
       .order('created_at', { ascending: false })
       .limit(15);
 
