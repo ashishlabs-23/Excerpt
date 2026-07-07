@@ -63,6 +63,8 @@ export const ProcessingState: React.FC<ProcessingStateProps> = ({ status, progre
   }
 
   const activeStep = steps[currentStepIndex] || steps[0];
+  const isTerminalFailed = normalizedStatus === 'failed' || normalizedStatus === 'dead_letter' || normalizedStatus === 'cancelled';
+  const displayError = isTerminalFailed ? error : undefined;
 
   return (
     <motion.div
@@ -108,13 +110,13 @@ export const ProcessingState: React.FC<ProcessingStateProps> = ({ status, progre
                     )}>
                       {isPast ? (
                         <CheckCircle2 size={16} />
-                      ) : isActive && !error ? (
+                      ) : isActive && !displayError ? (
                         <Loader2 size={16} className="animate-spin" />
                       ) : (
                         <Icon size={16} />
                       )}
 
-                      {isActive && !error && (
+                      {isActive && !displayError && (
                         <span className="absolute -inset-1 border border-primary/20 rounded-full animate-ping pointer-events-none" />
                       )}
                     </div>
@@ -174,7 +176,7 @@ export const ProcessingState: React.FC<ProcessingStateProps> = ({ status, progre
                   strokeWidth="8" 
                   fill="transparent" 
                   className={cn(
-                    error ? "text-red-500" : "text-primary"
+                    displayError ? "text-red-500" : "text-primary"
                   )}
                   strokeDasharray="465"
                   animate={{ strokeDashoffset: 465 - (465 * progress) / 100 }}
@@ -199,15 +201,15 @@ export const ProcessingState: React.FC<ProcessingStateProps> = ({ status, progre
               </span>
               <p className={cn(
                 "text-xs font-bold uppercase italic tracking-tight",
-                error ? "text-red-400" : "text-white"
+                displayError ? "text-red-400" : "text-white"
               )}>
-                {error ? "Pipeline Terminated" : (stageLabel || activeStep.desc)}
+                {displayError ? "Pipeline Terminated" : (stageLabel || activeStep.desc)}
               </p>
             </div>
 
             {/* Diagnostic Alert Box */}
             <AnimatePresence>
-              {error && (
+              {displayError && (
                 <motion.div
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -221,7 +223,7 @@ export const ProcessingState: React.FC<ProcessingStateProps> = ({ status, progre
                         Download Blocked
                       </h4>
                       <p className="text-[10px] text-red-200/60 leading-normal font-semibold italic">
-                        {error}
+                        {displayError}
                         <strong className="text-red-400 block mt-1">
                           Tip: Drag and drop a local file to bypass third-party rate limits.
                         </strong>
