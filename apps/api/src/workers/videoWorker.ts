@@ -542,6 +542,14 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         const metadata = await processor.getVideoMetadata(videoUrl);
         videoTitle = metadata.title || videoTitle;
         videoChannel = metadata.channel || videoChannel;
+        
+        try {
+          // Keep a short title for UI display
+          const shortTitle = videoTitle.length > 50 ? videoTitle.substring(0, 47) + '...' : videoTitle;
+          const updatedPayload = { ...(job as any).payload, title: shortTitle };
+          await db.updateJob(jobId, { payload: updatedPayload });
+          (job as any).payload = updatedPayload;
+        } catch (e) {}
       }
     } catch (metaErr) {
       console.warn('[Worker]: Video metadata lookup failed for hash generation, falling back.');

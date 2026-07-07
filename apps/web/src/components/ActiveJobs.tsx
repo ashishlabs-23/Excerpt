@@ -15,6 +15,7 @@ interface Job {
   payload?: {
     intent?: string;
     numClips?: number;
+    title?: string;
   };
   created_at: string;
 }
@@ -136,7 +137,11 @@ export const ActiveJobs: React.FC<{ onJobSelect?: (jobId: string) => void }> = (
     }
   };
 
-  const getProjectName = (url: string) => {
+  const getProjectName = (job: Job) => {
+    if (job.payload?.title) {
+      return job.payload.title;
+    }
+    const url = job.video_url;
     if (!url) return "Untitled Video";
     try {
       const parsed = new URL(url);
@@ -211,7 +216,7 @@ export const ActiveJobs: React.FC<{ onJobSelect?: (jobId: string) => void }> = (
               const isFailed = ['failed', 'dead_letter'].includes(job.status);
               const isCancelled = job.status === 'cancelled';
               const isCompleted = job.status === 'completed';
-              const name = getProjectName(job.video_url);
+              const name = getProjectName(job);
 
               return (
                 <motion.div
