@@ -477,6 +477,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     
     const videoSize = fs.statSync(inputPath).size;
     console.log(`[Worker]: Vector data ready: ${(videoSize / 1024 / 1024).toFixed(2)} MB`);
+    try { await JobStateMachine.transition(db, jobId, JobStatus.PROCESSING, { progress: 15, stage_label: 'Calculating video duration & verifying media stream' }); } catch {}
     const sourceDuration = await processor.getVideoDuration(inputPath);
     console.log(`[Worker]: Source duration: ${sourceDuration.toFixed(2)} seconds`);
 
