@@ -13,7 +13,7 @@ export class DownloadIntelligenceEngine {
   private strategyManager = new StrategyManager();
   private proxyProvider = new EnvProxyProvider();
   
-  private readonly THROTTLE_THRESHOLD_BPS = 100 * 1024;
+  private readonly THROTTLE_THRESHOLD_BPS = 15 * 1024;
   private readonly THROTTLE_TIME_LIMIT_MS = 15000; 
 
   private getYtDlpOptionalArgs(cookiesPath: string | null, strategy: DownloadStrategy): string[] {
