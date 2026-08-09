@@ -20,6 +20,14 @@ const DEFAULT_STRATEGIES: DownloadStrategy[] = [
     rateLimit: '15M'
   },
   {
+    id: 'tv_embedded',
+    resolutionCap: '720',
+    extractorArgs: 'youtube:player_client=tv_embedded',
+    useCookies: false,
+    maxRetries: 1,
+    rateLimit: '15M'
+  },
+  {
     id: 'mweb',
     resolutionCap: '720',
     extractorArgs: 'youtube:player_client=mweb',
