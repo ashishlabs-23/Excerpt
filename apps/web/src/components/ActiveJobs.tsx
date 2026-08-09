@@ -12,6 +12,12 @@ interface Job {
   video_url: string;
   job_type?: string;
   failed_reason?: string;
+  debug_data?: {
+    error_type?: string;
+    errorCategory?: string;
+    stage?: string;
+    suggested_fix?: string;
+  };
   payload?: {
     intent?: string;
     numClips?: number;
