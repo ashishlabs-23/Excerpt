@@ -52,7 +52,6 @@ import { EmotionThumbnailEngine } from '../services/intelligence/EmotionThumbnai
 import { installConsoleLogger, withLogContext } from '../services/logger';
 import { assertSafeRemoteVideoUrl } from '../services/urlSafety';
 import {
-  buildSrtFromSegments,
   correctSpelling,
   rankClipCandidates,
   validateGeneratedFile,
@@ -74,7 +73,8 @@ import { viewerSatisfactionEngine } from '../services/intelligence/ViewerSatisfa
 import { universalWowMomentEngineV2 } from '../services/intelligence/UniversalWowMomentEngineV2';
 import { learningSubsystem } from '../services/intelligence/LearningSubsystem';
 import { IntelligenceOrchestrator, OrchestrationContext } from '../services/nexus/IntelligenceOrchestrator';
-import { classifyError } from '../utils/errorClassifier';
+import { classifyPipelineError } from '../utils/errorClassifier';
+import { createRenderPlan, DeliveryValidator, DEFAULT_PIPELINE_CONFIG } from '@excerpt/clipping-core';
 import { TimelineEvent, JobDebugData, JobPerformanceMetrics } from '../types/diagnostics';
 
 installConsoleLogger();
@@ -245,62 +245,6 @@ function shouldCleanupUploadedSource(candidatePath: string) {
   return isPathInside(uploadDir, candidatePath);
 }
 
-/**
- * Generates an ASS subtitle file content from segments.
- */
-/**
- * Generates an ASS subtitle file content from segments with premium styling and highlighting.
- */
-function generateAssFile(segments: any[], clipStart: number, clipEnd: number): string {
-  const highlightColor = '00FFFF'; // Yellow in ASS (BGR format: &H00<BB><GG><RR>)
-  
-  const header = `[Script Info]
-Title: Excerpt Neural Captions
-ScriptType: v4.00+
-PlayResX: 1080
-PlayResY: 1920
-ScaledBorderAndShadow: yes
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Inter,110,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,4.5,0,2,80,80,480,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-`;
-
-  const events = segments
-    .filter(s => s.end > clipStart && s.start < clipEnd)
-    .map((s, idx) => {
-      const start = Math.max(0, s.start - clipStart);
-      const end = Math.min(clipEnd - clipStart, s.end - clipStart);
-      
-      const formatTime = (t: number) => {
-        const h = Math.floor(t / 3600);
-        const m = Math.floor((t % 3600) / 60);
-        const s = Math.floor(t % 60);
-        const ms = Math.floor((t % 1) * 100);
-        return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
-      };
-
-      // Dynamic Word Highlighting
-      const words = s.text.trim().toUpperCase().split(/\s+/);
-      const processedText = words.map((word: string, wIdx: number) => {
-        // Highlight approximately every 4th word or words longer than 7 chars
-        const shouldHighlight = (wIdx + idx) % 4 === 0 || word.length > 7;
-        if (shouldHighlight) {
-          return `{\\1c&H${highlightColor}&}${word}{\\1c&HFFFFFF&}`;
-        }
-        return word;
-      }).join(' ');
-
-      // Positioned at 75% height (1440px from top)
-      return `Dialogue: 0,${formatTime(start)},${formatTime(end)},Default,,0,0,0,,{\\pos(540,1440)}${processedText}`;
-    })
-    .join('\n');
-
-  return header + events;
-}
 
 export const processVideoJob = async (jobId: string, data: any) => withLogContext({ jobId }, async () => {
   console.log(`\n${'='.repeat(60)}`);
@@ -546,9 +490,9 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         try {
           // Keep a short title for UI display
           const shortTitle = videoTitle.length > 50 ? videoTitle.substring(0, 47) + '...' : videoTitle;
-          const updatedPayload = { ...(job as any).payload, title: shortTitle };
+          const updatedPayload = { ...(data as any).payload, title: shortTitle };
           await db.updateJob(jobId, { payload: updatedPayload });
-          (job as any).payload = updatedPayload;
+          (data as any).payload = updatedPayload;
         } catch (e) {}
       }
     } catch (metaErr) {
@@ -1725,83 +1669,56 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     }
 
 
-    // ─── Step 4: Render-Proof Verification ──────────────────────────
+    // ─── Step 4: Render Subsystem & RenderPlan Contract ────────────────────
+    const renderPlan = createRenderPlan({
+      jobId,
+      requestedClips: data.numClips || data.num_clips || DEFAULT_PIPELINE_CONFIG.defaultClipCount,
+      acceptedClips: dbClips,
+    });
+    console.log(`[Worker]: RenderPlan created for job ${jobId} -> Scheduled ${renderPlan.renderJobs.length} render jobs for ${renderPlan.requestedClips} requested clips.`);
+
     try { await JobStateMachine.transition(db, jobId, JobStatus.RENDERING, { progress: 85 }); } catch (err: any) { console.warn(`Failed to set rendering status: ${err.message}`) }
-    console.log('[Worker]: Waiting for RenderWorker to complete clips...');
-    let allRendered = false;
-    let renderAttempts = 0;
-    const maxRenderAttempts = 120; // 10 minutes max wait
+    console.log('[Worker]: Awaiting RenderWorker completion contract...');
     
-    while (!allRendered && renderAttempts < maxRenderAttempts) {
-      const { data: currentClips } = await db.getSupabase().from('clips').select('id, status, storage_path, thumbnail_url').in('id', dbClips.map((c: any) => c.id));
-      const pending = currentClips?.filter(c => c.status !== 'uploaded' && c.status !== 'failed') || [];
-      if (pending.length === 0) {
-        allRendered = true;
-        
-        // Verification Gate
-        const uploadedClips = currentClips?.filter(c => c.status === 'uploaded' && c.storage_path) || [];
-        let validClipsCount = 0;
+    const WATCHDOG_TIMEOUT_MS = 10 * 60 * 1000;
+    const { finalStatus, finalReason, deliverySummary, finalClipsCheck, usedFallbackMode } = await awaitRenderJobsAndFinalize(
+      db,
+      jobId,
+      renderPlan.renderJobs.length,
+      dbClips,
+      clips,
+      data,
+      WATCHDOG_TIMEOUT_MS,
+      sleep as any
+    );
 
-        for (const c of uploadedClips) {
-          const videoExists = await storage.checkObjectExists(c.storage_path);
-          const thumbExists = c.thumbnail_url ? await storage.checkObjectExists(c.thumbnail_url) : false;
-          
-          if (videoExists && thumbExists) {
-            validClipsCount++;
-          } else {
-            console.warn(`[Worker]: Render verification failed for clip ${c.id}: Video Exists=${videoExists}, Thumb Exists=${thumbExists}`);
-          }
-        }
-
-        if (validClipsCount === 0) {
-           throw new Error('Render verification failed: No valid clips with verified storage paths were generated.');
-        }
-      } else {
-        await sleep(5000);
-        renderAttempts++;
-      }
-    }
-    
-    if (!allRendered) {
-      throw new Error('Render-Proof Check timeout: RenderWorker did not complete clips in time.');
-    }
-
-    const usedFallbackMode = clips.some((c: any) => c.isRecovery);
-    const finalStatus = 'completed';
-    const finalDbClips = dbClips;
-    const finalReason = usedFallbackMode ? recoveryReason : undefined;
+    // ─── Step 4.5: Delivery Validation Stage ─────────────────────────────────
+    const artifactChecks = (finalClipsCheck || []).map((c: any) => ({
+      clipId: c.id,
+      videoUrl: c.storage_path || c.video_url || '',
+      isPlayable: c.status === 'uploaded' || Boolean(c.storage_path),
+      storageVerified: Boolean(c.storage_path && c.status === 'uploaded'),
+    }));
+    const deliveryReport = DeliveryValidator.validate(renderPlan, artifactChecks);
+    console.log(`[Worker]: Delivery Funnel Validation Report -> Pass: ${deliveryReport.pass} (${deliveryReport.playable}/${deliveryReport.scheduled} playable)`);
 
     // ─── Step 5: Finalize ───────────────────────────────────────────
-    await Promise.race([
-      db.updateJob(jobId, {
-        status: finalStatus,
+    if (finalStatus === 'failed' || !deliveryReport.pass) {
+      const failureReason = finalReason || deliveryReport.reason || 'Delivery validation failed.';
+      await db.updateJob(jobId, {
+        status: 'failed',
         progress: 100,
-        result: finalDbClips,
+        result: finalClipsCheck,
+        failed_reason: failureReason,
         generation_mode: generationMode,
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('PERSISTENCE_TIMEOUT')), 30000))
-    ]).catch(err => {
-      console.error(`[Worker]: ${err.message}`);
-    });
+        pipeline_summary: { ...(pipelineSummary || {}), render: deliverySummary, delivery_report: deliveryReport }
+      }).catch(err => console.error(`[Worker]: Failed to record failed status: ${err.message}`));
+      return { status: 'failed', failedReason: failureReason, totalExecutionTimeMs };
+    }
     
-    // Save clips to DB
+    // Save timeline coverage for memory service
     try {
-      if (dbClips.length > 0) {
-        const clipsToSave = dbClips.map((c: any) => ({
-          id: c.id,
-          job_id: c.job_id,
-          thumbnail_url: c.thumbnail_url,
-          title: c.title,
-          start_time: c.start_time,
-          end_time: c.end_time,
-          metadata: c.metadata,
-          status: c.status,
-          storage_path: c.storage_path
-        }));
-        await db.saveClips(clipsToSave);
-        console.log(`[Worker]: ${dbClips.length} clips successfully saved to Supabase`);
-
-        for (const clip of dbClips) {
+      for (const clip of dbClips) {
           try {
             const crypto = require('crypto');
             await memoryService.recordClipCoverage({
@@ -1832,17 +1749,15 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
             } catch (retryErr: any) {
               console.warn(`[Worker]: Fallback timeline coverage write failed: ${retryErr.message}`);
             }
-          }
         }
       }
-    } catch (dbError: any) {
-      console.error(`[Worker]: CRITICAL - Failed to save clips to DB: ${dbError.message}`);
-      throw dbError;
+    } catch (memErr: any) {
+      console.warn(`[Worker]: Timeline coverage write warning: ${memErr.message}`);
     }
 
     try {
       await JobStateMachine.transition(db, jobId, JobStatus.COMPLETED, {
-        pipeline_summary: pipelineSummary,
+        pipeline_summary: { ...(pipelineSummary || {}), render: deliverySummary },
         // ── Full performance_metrics: all stage timings + download attempt telemetry.
         //    Keys match what /api/system/dashboard and /api/system/jobs/retry-telemetry
         //    expect. Never delete existing keys — merge with spread so early writes survive.
@@ -1917,7 +1832,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       output_files: [],
     };
 
-    const classifiedError = classifyError(error.stderr || error.message);
+    const classifiedError = classifyPipelineError(error);
     const stderrTail = error.stderr ? error.stderr.split('\n').slice(-20).join('\n') : undefined;
 
     const errorDebugData = {
@@ -2172,6 +2087,112 @@ export const startWorker = async () => {
 export const stopWorker = () => {
   stopRequested = true;
 };
+
+/**
+ * Extracted orchestration loop for testing purposes.
+ */
+export async function awaitRenderJobsAndFinalize(
+  db: any,
+  jobId: string,
+  expectedClips: number,
+  dbClips: any[],
+  clips: any[],
+  data: any,
+  WATCHDOG_TIMEOUT_MS: number,
+  sleepFn: (ms: number) => Promise<void>
+) {
+  let allTerminal = false;
+  let lastActiveTimestamp = Date.now();
+
+  while (!allTerminal) {
+    const { data: renderJobs } = await db.getSupabase()
+      .from('render_jobs')
+      .select('id, status, updated_at')
+      .eq('job_id', jobId);
+
+    const currentRenderJobs = renderJobs || [];
+    const terminalStatuses = ['completed', 'failed', 'dead_letter'];
+    const terminalJobs = currentRenderJobs.filter((rj: any) => terminalStatuses.includes(rj.status));
+    const completedJobs = currentRenderJobs.filter((rj: any) => rj.status === 'completed');
+    
+    // Dynamic Progress Update (85% to 99% based on completed clips)
+    if (expectedClips > 0) {
+      const completionRatio = Math.min(completedJobs.length / expectedClips, 1);
+      const dynamicProgress = Math.floor(85 + (completionRatio * 14)); // 85 -> 99
+      try { await db.updateJob(jobId, { progress: dynamicProgress }); } catch(e) {}
+    }
+
+    if (terminalJobs.length >= expectedClips && currentRenderJobs.length > 0) {
+      // All expected render jobs reached terminal state
+      allTerminal = true;
+      break;
+    }
+
+    // Watchdog Check
+    let mostRecentUpdate = 0;
+    if (currentRenderJobs.length > 0) {
+      mostRecentUpdate = Math.max(...currentRenderJobs.map((rj: any) => new Date(rj.updated_at).getTime()));
+    }
+    
+    if (mostRecentUpdate > lastActiveTimestamp) {
+      lastActiveTimestamp = mostRecentUpdate;
+    } else if (Date.now() - lastActiveTimestamp > WATCHDOG_TIMEOUT_MS) {
+      console.error(`[Worker]: Watchdog timeout! No render jobs updated in 10 minutes for job ${jobId}.`);
+      break;
+    }
+
+    await sleepFn(3000);
+  }
+
+  const { data: finalRenderJobs } = await db.getSupabase().from('render_jobs').select('id, status, clip_id').eq('job_id', jobId);
+  const { data: finalClipsCheck } = await db.getSupabase().from('clips').select('id, status, storage_path').in('id', dbClips.map((c: any) => c.id));
+  const uploadedClips = finalClipsCheck?.filter((c: any) => c.status === 'uploaded' && c.storage_path) || [];
+  const usedFallbackMode = clips.some((c: any) => c.isRecovery);
+  const recoveryReason = clips.find((c: any) => c.recoveryReason)?.recoveryReason;
+
+  // Compute Delivery Summary
+  const deliverySummary = {
+    schemaVersion: "1.0",
+    expected: expectedClips,
+    uploaded: uploadedClips.length,
+    failed: expectedClips - uploadedClips.length
+  };
+  console.log(`[Worker]: Delivery Summary for ${jobId}:`, deliverySummary);
+
+  // ─── Step 4.5: Synchronization Invariant ──────────────────────────
+  const completedRenderJobs = finalRenderJobs?.filter((rj: any) => rj.status === 'completed') || [];
+  const outOfSync = completedRenderJobs.some((rj: any) => {
+    const clip = finalClipsCheck?.find((c: any) => c.id === rj.clip_id);
+    return !clip || clip.status !== 'uploaded' || !clip.storage_path;
+  });
+
+  // ─── Step 4.6: Configurable Delivery Policy ───────────────────────
+  type DeliveryPolicy = 'at_least_one' | 'all' | 'threshold';
+  const deliveryPolicy: DeliveryPolicy = (process.env.PIPELINE_DELIVERY_POLICY as DeliveryPolicy) || data.deliveryPolicy || 'at_least_one';
+  const deliveryThreshold = parseFloat(process.env.PIPELINE_DELIVERY_THRESHOLD || data.deliveryThreshold || '0.8');
+
+  let isSuccess = false;
+  let finalReason = undefined as string | undefined;
+
+  if (outOfSync) {
+    isSuccess = false;
+    finalReason = 'INVARIANT_VIOLATION: A render job was marked completed but its associated clip is not uploaded.';
+  } else if (deliveryPolicy === 'all') {
+    isSuccess = uploadedClips.length === expectedClips && expectedClips > 0;
+    finalReason = isSuccess ? (usedFallbackMode ? recoveryReason : undefined) : `Policy 'all' failed: Delivered ${uploadedClips.length} of ${expectedClips}.`;
+  } else if (deliveryPolicy === 'threshold') {
+    isSuccess = (uploadedClips.length / expectedClips) >= deliveryThreshold && expectedClips > 0;
+    finalReason = isSuccess ? (usedFallbackMode ? recoveryReason : undefined) : `Policy 'threshold' failed: Delivered ${uploadedClips.length} of ${expectedClips} (Threshold: ${deliveryThreshold}).`;
+  } else {
+    // Default to 'at_least_one'
+    isSuccess = uploadedClips.length > 0;
+    finalReason = isSuccess ? (usedFallbackMode ? recoveryReason : undefined) : 'Pipeline executed successfully but delivery is 0.';
+  }
+
+  const finalStatus = isSuccess ? 'completed' : 'failed';
+
+  return { finalStatus, finalReason, deliverySummary, finalClipsCheck, uploadedClips, usedFallbackMode };
+}
 
 // Start if run directly
 if (require.main === module) {

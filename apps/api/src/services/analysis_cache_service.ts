@@ -188,13 +188,21 @@ export class AnalysisCacheService {
         .upsert(record);
 
       if (error) {
-        console.error('[AnalysisCacheService] Database error writing cache:', error.message);
-        throw error;
+        if (error.message?.includes('schema cache') || error.message?.includes('not find the table')) {
+          console.warn('[AnalysisCacheService] video_analysis_cache table unavailable in schema cache. Skipping cache write.');
+        } else {
+          console.error('[AnalysisCacheService] Database error writing cache:', error.message);
+        }
+        return;
       }
 
       console.log(`[AnalysisCacheService] Cache successfully written/updated for hash: ${videoHash}`);
     } catch (e: any) {
-      console.error('[AnalysisCacheService] Failed to save cache:', e.message);
+      if (e.message?.includes('schema cache') || e.message?.includes('not find the table')) {
+        console.warn('[AnalysisCacheService] video_analysis_cache table unavailable. Bypassing cache.');
+      } else {
+        console.error('[AnalysisCacheService] Failed to save cache:', e.message);
+      }
     }
   }
 

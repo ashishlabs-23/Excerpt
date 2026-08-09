@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import Groq from "groq-sdk";
+import { StageExecutor, ErrorCategory, PipelineError } from "@excerpt/clipping-core";
 import {
   callOllamaRaw,
   parseJsonWithRepair,
@@ -490,29 +491,27 @@ Return only JSON.`;
   }
 
   private async generateWithOllama(systemPrompt: string, userPrompt: string, retries: number = 3): Promise<string> {
-    let lastError: any;
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        const apiCall = callOllamaRaw({
+    return StageExecutor.run({ systemPrompt, userPrompt }, {
+      stage: 'ai_inference_ollama',
+      component: 'AIService',
+      provider: 'Ollama',
+      timeoutMs: 30000,
+      timeoutType: 'api_timeout',
+      maxRetries: retries,
+      retryDelayMs: 1000,
+      execute: async () => {
+        const raw = await callOllamaRaw({
           systemPrompt,
           userPrompt,
           retries: 1,
         });
-        const raw = await this.withTimeout(apiCall, 30000, `Ollama (Attempt ${attempt})`);
         if (!raw) {
           throw new Error('Ollama returned no content.');
         }
         return raw;
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`[AIService] Ollama attempt ${attempt} failed: ${err.message}`);
-        if (attempt < retries) {
-          const delay = Math.pow(2, attempt) * 1000;
-          await this.sleep(delay);
-        }
-      }
-    }
-    throw lastError;
+      },
+      validateOutput: (output) => Boolean(output && output.trim().length > 0),
+    });
   }
 
   private getGroqModels(): string[] {
@@ -529,68 +528,92 @@ Return only JSON.`;
 
   private async generateWithGemini(systemPrompt: string, userPrompt: string, retries: number = 3): Promise<string> {
     if (!process.env.GOOGLE_AI_API_KEY) {
-      throw new Error('Gemini API key is not configured.');
+      throw new PipelineError({
+        message: 'Gemini API key is not configured.',
+        category: ErrorCategory.AUTH,
+        stage: 'ai_inference_gemini',
+        component: 'AIService',
+        provider: 'Gemini',
+      });
     }
 
-    let lastError: any;
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        const model = this.genAI.getGenerativeModel({ model: "gemini-2.0-flash" }, { apiVersion: "v1" });
-        const apiCall = model.generateContent(`${systemPrompt}\n\n${userPrompt}`);
-        const result = await this.withTimeout(apiCall, 30000, `Gemini (Attempt ${attempt})`);
-        const response = await result.response;
-        return response.text();
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`[AIService] Gemini attempt ${attempt} failed: ${err.message}`);
-        
-        if (err.message && /429|quota exceeded|resource exhausted/i.test(err.message)) {
-          if (this.rotateGeminiKey()) {
-             continue; // Immediately retry with new key
+    return StageExecutor.run({ systemPrompt, userPrompt }, {
+      stage: 'ai_inference_gemini',
+      component: 'AIService',
+      provider: 'Gemini',
+      timeoutMs: 30000,
+      timeoutType: 'api_timeout',
+      maxRetries: retries,
+      retryDelayMs: 1000,
+      execute: async () => {
+        try {
+          const model = this.genAI.getGenerativeModel({ model: "gemini-2.0-flash" }, { apiVersion: "v1" });
+          const result = await model.generateContent(`${systemPrompt}\n\n${userPrompt}`);
+          const response = await result.response;
+          return response.text();
+        } catch (err: any) {
+          if (err.message && /429|quota exceeded|resource exhausted/i.test(err.message)) {
+            if (this.rotateGeminiKey()) {
+              // Retry with new rotated key immediately
+              const model = this.genAI.getGenerativeModel({ model: "gemini-2.0-flash" }, { apiVersion: "v1" });
+              const result = await model.generateContent(`${systemPrompt}\n\n${userPrompt}`);
+              const response = await result.response;
+              return response.text();
+            }
           }
+          throw err;
         }
-
-        if (attempt < retries) {
-          const delay = Math.pow(2, attempt) * 1000;
-          await this.sleep(delay);
-        }
-      }
-    }
-    throw lastError;
+      },
+      validateOutput: (output) => Boolean(output && output.trim().length > 0),
+    });
   }
 
   private async generateWithGroq(systemPrompt: string, userPrompt: string): Promise<string> {
     if (!process.env.GROQ_API_KEY) {
-      throw new Error('Groq API key is not configured.');
+      throw new PipelineError({
+        message: 'Groq API key is not configured.',
+        category: ErrorCategory.AUTH,
+        stage: 'ai_inference_groq',
+        component: 'AIService',
+        provider: 'Groq',
+      });
     }
 
-    const modelErrors: string[] = [];
+    return StageExecutor.run({ systemPrompt, userPrompt }, {
+      stage: 'ai_inference_groq',
+      component: 'AIService',
+      provider: 'Groq',
+      timeoutMs: 30000,
+      timeoutType: 'api_timeout',
+      maxRetries: 2,
+      retryDelayMs: 1000,
+      execute: async () => {
+        const modelErrors: string[] = [];
+        for (const model of this.getGroqModels()) {
+          try {
+            const completion = await this.groq.chat.completions.create({
+              model,
+              temperature: 0,
+              max_tokens: 1600,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt },
+              ],
+            });
 
-    for (const model of this.getGroqModels()) {
-      try {
-        const apiCall = this.groq.chat.completions.create({
-          model,
-          temperature: 0,
-          max_tokens: 1600,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-        });
-
-        const completion = await this.withTimeout(apiCall, 30000, `Groq model ${model}`);
-        const text = completion.choices[0]?.message?.content;
-        if (!text) {
-          throw new Error('Groq returned an empty response.');
+            const text = completion.choices[0]?.message?.content;
+            if (!text) {
+              throw new Error('Groq returned an empty response.');
+            }
+            return text;
+          } catch (error: any) {
+            modelErrors.push(`${model}: ${error.message}`);
+          }
         }
-
-        return text;
-      } catch (error: any) {
-        modelErrors.push(`${model}: ${error.message}`);
-      }
-    }
-
-    throw new Error(modelErrors[modelErrors.length - 1] || 'Groq clip detection failed.');
+        throw new Error(modelErrors[modelErrors.length - 1] || 'Groq clip detection failed.');
+      },
+      validateOutput: (output) => Boolean(output && output.trim().length > 0),
+    });
   }
 
   private normalizeDetectedClip(

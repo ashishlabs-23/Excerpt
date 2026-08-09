@@ -1,5 +1,5 @@
 import { IEvaluator, EvaluatorResult } from './IEvaluator';
-import { ClipCandidate } from '../intelligence/CandidateGenerationEngine';
+import { ClipCandidate } from '@excerpt/clipping-core';
 
 export class DiversityEvaluator implements IEvaluator {
   public evaluate(expected: any, generated: ClipCandidate[]): EvaluatorResult {

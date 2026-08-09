@@ -43,7 +43,11 @@ export class VideoMemoryService {
       .eq('video_id', videoId);
 
     if (error) {
-      console.error('[VideoMemoryService] Error fetching timeline coverage overlap:', error.message);
+      if (error.message?.includes('schema cache') || error.message?.includes('not find the table')) {
+        console.warn('[VideoMemoryService] video_timeline_coverage table unavailable in schema cache. Skipping overlap check.');
+      } else {
+        console.error('[VideoMemoryService] Error fetching timeline coverage overlap:', error.message);
+      }
       return false;
     }
 

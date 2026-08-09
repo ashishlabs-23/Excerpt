@@ -100,7 +100,20 @@ export class DatabaseService {
       .from('jobs')
       .update({ ...updates, updated_at: new Date().toISOString() })
       .eq('id', jobId);
-    if (error) throw error;
+
+    if (error) {
+      if (error.message?.includes('stage_label')) {
+        console.warn(`[Supabase]: 'stage_label' column missing on jobs. Retrying update without stage_label...`);
+        const { stage_label, ...sanitizedUpdates } = updates;
+        const { data: retryData, error: retryError } = await this.db
+          .from('jobs')
+          .update({ ...sanitizedUpdates, updated_at: new Date().toISOString() })
+          .eq('id', jobId);
+        if (retryError) throw retryError;
+        return retryData;
+      }
+      throw error;
+    }
     return data;
   }
 
@@ -145,7 +158,13 @@ export class DatabaseService {
 
   async saveRenderMetrics(metrics: any) {
     const { error } = await this.db.from('render_metrics').insert(metrics);
-    if (error) console.error('[Supabase]: Failed to save render metrics', error.message);
+    if (error) {
+      if (error.message?.includes('schema cache') || error.message?.includes('not find the table')) {
+        console.warn('[Supabase]: render_metrics table unavailable in schema cache. Skipping metrics insert.');
+      } else {
+        console.error('[Supabase]: Failed to save render metrics', error.message);
+      }
+    }
   }
 
   async logProductionFailure(failure: any) {

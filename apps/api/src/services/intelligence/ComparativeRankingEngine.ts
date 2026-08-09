@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { ClipCandidate } from "./CandidateGenerationEngine";
+import { ClipCandidate } from "@excerpt/clipping-core";
 import { parseJsonWithRepair } from "../ollamaService";
 import fs from 'fs';
 import path from 'path';

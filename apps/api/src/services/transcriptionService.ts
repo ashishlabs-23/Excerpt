@@ -176,7 +176,7 @@ export class TranscriptionService {
    * Checks the circuit breaker before calling and records the outcome after.
    * Throws structured errors with .transcriptionErrorCode for the worker catch.
    */
-  private async _transcribeChunk(audioPath: string): Promise<TranscriptionResult> {
+  private async _transcribeChunk(audioPath: string, options: any = {}, retryAttempt: number = 0): Promise<TranscriptionResult> {
     const chunkStart = Date.now();
     const requestStartedAt = new Date().toISOString();
     const cbStatus = circuitBreaker.getStatus();
@@ -275,6 +275,13 @@ export class TranscriptionService {
     if (!response.ok) {
       const body = await response.text();
       console.error(`[TranscriptionService]: [WHISPER_ERROR] status=${response.status} requestId=${providerRequestId} body=${body.slice(0, 300)}`);
+
+      if (response.status === 429 && retryAttempt < 3) {
+        const delayMs = (retryAttempt + 1) * 5000;
+        console.warn(`[TranscriptionService]: ⏳ Groq Whisper 429 rate limit hit. Retrying in ${delayMs / 1000}s (Attempt ${retryAttempt + 1}/3)...`);
+        await new Promise(res => setTimeout(res, delayMs));
+        return this._transcribeChunk(audioPath, options, retryAttempt + 1);
+      }
 
       const code = 'WHISPER_HTTP_ERROR';
       circuitBreaker.recordFailure(code);

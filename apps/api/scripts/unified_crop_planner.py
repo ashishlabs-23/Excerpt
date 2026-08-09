@@ -309,34 +309,55 @@ class UnifiedTrackManager:
         return current_tracks
 
 class ScenePlanner:
-    """Decides layout and generates regions based on tracks and content type."""
+    """Decides layout and generates regions based on tracks and content type with Hysteresis Lock."""
+    def __init__(self):
+        self.current_speaker_id = None
+        self.lock_until_time = 0.0
+
     def plan(self, tracks: List[Dict], frame_type: str, time_sec: float) -> Dict:
         active_tracks = [t for t in tracks if t['tracking_confidence'] > 0.3]
         active_tracks.sort(key=lambda t: t['cx']) # Sort Left to Right
 
-        if frame_type == 'podcast' or len(active_tracks) >= 2:
-            if len(active_tracks) >= 2:
-                # Top / Bottom split
-                t1, t2 = active_tracks[0], active_tracks[-1]
-                return {
-                    "layout": "split",
-                    "regions": [
-                        {"track": t1['track_id'], "slot": "top", "x": round(t1['cx'], 4), "y": round(t1['cy'], 4), "confidence": round(t1['tracking_confidence'], 4)},
-                        {"track": t2['track_id'], "slot": "bottom", "x": round(t2['cx'], 4), "y": round(t2['cy'], 4), "confidence": round(t2['tracking_confidence'], 4)}
-                    ]
-                }
-        
-        # Single speaker layout
-        best_track = max(active_tracks, key=lambda t: t['area'] + t['mar_activity']) if active_tracks else None
-        if best_track:
+        if not active_tracks:
+            return {"layout": "single", "regions": []}
+
+        if len(active_tracks) >= 2:
+            # Active Speaker Detection with 1.5s Hysteresis Lock (prevents erratic 4Hz camera switching)
+            speaking_tracks = sorted(
+                active_tracks,
+                key=lambda t: (t['mar_activity'] * 2.0) + (t['area'] * 0.8) + (t['tracking_confidence'] * 0.2),
+                reverse=True
+            )
+            candidate = speaking_tracks[0]
+
+            # Maintain current locked speaker if within 1.5s hysteresis window
+            if self.current_speaker_id is not None and time_sec < self.lock_until_time:
+                locked_track = next((t for t in active_tracks if t['track_id'] == self.current_speaker_id), None)
+                if locked_track:
+                    candidate = locked_track
+
+            # Lock new active speaker if hysteresis expired or strong speech activity
+            if candidate['track_id'] != self.current_speaker_id:
+                if candidate['mar_activity'] > 0.15 or time_sec >= self.lock_until_time:
+                    self.current_speaker_id = candidate['track_id']
+                    self.lock_until_time = time_sec + 1.5 # 1.5s hysteresis hold
+
             return {
                 "layout": "single",
                 "regions": [
-                    {"track": best_track['track_id'], "slot": "single", "x": round(best_track['cx'], 4), "y": round(best_track['cy'], 4), "confidence": round(best_track['tracking_confidence'], 4)}
+                    {"track": candidate['track_id'], "slot": "single", "x": round(candidate['cx'], 4), "y": round(candidate['cy'], 4), "confidence": round(candidate['tracking_confidence'], 4)}
                 ]
             }
         
-        return {"layout": "single", "regions": []}
+        # Single speaker layout
+        best_track = active_tracks[0]
+        self.current_speaker_id = best_track['track_id']
+        return {
+            "layout": "single",
+            "regions": [
+                {"track": best_track['track_id'], "slot": "single", "x": round(best_track['cx'], 4), "y": round(best_track['cy'], 4), "confidence": round(best_track['tracking_confidence'], 4)}
+            ]
+        }
 
 
 # ─── Face Detection Backends ───────────────────────────────────────────────

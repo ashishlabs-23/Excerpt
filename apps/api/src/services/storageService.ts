@@ -5,6 +5,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from './supabaseService';
 import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { PipelineError, ErrorCategory } from '@excerpt/clipping-core';
 
 // Safety load for monorepo context
 dotenv.config();
@@ -82,32 +83,39 @@ export class StorageService {
     }
 
     // 2. Try Supabase Storage Upload
-      let lastError: any;
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          console.log(`[StorageService]: Attempting Supabase upload for ${key} (Attempt ${attempt})...`);
-          const fileBuffer = fs.readFileSync(filePath);
-          const { error } = await this.getSupabase().storage.from("clips").upload(key, fileBuffer, {
-            contentType,
-            upsert: true
-          });
+    let lastError: any;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        console.log(`[StorageService]: Attempting Supabase upload for ${key} (Attempt ${attempt})...`);
+        const fileBuffer = fs.readFileSync(filePath);
+        const { error } = await this.getSupabase().storage.from("clips").upload(key, fileBuffer, {
+          contentType,
+          upsert: true
+        });
 
-          if (error) throw error;
+        if (error) throw error;
 
-          // Verify it exists
-          const exists = await this.checkObjectExists(key);
-          if (!exists) throw new Error("Upload completed but object verification failed.");
+        // Verify it exists
+        const exists = await this.checkObjectExists(key);
+        if (!exists) throw new Error("Upload completed but object verification failed.");
 
-          const signedUrl = await this.createSignedUrl(key);
-          console.log(`[StorageService]: Supabase Upload Success -> ${signedUrl}`);
-          return signedUrl;
-        } catch (error: any) {
-          console.warn(`[StorageService]: Supabase upload attempt ${attempt} failed: ${error.message}`);
-          lastError = error;
-          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
-        }
+        const signedUrl = await this.createSignedUrl(key);
+        console.log(`[StorageService]: Supabase Upload Success -> ${signedUrl}`);
+        return signedUrl;
+      } catch (error: any) {
+        console.warn(`[StorageService]: Supabase upload attempt ${attempt} failed: ${error.message}`);
+        lastError = error;
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
       }
-      throw new Error(`[StorageService]: All cloud storage options exhausted. Upload failed for key: ${key}. Original error: ${lastError?.message}`);
+    }
+    throw new PipelineError({
+      message: `All cloud storage options exhausted. Upload failed for key: ${key}. Original error: ${lastError?.message}`,
+      category: ErrorCategory.UPLOAD,
+      retryable: true,
+      stage: 'upload',
+      component: 'StorageService',
+      causeErr: lastError
+    });
   }
 
   async createSignedUrl(key: string, expiresInSeconds?: number): Promise<string> {
@@ -119,7 +127,14 @@ export class StorageService {
         const signedUrl = await getSignedUrl(this.s3, command, { expiresIn: ttl });
         return signedUrl;
       } catch (err: any) {
-        throw new Error(`[StorageService]: Failed to sign B2 URL for ${key}: ${err.message}`);
+        throw new PipelineError({
+          message: `Failed to sign B2 URL for ${key}: ${err.message}`,
+          category: ErrorCategory.UPLOAD,
+          retryable: true,
+          stage: 'upload',
+          component: 'StorageService',
+          causeErr: err,
+        });
       }
     }
 
@@ -133,7 +148,14 @@ export class StorageService {
 
       return data.signedUrl;
     } catch (err: any) {
-      throw new Error(`[StorageService]: Failed to sign URL for ${key}: ${err.message}`);
+      throw new PipelineError({
+        message: `Failed to sign URL for ${key}: ${err.message}`,
+        category: ErrorCategory.UPLOAD,
+        retryable: true,
+        stage: 'upload',
+        component: 'StorageService',
+        causeErr: err,
+      });
     }
   }
 
@@ -163,14 +185,7 @@ export class StorageService {
     }
   }
 
-
-  /**
-   * Delete a single object by its storage key.
-   * Returns true if the object was deleted (or didn't exist).
-   * Returns false if deletion failed — callers must NOT delete the DB row on false.
-   */
   async deleteFile(key: string): Promise<boolean> {
-    // 1. Try B2 deletion
     if (this.s3) {
       try {
         const { DeleteObjectCommand } = await import('@aws-sdk/client-s3');
@@ -183,7 +198,6 @@ export class StorageService {
       }
     }
 
-    // 2. Fallback: Supabase Storage
     try {
       const { error } = await this.getSupabase().storage.from('clips').remove([key]);
       if (error) throw error;
@@ -196,7 +210,6 @@ export class StorageService {
   }
 
   async clearAllClips(): Promise<void> {
-
     console.log("[StorageService]: Initiating cloud purge (no local storage)...");
 
     if (this.s3) {
@@ -226,7 +239,6 @@ export class StorageService {
       }
     }
 
-    // Purge Supabase
     try {
       const filesToDelete = await this.listStorageKeys();
       if (filesToDelete.length > 0) {

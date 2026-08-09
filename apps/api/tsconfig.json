@@ -12,7 +12,9 @@
     "moduleResolution": "node",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@excerpt/clipping-core": ["../../packages/clipping-core/dist/index.d.ts"],
+      "@excerpt/clipping-core/*": ["../../packages/clipping-core/dist/*"]
     }
   },
   "include": ["src/**/*"],

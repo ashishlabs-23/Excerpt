@@ -86,8 +86,10 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
 
   const copySocialMetadata = async (clip: Clip) => {
     const title = clip.metadata?.title || clip.title || "Video Clip";
-    const caption = clip.content;
-    const hashtags = "#Excerpt #ContentCreator #Viral"; // Standard hashtags
+    const caption = clip.metadata?.caption || clip.caption || clip.content || "AI Generated Clip";
+    const hashtags = clip.metadata?.hashtags
+      ? (Array.isArray(clip.metadata.hashtags) ? clip.metadata.hashtags.map(h => h.startsWith('#') ? h : `#${h}`).join(' ') : clip.metadata.hashtags)
+      : "#Excerpt #ContentCreator #Viral #Trending #Clips";
     const text = `${title.toUpperCase()}\n\n${caption}\n\n${hashtags}`;
     
     try {
@@ -326,7 +328,6 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
                     loop
                     playsInline
                     preload="none"
-                    crossOrigin="anonymous"
                     onMouseOver={(e) => {
                       const video = e.currentTarget;
                       video.muted = false; // Try unmuted first
@@ -548,7 +549,6 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
                       controls={!showMockup}
                       autoPlay
                       loop
-                      crossOrigin="anonymous"
                       playsInline
                       muted={false}
                       onLoadedData={(e) => {

@@ -2,6 +2,7 @@ import { execFile } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import { StageExecutor, ErrorCategory, PipelineError } from '@excerpt/clipping-core';
 import { assertSafeRemoteVideoUrl } from './urlSafety';
 import { withYtDlpCookies } from '../lib/cookieHelper';
 
@@ -110,13 +111,16 @@ const highQualityEncodeArgs = () => {
   const isDraft = process.env.RENDER_MODE === 'draft';
   return [
     '-c:v', 'libx264',
-    '-preset', isDraft ? 'ultrafast' : 'veryfast',
-    '-crf', isDraft ? '24' : '18',
+    '-preset', isDraft ? 'fast' : 'medium',
+    '-crf', isDraft ? '19' : '17',
+    '-maxrate', '12M',
+    '-bufsize', '16M',
     '-profile:v', 'high',
+    '-level', '4.2',
     '-pix_fmt', 'yuv420p',
     '-c:a', 'aac',
-    '-b:a', '192k',
-    '-threads', '2',
+    '-b:a', '320k',
+    '-ar', '48000',
     '-movflags', '+faststart'
   ];
 };
@@ -387,9 +391,9 @@ export class VideoProcessor {
     if (points.length === 0) {
       return {
         mode: 'center',
-        xExpression: '0',
-        yExpression: (maxVOffset / 2).toFixed(2),
-        debug: 'center crop (no points)',
+        xExpression: (maxOffset * 0.35).toFixed(2),
+        yExpression: (maxVOffset * 0.25).toFixed(2),
+        debug: 'rule-of-thirds fallback (no points)',
       };
     }
 
@@ -458,29 +462,48 @@ export class VideoProcessor {
    * Extracts audio from a video file.
    */
   async extractAudio(inputPath: string, outputPath: string): Promise<string> {
-    const bin = getBinaryPath('ffmpeg');
-    return new Promise((resolve, reject) => {
-      console.log(`[VideoProcessor]: Extracting audio with ${bin} -> ${outputPath}`);
-      const args = [
-        '-i', inputPath,
-        '-vn',
-        '-acodec', 'libmp3lame',
-        '-ab', '64k',
-        '-ar', '16000',
-        '-ac', '1',
-        '-y',
-        outputPath
-      ];
+    return StageExecutor.run({ inputPath, outputPath }, {
+      stage: 'audio_extraction',
+      component: 'VideoProcessor',
+      provider: 'FFmpeg',
+      timeoutMs: 1000 * 60 * 5, // 5 minute hard timeout
+      timeoutType: 'process_timeout',
+      validateInput: ({ inputPath }) => fs.existsSync(inputPath),
+      execute: async ({ inputPath, outputPath }) => {
+        const bin = getBinaryPath('ffmpeg');
+        return new Promise<string>((resolve, reject) => {
+          console.log(`[VideoProcessor]: Extracting audio with ${bin} -> ${outputPath}`);
+          const args = [
+            '-i', inputPath,
+            '-vn',
+            '-acodec', 'libmp3lame',
+            '-ab', '64k',
+            '-ar', '16000',
+            '-ac', '1',
+            '-y',
+            outputPath
+          ];
 
-      execFile(bin, args, { maxBuffer: 1024 * 1024 * 500, timeout: 1000 * 60 * 10 }, (error, stdout, stderr) => {
-        if (error) {
-          console.error('[VideoProcessor]: ffmpeg audio extraction error:', stderr);
-          reject(new Error(`ffmpeg audio extraction failed: ${error.message}`));
-          return;
-        }
-        console.log('[VideoProcessor]: Audio extraction complete');
-        resolve(outputPath);
-      });
+          execFile(bin, args, { maxBuffer: 1024 * 1024 * 500 }, (error, stdout, stderr) => {
+            if (error) {
+              console.error('[VideoProcessor]: ffmpeg audio extraction error:', stderr);
+              reject(new PipelineError({
+                message: `ffmpeg audio extraction failed: ${error.message}`,
+                category: ErrorCategory.FFMPEG,
+                stage: 'audio_extraction',
+                component: 'VideoProcessor',
+                provider: 'FFmpeg',
+                exitCode: error.code ? Number(error.code) : undefined,
+                rootCause: stderr || error.message,
+              }));
+              return;
+            }
+            console.log('[VideoProcessor]: Audio extraction complete');
+            resolve(outputPath);
+          });
+        });
+      },
+      validateOutput: (outPath) => fs.existsSync(outPath) && fs.statSync(outPath).size > 0,
     });
   }
 
@@ -488,134 +511,123 @@ export class VideoProcessor {
    * Cuts a video segment and applies 9:16 cropping.
    */
   async processClip(inputPath: string, outputPath: string, start: number, duration: number, nexusCropPlan?: any): Promise<string> {
-    const bin = getBinaryPath('ffmpeg');
-    const workingDir = path.dirname(outputPath);
-    let cropPlan: SmartCropPlan;
+    return StageExecutor.run({ inputPath, outputPath, start, duration }, {
+      stage: 'video_clipping',
+      component: 'VideoProcessor',
+      provider: 'FFmpeg',
+      timeoutMs: 1000 * 60 * 5, // 5 minute hard timeout
+      timeoutType: 'process_timeout',
+      validateInput: ({ inputPath }) => fs.existsSync(inputPath),
+      execute: async ({ inputPath, outputPath, start, duration }) => {
+        const bin = getBinaryPath('ffmpeg');
+        let cropPlan: SmartCropPlan;
 
-    // ADAPTIVE ZOOM: content-aware zoom factor from smart_crop analysis
-    const contentType = nexusCropPlan?.content_type || 'mixed';
-    const recommendedZoom = nexusCropPlan?.recommended_zoom;
-    const zoomFactor = typeof recommendedZoom === 'number' && recommendedZoom > 0
-      ? recommendedZoom
-      : contentType === 'screen_recording' ? 1.0
-      : contentType === 'presentation' ? 1.05
-      : contentType === 'talking_head' ? 1.20
-      : 1.10;
-    console.log(`[VideoProcessor]: Content type: ${contentType} | Zoom factor: ${zoomFactor}`); 
-    const isDraft = process.env.RENDER_MODE === 'draft';
-    const cropWidth = isDraft ? 720 : 1080;
-    const cropHeight = isDraft ? 1280 : 1920;
+        const contentType = nexusCropPlan?.content_type || 'mixed';
+        const recommendedZoom = nexusCropPlan?.recommended_zoom;
+        // Lock neutral zoom factor (1.0) to preserve full vertical context and eliminate head/chin cutoffs
+        const zoomFactor = typeof recommendedZoom === 'number' && recommendedZoom > 0 && recommendedZoom <= 1.05
+          ? recommendedZoom
+          : 1.0;
 
-    let scaledWidth = Math.round(cropWidth * zoomFactor);
-    let scaledHeight = Math.round(cropHeight * zoomFactor);
-    let maxOffset = Math.max(0, scaledWidth - cropWidth);
-    let maxVOffset = Math.max(0, scaledHeight - cropHeight);
+        const cropWidth = 1080;
+        const cropHeight = 1920;
 
-    try {
-      const { width, height } = await this.getVideoDimensions(inputPath);
-      const widthRatio = (cropWidth * zoomFactor) / width;
-      const heightRatio = (cropHeight * zoomFactor) / height;
-      const uniformRatio = Math.max(widthRatio, heightRatio);
+        let scaledWidth = Math.round(cropWidth * zoomFactor);
+        let scaledHeight = Math.round(cropHeight * zoomFactor);
+        let maxOffset = Math.max(0, scaledWidth - cropWidth);
+        let maxVOffset = Math.max(0, scaledHeight - cropHeight);
 
-      scaledWidth = roundEven(width * uniformRatio);
-      scaledHeight = roundEven(height * uniformRatio);
+        try {
+          const { width, height } = await this.getVideoDimensions(inputPath);
+          const widthRatio = (cropWidth * zoomFactor) / width;
+          const heightRatio = (cropHeight * zoomFactor) / height;
+          const uniformRatio = Math.max(widthRatio, heightRatio);
 
-      maxOffset = Math.max(0, scaledWidth - cropWidth);
-      maxVOffset = Math.max(0, scaledHeight - cropHeight);
-      
-      console.log(`[VideoProcessor]: Resolution Match -> Input ${width}x${height} | Scaled ${scaledWidth}x${scaledHeight} | Target ${cropWidth}x${cropHeight}`);
-    } catch (e: any) {
-      console.warn(`[VideoProcessor]: Dimension lookup failed, forcing safe crop bounds. ${e.message}`);
-    }
-
-    if (nexusCropPlan && nexusCropPlan.points && nexusCropPlan.points.length > 0) {
-      try {
-        console.log(`[VideoProcessor]: Using Nexus Cinematic Crop Plan (${nexusCropPlan.points.length} points)`);
-        
-        const smoothedPoints = this.smoothCropPoints(nexusCropPlan.points);
-        const compressedPoints = this.compressCropPoints(smoothedPoints);
-        cropPlan = this.buildCropExpression(compressedPoints, maxOffset, maxVOffset);
-        cropPlan.mode = 'dynamic';
-        cropPlan.debug = `cinematic nexus crop over ${compressedPoints.length}/${nexusCropPlan.points.length} points`;
-      } catch (error: any) {
-        console.warn(`[VideoProcessor]: Failed to build crop expression from Nexus plan. Falling back to center crop. ${error.message}`);
-        cropPlan = {
-          mode: 'center',
-          xExpression: '(in_w-out_w)/2',
-          yExpression: '(in_h-out_h)/2',
-          debug: 'center crop (expression failure)',
-        };
-      }
-    } else {
-      console.warn(`[VideoProcessor]: Nexus crop plan missing or empty. Using center fallback.`);
-      cropPlan = {
-        mode: 'center',
-        xExpression: '(in_w-out_w)/2',
-        yExpression: '(in_h-out_h)/2',
-        debug: 'center crop (analysis fallback)',
-      };
-    }
-
-    let cropFilter = `scale=${scaledWidth}:${scaledHeight}:flags=lanczos,crop=${cropWidth}:${cropHeight}:'${cropPlan.xExpression}':'${cropPlan.yExpression}',setsar=1`;
-    
-    // Unified Crop Planner Engine
-    if (nexusCropPlan && nexusCropPlan.frames_data && nexusCropPlan.frames_data.length > 0) {
-      const firstLayout = nexusCropPlan.frames_data[0].layout;
-      
-      if (firstLayout === 'split') {
-        console.log(`[VideoProcessor]: Universal Crop Planner -> applying dynamic region tracking for split-screen stack`);
-        
-        // Extract top region points
-        const topPoints = nexusCropPlan.frames_data.map((f: any) => {
-          const reg = f.regions.find((r: any) => r.slot === 'top');
-          return { index: f.index, time: f.time, offset: reg?.x || 0.5, y_offset: reg?.y || 0.5, confidence: reg?.confidence || 0 };
-        });
-        
-        // Extract bottom region points
-        const botPoints = nexusCropPlan.frames_data.map((f: any) => {
-          const reg = f.regions.find((r: any) => r.slot === 'bottom');
-          return { index: f.index, time: f.time, offset: reg?.x || 0.5, y_offset: reg?.y || 0.5, confidence: reg?.confidence || 0 };
-        });
-
-        // The split screen divides height by 2. We recalculate maxVOffset.
-        const halfHeight = cropHeight / 2;
-        const maxVOffsetHalf = Math.max(0, scaledHeight - halfHeight);
-        
-        const topPlan = this.buildCropExpression(this.compressCropPoints(this.smoothCropPoints(topPoints)), maxOffset, maxVOffsetHalf);
-        const botPlan = this.buildCropExpression(this.compressCropPoints(this.smoothCropPoints(botPoints)), maxOffset, maxVOffsetHalf);
-
-        cropFilter = `[0:v]scale=${scaledWidth}:${scaledHeight}:flags=lanczos,crop=${cropWidth}:${halfHeight}:'${topPlan.xExpression}':'${topPlan.yExpression}'[top];[0:v]scale=${scaledWidth}:${scaledHeight}:flags=lanczos,crop=${cropWidth}:${halfHeight}:'${botPlan.xExpression}':'${botPlan.yExpression}'[bottom];[top][bottom]vstack=inputs=2,setsar=1`;
-      }
-    } else if (nexusCropPlan && nexusCropPlan.layout_mode === 'split-screen') {
-      // Legacy fallback
-      console.log(`[VideoProcessor]: Legacy split-screen stack`);
-      cropFilter = `[0:v]scale=${scaledWidth}:${scaledHeight}:flags=lanczos,crop=1080:960:0:0[top];[0:v]scale=${scaledWidth}:${scaledHeight}:flags=lanczos,crop=1080:960:${maxOffset}:0[bottom];[top][bottom]vstack=inputs=2,setsar=1`;
-    }
-
-    return new Promise((resolve, reject) => {
-      console.log(`[VideoProcessor]: Cutting clip with ${bin} at ${start}s -> ${outputPath}`);
-      const args = [
-        '-ss', String(start),
-        '-i', inputPath,
-        '-t', String(duration),
-        '-vf', cropFilter,
-        ...highQualityEncodeArgs(),
-        '-c:a', 'aac',
-        '-b:a', '192k',
-        '-ar', '48000',
-        '-y',
-        outputPath
-      ];
-
-      execFile(bin, args, { maxBuffer: 1024 * 1024 * 500, timeout: 1000 * 60 * 10 }, (error, stdout, stderr) => {
-        if (error) {
-          console.error('[VideoProcessor]: ffmpeg clip error:', stderr);
-          reject(new Error(`ffmpeg clip failed: ${error.message}`));
-          return;
+          scaledWidth = roundEven(width * uniformRatio);
+          scaledHeight = roundEven(height * uniformRatio);
+          maxOffset = Math.max(0, scaledWidth - cropWidth);
+          maxVOffset = Math.max(0, scaledHeight - cropHeight);
+        } catch (e: any) {
+          console.warn(`[VideoProcessor]: Dimension lookup failed, forcing safe crop bounds: ${e.message}`);
         }
-        console.log('[VideoProcessor]: Clip processing complete');
-        resolve(outputPath);
-      });
+
+        let cropFilter = '';
+
+        if (contentType === 'screen_recording' || contentType === 'presentation') {
+          // Content-Focused Screen Mode: Fit 16:9 screen/slides inside 9:16 frame with High-Speed Ambient Blurred Video Backdrop
+          console.log(`[VideoProcessor]: Content type is '${contentType}'. Applying High-Speed Ambient Blurred Video Backdrop filter...`);
+          cropFilter = `split[bg][fg];[bg]scale=108:-1,scale=${cropWidth}:${cropHeight}:flags=bicubic[blurred];[fg]scale=${cropWidth}:-2:flags=lanczos[scaled];[blurred][scaled]overlay=0:(H-h)/2,setsar=1`;
+          cropPlan = {
+            mode: 'center',
+            xExpression: '0',
+            yExpression: '0',
+            debug: `content-focused ambient blurred backdrop (${contentType})`,
+          };
+        } else {
+          // Face-Driven & Smart Composition Mode (Talking Head, Podcast, Gaming, Mixed)
+          if (nexusCropPlan && nexusCropPlan.points && nexusCropPlan.points.length > 0) {
+            try {
+              const smoothedPoints = this.smoothCropPoints(nexusCropPlan.points);
+              const compressedPoints = this.compressCropPoints(smoothedPoints);
+              cropPlan = this.buildCropExpression(compressedPoints, maxOffset, maxVOffset);
+              cropPlan.mode = 'dynamic';
+            } catch (error: any) {
+              // Smart Composition Fallback: Eye-Line (Y=25% margin) + Rule of Thirds (X=35%)
+              cropPlan = {
+                mode: 'center',
+                xExpression: '(in_w-out_w)*0.35',
+                yExpression: '(in_h-out_h)*0.25',
+                debug: 'rule-of-thirds fallback (expression failure)',
+              };
+            }
+          } else {
+            // Smart Composition Fallback: Eye-Line (Y=25% margin) + Rule of Thirds (X=35%)
+            cropPlan = {
+              mode: 'center',
+              xExpression: '(in_w-out_w)*0.35',
+              yExpression: '(in_h-out_h)*0.25',
+              debug: 'rule-of-thirds fallback (analysis fallback)',
+            };
+          }
+
+          cropFilter = `scale=${scaledWidth}:${scaledHeight}:flags=lanczos,crop=${cropWidth}:${cropHeight}:'${cropPlan.xExpression}':'${cropPlan.yExpression}',setsar=1`;
+        }
+
+        return new Promise<string>((resolve, reject) => {
+          console.log(`[VideoProcessor]: Cutting clip with ${bin} at ${start}s -> ${outputPath}`);
+          const args = [
+            '-ss', String(start),
+            '-i', inputPath,
+            '-t', String(duration),
+            '-vf', cropFilter,
+            ...highQualityEncodeArgs(),
+            '-c:a', 'aac',
+            '-b:a', '192k',
+            '-ar', '48000',
+            '-y',
+            outputPath
+          ];
+
+          execFile(bin, args, { maxBuffer: 1024 * 1024 * 500 }, (error, stdout, stderr) => {
+            if (error) {
+              console.error('[VideoProcessor]: ffmpeg clip error:', stderr);
+              reject(new PipelineError({
+                message: `ffmpeg clip failed: ${error.message}`,
+                category: ErrorCategory.FFMPEG,
+                stage: 'video_clipping',
+                component: 'VideoProcessor',
+                provider: 'FFmpeg',
+                exitCode: error.code ? Number(error.code) : undefined,
+                rootCause: stderr || error.message,
+              }));
+              return;
+            }
+            console.log('[VideoProcessor]: Clip processing complete');
+            resolve(outputPath);
+          });
+        });
+      },
+      validateOutput: (outPath) => fs.existsSync(outPath) && fs.statSync(outPath).size > 0,
     });
   }
 
@@ -721,18 +733,18 @@ export class VideoProcessor {
         '-ss', String(startTime),
         '-i', inputPath,
         '-t', String(duration),
-        '-vf', 'fps=4,scale=640:-1',
+        '-vf', 'fps=4,scale=1280:-1',
         '-f', 'image2',
-        path.join(outputDir, 'frame_%04d.pgm'),
+        path.join(outputDir, 'frame_%04d.jpg'),
         '-y',
       ];
 
-      console.log(`[VideoProcessor]: Extracting analysis frames at 4fps for ${duration.toFixed(1)}s -> ${outputDir}`);
+      console.log(`[VideoProcessor]: Extracting 720p RGB color analysis frames at 4fps for ${duration.toFixed(1)}s -> ${outputDir}`);
       execFile(bin, args, { maxBuffer: 1024 * 1024 * 500, timeout: 1000 * 60 * 10 }, (error, stdout, stderr) => {
         if (error) {
           console.warn(`[VideoProcessor]: Frame extraction warning (non-fatal): ${error.message}`);
         } else {
-          const frameCount = fs.readdirSync(outputDir).filter(f => f.endsWith('.pgm')).length;
+          const frameCount = fs.readdirSync(outputDir).filter(f => f.endsWith('.jpg') || f.endsWith('.png') || f.endsWith('.pgm')).length;
           console.log(`[VideoProcessor]: Extracted ${frameCount} analysis frames`);
         }
         resolve(); // Always resolve — cinematic crop will gracefully degrade

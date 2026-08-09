@@ -182,7 +182,6 @@ async function bootstrap() {
   const app = express();
 
   app.set('trust proxy', true);
-  // Enforce 8010 for backend to avoid conflict with Next.js (3000)
   const PORT = process.env.PORT === '3000' ? 8010 : (process.env.PORT || 8010);
   const corsOrigin = process.env.CORS_ORIGIN || process.env.NEXT_PUBLIC_APP_URL || true;
 
@@ -305,14 +304,18 @@ async function bootstrap() {
     // Register graceful shutdown handler (propagates SIGTERM to all children)
     setupGracefulShutdown();
 
-    // Spawn all pipeline workers as independent child processes.
     // Render Free plan doesn't support background worker services,
     // so we run them here. Each is fully isolated — a worker crash cannot
     // take down Express or sibling workers.
-    const distDir = __dirname;
-    spawnWorker(path.join(distDir, 'workers', 'videoWorker.js'),     'VideoWorker');
-    spawnWorker(path.join(distDir, 'workers', 'renderWorker.js'),    'RenderWorker');
-    spawnWorker(path.join(distDir, 'workers', 'voiceoverWorker.js'), 'VoiceoverWorker');
+    if (process.env.NODE_ENV === 'production' || process.env.SPAWN_WORKERS === 'true') {
+      const distDir = __dirname;
+      const ext = process.env.NODE_ENV === 'production' ? 'js' : 'ts';
+      spawnWorker(path.join(distDir, 'workers', `videoWorker.${ext}`),     'VideoWorker');
+      spawnWorker(path.join(distDir, 'workers', `renderWorker.${ext}`),    'RenderWorker');
+      spawnWorker(path.join(distDir, 'workers', `voiceoverWorker.${ext}`), 'VoiceoverWorker');
+    } else {
+      console.log('[WorkerManager]: Skipping internal worker spawn in development (use concurrently).');
+    }
   });
 }
 

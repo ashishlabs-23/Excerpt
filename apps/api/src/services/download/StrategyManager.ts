@@ -2,20 +2,13 @@ import { DownloadStrategy } from './types';
 
 const DEFAULT_STRATEGIES: DownloadStrategy[] = [
   {
-    id: 'web-cookies',
-    resolutionCap: '1080',
-    extractorArgs: 'youtube:player_client=web',
-    useCookies: true,
-    maxRetries: 2,
-    rateLimit: '25M'
-  },
-  {
-    id: 'tv-cookies',
-    resolutionCap: '1080',
-    extractorArgs: 'youtube:player_client=tv',
-    useCookies: true,
+    id: 'android',
+    resolutionCap: '720',
+    extractorArgs: 'youtube:player_client=android',
+    useCookies: false, 
+    userAgent: 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
     maxRetries: 1,
-    rateLimit: '25M'
+    rateLimit: '10M'
   },
   {
     id: 'ios',
@@ -27,13 +20,20 @@ const DEFAULT_STRATEGIES: DownloadStrategy[] = [
     rateLimit: '15M'
   },
   {
-    id: 'android',
-    resolutionCap: '720',
-    extractorArgs: 'youtube:player_client=android',
-    useCookies: false, 
-    userAgent: 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+    id: 'web-cookies',
+    resolutionCap: '1080',
+    extractorArgs: 'youtube:player_client=web',
+    useCookies: true,
     maxRetries: 1,
-    rateLimit: '10M'
+    rateLimit: '25M'
+  },
+  {
+    id: 'tv-cookies',
+    resolutionCap: '1080',
+    extractorArgs: 'youtube:player_client=tv',
+    useCookies: true,
+    maxRetries: 1,
+    rateLimit: '25M'
   }
 ];
 

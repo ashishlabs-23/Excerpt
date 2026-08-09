@@ -14,6 +14,8 @@ module.exports = {
   },
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
+    '^@excerpt/clipping-core$': '<rootDir>/../../packages/clipping-core/src/index.ts',
+    '^@excerpt/clipping-core/(.*)$': '<rootDir>/../../packages/clipping-core/src/$1',
   },
   testTimeout: 30000,
   verbose: true,

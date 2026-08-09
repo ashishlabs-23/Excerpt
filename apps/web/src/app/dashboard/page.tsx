@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { SidebarNav } from "@/components/SidebarNav";
 import { DashboardMetrics } from "@/components/DashboardMetrics";
@@ -30,7 +30,6 @@ function isTerminalJobStatus(status?: string) {
 
 export default function DashboardPage() {
   const { data: dashboardData, loading: dashLoading } = useDashboard();
-  const [activeJobFailed, setActiveJobFailed] = useState(false);
   const userClickedCompletedJob = useRef(false);
   const [activeJob, setActiveJob] = useState<any>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
@@ -123,10 +122,10 @@ export default function DashboardPage() {
           if (data.result && Array.isArray(data.result) && data.result.length > 0) {
             const firstClip = data.result[0];
             const requiredFields = [
-              { key: "video_file", valid: Boolean(firstClip.video_file) },
-              { key: "thumbnail", valid: Boolean(firstClip.thumbnail || firstClip.thumbnail_file) },
+              { key: "video_file", valid: Boolean(firstClip.video_file || firstClip.video_url || firstClip.storage_path) },
+              { key: "thumbnail", valid: Boolean(firstClip.thumbnail || firstClip.thumbnail_file || firstClip.thumbnail_url || firstClip.storage_path) },
               { key: "title", valid: Boolean(firstClip.title) },
-              { key: "caption", valid: Boolean(firstClip.caption) },
+              { key: "caption", valid: Boolean(firstClip.caption || firstClip.content) },
             ];
             const missing = requiredFields.filter((field) => !field.valid).map((field) => field.key);
             

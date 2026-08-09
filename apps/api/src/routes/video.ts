@@ -133,24 +133,28 @@ function resolveLocalClipPath(videoUrl: string, jobId?: string, showCaptions = t
   }
 
   const basePath = path.resolve(localClipsDir);
+  const fileName = segments[segments.length - 1];
   
-  // Try direct path first
-  let resolvedPath = path.resolve(basePath, ...segments);
+  // Array of local candidate paths to check
+  const candidatePaths = [
+    path.resolve(basePath, ...segments),
+    path.resolve(basePath, fileName),
+    ...(jobId ? [
+      path.resolve(basePath, jobId, fileName),
+      path.resolve(process.cwd(), 'temp', jobId, fileName),
+      path.resolve(process.cwd(), 'temp', jobId, `clip-${fileName}`),
+      path.resolve(process.cwd(), 'temp', jobId, `cut-${fileName}`),
+    ] : []),
+    path.resolve(process.cwd(), 'clips', fileName),
+  ];
 
-  // If jobId is provided and direct path doesn't exist, try jobId/clipId.mp4
-  if (jobId && !fs.existsSync(resolvedPath)) {
-    const fileName = segments[segments.length - 1];
-    const jobSpecificPath = path.resolve(basePath, jobId, fileName);
-    if (fs.existsSync(jobSpecificPath)) {
-      resolvedPath = jobSpecificPath;
+  for (const candidate of candidatePaths) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
     }
   }
 
-  if (resolvedPath !== basePath && !resolvedPath.startsWith(`${basePath}${path.sep}`)) {
-    return null;
-  }
-
-  return resolvedPath;
+  return null;
 }
 
 function resolveRemoteClipUrl(videoUrl: string, req: Request) {
@@ -179,7 +183,16 @@ function extractStorageKey(url: string): string | null {
     }
     return url;
   }
-  return null;
+  try {
+    const parsed = new URL(url);
+    const pathname = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
+    if (pathname.startsWith('clips/')) {
+      return pathname.slice('clips/'.length);
+    }
+    return pathname;
+  } catch {
+    return null;
+  }
 }
 
 async function signClip(clip: any): Promise<any> {
@@ -226,7 +239,7 @@ async function signClip(clip: any): Promise<any> {
     // Sign Thumbnail URL — primary: thumbnail_storage_path column (DB.1)
     let thumbStorageKey = clip.thumbnail_storage_path
       || clip.metadata?.thumbnail_storage_key
-      || extractStorageKey(clip.thumbnail_url);
+      || extractStorageKey(clip.thumbnail_url || clip.thumbnail || clip.thumbnail_file);
     if (thumbStorageKey) {
       if (thumbStorageKey.startsWith('clips/')) {
         thumbStorageKey = thumbStorageKey.slice('clips/'.length);
@@ -234,8 +247,11 @@ async function signClip(clip: any): Promise<any> {
       try {
         const freshThumbSignedUrl = await storageService.createSignedUrl(thumbStorageKey);
         updatedClip.thumbnail_url = freshThumbSignedUrl;
+        updatedClip.thumbnail = freshThumbSignedUrl;
+        updatedClip.thumbnail_file = freshThumbSignedUrl;
         if (updatedClip.metadata) {
           updatedClip.metadata.thumbnail_url = freshThumbSignedUrl;
+          updatedClip.metadata.thumbnail = freshThumbSignedUrl;
         }
       } catch (thumbErr: any) {
         console.warn(`[VideoRoute]: Thumbnail sign failed for clip ${clip.id}:`, thumbErr.message);
@@ -275,6 +291,26 @@ async function streamClipResponse(
   const localClipPath = resolveLocalClipPath(videoUrl, clip.job_id, showCaptions);
   if (localClipPath && fs.existsSync(localClipPath)) {
     const stats = fs.statSync(localClipPath);
+    const range = req.headers.range;
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1;
+      const chunksize = end - start + 1;
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${stats.size}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunksize,
+        'Content-Type': 'video/mp4',
+        'Content-Disposition': `${disposition}; filename="${fileName}"`,
+      });
+      const stream = fs.createReadStream(localClipPath, { start, end });
+      req.on('close', () => { if (!stream.destroyed) stream.destroy(); });
+      stream.pipe(res);
+      return;
+    }
+
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Content-Length', stats.size.toString());
 
@@ -847,8 +883,26 @@ router.get('/play/:clipId', async (req: Request, res: Response) => {
       return;
     }
 
-    // ?dl=1 forces attachment disposition for direct browser download
     const forceDownload = req.query.dl === '1';
+    
+    // For HTML5 video playback, check if local clip exists first for instant local streaming; otherwise redirect to signed cloud storage URL
+    if (!forceDownload) {
+      const rawKey = clip.storage_path || clip.video_url;
+      const localPath = resolveLocalClipPath(rawKey, clip.job_id, req.query.captions !== '0');
+      if (!localPath || !fs.existsSync(localPath)) {
+        if (rawKey && !/^https?:\/\//i.test(rawKey)) {
+          try {
+            const signedUrl = await storageService.createSignedUrl(rawKey);
+            return res.redirect(302, signedUrl);
+          } catch (e: any) {
+            console.warn(`[VideoRoute]: Direct signed URL redirect failed for ${clipId}:`, e.message);
+          }
+        } else if (rawKey && /^https?:\/\//i.test(rawKey)) {
+          return res.redirect(302, rawKey);
+        }
+      }
+    }
+
     await streamClipResponse(clipId, clip, req, res, { inline: !forceDownload });
   } catch (error: any) {
     console.error(`[VideoRoute]: Play stream failed for ${clipId}:`, error);

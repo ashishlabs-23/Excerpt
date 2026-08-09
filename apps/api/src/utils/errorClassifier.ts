@@ -1,46 +1,31 @@
-export enum ErrorCategory {
-  RATE_LIMIT = 'Rate Limit',
-  BOT_DETECTION = 'Bot Detection',
-  UNAVAILABLE = 'Unavailable',
-  PERMISSIONS = 'Permissions',
-  AGE_GATE = 'Age Gate',
-  GEO_RESTRICTED = 'Geo-Restricted',
-  NETWORK_ERROR = 'Network Error',
-  UNKNOWN = 'Unknown Error',
+/**
+ * Error Classifier Shim for Excerpt API.
+ * Re-exports canonical error classification taxonomy and helpers from @excerpt/clipping-core.
+ */
+
+import {
+  ErrorCategory,
+  ErrorClassification,
+  PipelineError,
+  classifyPipelineError as coreClassifyPipelineError,
+} from '@excerpt/clipping-core';
+
+export { ErrorCategory, ErrorClassification, PipelineError };
+
+export function classifyPipelineError(
+  error: unknown,
+  hint?: string,
+): ErrorClassification {
+  return coreClassifyPipelineError(error, hint);
 }
 
-export function classifyError(stderr: string | undefined): { category: ErrorCategory; summary: string } {
-  if (!stderr) return { category: ErrorCategory.UNKNOWN, summary: 'No error output' };
-  
-  const lowerErr = stderr.toLowerCase();
-
-  if (lowerErr.includes('http error 429') || lowerErr.includes('too many requests')) {
-    return { category: ErrorCategory.RATE_LIMIT, summary: 'HTTP 429: Rate Limit Exceeded' };
-  }
-  
-  if (lowerErr.includes('sign in to confirm you') || lowerErr.includes('bot')) {
-    return { category: ErrorCategory.BOT_DETECTION, summary: 'Blocked by Bot Detection' };
-  }
-
-  if (lowerErr.includes('video unavailable') || lowerErr.includes('this video isn\'t available')) {
-    return { category: ErrorCategory.UNAVAILABLE, summary: 'Video is unavailable or deleted' };
-  }
-
-  if (lowerErr.includes('private video') || lowerErr.includes('members only')) {
-    return { category: ErrorCategory.PERMISSIONS, summary: 'Video is private or members-only' };
-  }
-
-  if (lowerErr.includes('age restricted') || lowerErr.includes('sign in to verify your age')) {
-    return { category: ErrorCategory.AGE_GATE, summary: 'Video is age-restricted' };
-  }
-  
-  if (lowerErr.includes('country') || lowerErr.includes('geo')) {
-    return { category: ErrorCategory.GEO_RESTRICTED, summary: 'Video is geo-restricted' };
-  }
-
-  if (lowerErr.includes('econnreset') || lowerErr.includes('etimedout') || lowerErr.includes('network is unreachable')) {
-    return { category: ErrorCategory.NETWORK_ERROR, summary: 'Network connection failed' };
-  }
-
-  return { category: ErrorCategory.UNKNOWN, summary: 'Unexpected Error' };
+/**
+ * @deprecated Use classifyPipelineError(error, 'download') instead.
+ * Kept for backwards compatibility with download strategy error reporting.
+ */
+export function classifyError(
+  stderr: string | undefined,
+): { category: ErrorCategory; summary: string } {
+  const result = coreClassifyPipelineError(stderr ?? '', 'download');
+  return { category: result.category, summary: result.summary };
 }

@@ -20,7 +20,7 @@ interface Job {
   created_at: string;
 }
 
-export const ActiveJobs: React.FC<{ onJobSelect?: (jobId: string) => void }> = ({ onJobSelect }) => {
+export const ActiveJobs: React.FC<{ onJobSelect?: (job: any) => void }> = ({ onJobSelect }) => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
@@ -225,7 +225,7 @@ export const ActiveJobs: React.FC<{ onJobSelect?: (jobId: string) => void }> = (
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.95 }}
                   className={`w-[320px] sm:w-[360px] shrink-0 snap-start relative p-5 rounded-[24px] glass-card border-white/5 bg-white/[0.01] hover:border-primary/20 transition-all duration-300 flex flex-col justify-between overflow-hidden shadow-lg ${onJobSelect ? 'cursor-pointer' : ''}`}
-                  onClick={() => onJobSelect && onJobSelect(job.id)}
+                  onClick={() => onJobSelect && onJobSelect(job)}>
                   <div>
                     {/* Visual Header */}
                     <div className="flex items-start gap-4 mb-4">
@@ -301,8 +301,23 @@ export const ActiveJobs: React.FC<{ onJobSelect?: (jobId: string) => void }> = (
                     )}
 
                     {isFailed && (
-                      <div className="mb-3 text-[8px] font-semibold text-red-400 truncate leading-relaxed">
-                        Error: {job.failed_reason || "Video analysis failed"}
+                      <div className="mb-3 space-y-1 bg-red-950/40 border border-red-500/20 p-2.5 rounded-lg text-left">
+                        <div className="text-[10px] font-bold text-red-400 flex items-center justify-between">
+                          <span className="uppercase tracking-wider">
+                            [{job.debug_data?.error_type || job.debug_data?.errorCategory || 'FAILURE'}]
+                          </span>
+                          <span className="text-[9px] font-normal text-red-300/70">
+                            {job.debug_data?.stage ? `Stage: ${job.debug_data.stage}` : ''}
+                          </span>
+                        </div>
+                        <div className="text-[11px] font-medium text-red-200 leading-snug">
+                          {job.failed_reason || "Video analysis failed"}
+                        </div>
+                        {job.debug_data?.suggested_fix && (
+                          <div className="text-[10px] font-medium text-amber-300/90 pt-1 border-t border-red-500/15">
+                            💡 <span className="font-semibold">Suggested Fix:</span> {job.debug_data.suggested_fix}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

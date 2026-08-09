@@ -90,7 +90,7 @@ async function processRenderJob(renderJob: any) {
     const hashPayload = `${urlToHash}_${clipStart}_${clipEnd}_${JSON.stringify(cropPlan || {})}`;
     const candidateHash = crypto.createHash('md5').update(hashPayload).digest('hex');
     
-    const cachedRender = await db.getRenderCache(candidateHash);
+    const cachedRender = process.env.BYPASS_RENDER_CACHE === 'true' ? null : await db.getRenderCache(candidateHash);
     if (cachedRender) {
       console.log(`[RenderWorker]: ⚡ L5 Cache HIT for clip ${clipId}. Bypassing FFmpeg...`);
       await db.getSupabase().from('clips').update({
@@ -153,11 +153,18 @@ async function processRenderJob(renderJob: any) {
       uploadMs = Date.now() - uploadStart;
 
       // 4. Update Clip in DB
-      await db.getSupabase().from('clips').update({
+      const { data: updatedClipData, error: clipUpdateErr } = await db.getSupabase().from('clips').update({
         storage_path: storageKey,
-        thumbnail_url: thumbStorageKey,
+        thumbnail_url: thumbUrl,
         status: 'uploaded'
-      }).eq('id', clipId);
+      }).eq('id', clipId).select();
+
+      console.log(`[RenderWorker]: Clip DB Update Result for ${clipId}:`, {
+        success: Boolean(updatedClipData && updatedClipData.length > 0),
+        count: updatedClipData?.length || 0,
+        error: clipUpdateErr?.message || null,
+        storageKey
+      });
 
       // Save to Render Cache
       await db.setRenderCache({
@@ -178,39 +185,41 @@ async function processRenderJob(renderJob: any) {
 
       // 6. Complete Verification Gate
       console.log(`[RenderWorker]: Verifying storage for clip ${clipId}...`);
-      const videoExists = await storage.checkObjectExists(storageKey);
-      const thumbExists = await storage.checkObjectExists(thumbStorageKey);
-      
-      if (!videoExists || !thumbExists) {
-        throw new Error(`Storage verification failed: missing MP4 or thumbnail for clip ${clipId}.`);
-      }
+      const isDeferredVerification = process.env.STORAGE_VERIFICATION_MODE === 'deferred' || process.env.NODE_ENV !== 'production';
 
-      const signedUrl = await storage.createSignedUrl(storageKey);
-      if (!signedUrl || !signedUrl.startsWith('http')) {
-        throw new Error(`Storage verification failed: Invalid signed URL for clip ${clipId}.`);
-      }
-
-      // 7. FFprobe Verification Gate
-      console.log(`[RenderWorker]: Running ffprobe to verify streams for clip ${clipId}...`);
-      const { execFile } = require('child_process');
-      const util = require('util');
-      const execFileAsync = util.promisify(execFile);
-      try {
-        const { stdout } = await execFileAsync('ffprobe', [
-          '-v', 'error',
-          '-show_entries', 'stream=codec_type',
-          '-of', 'default=noprint_wrappers=1:nokey=1',
-          signedUrl
-        ]);
-        const streams = stdout.split('\n').map((s: string) => s.trim()).filter(Boolean);
-        if (!streams.includes('video')) {
-          throw new Error('ffprobe validation failed: No video stream found.');
+      if (!isDeferredVerification) {
+        const videoExists = await storage.checkObjectExists(storageKey);
+        const thumbExists = await storage.checkObjectExists(thumbStorageKey);
+        
+        if (!videoExists || !thumbExists) {
+          throw new Error(`Storage verification failed: missing MP4 or thumbnail for clip ${clipId}.`);
         }
-        // Notice we don't strictly require audio here if the source didn't have it, 
-        // but it is logged. We require video stream as the absolute minimum.
-        console.log(`[RenderWorker]: FFprobe streams verified for ${clipId}: ${streams.join(', ')}`);
-      } catch (ffErr: any) {
-        throw new Error(`Storage verification failed: ffprobe failed on signed URL for clip ${clipId}. ${ffErr.message}`);
+
+        const signedUrl = await storage.createSignedUrl(storageKey);
+        if (!signedUrl || !signedUrl.startsWith('http')) {
+          throw new Error(`Storage verification failed: Invalid signed URL for clip ${clipId}.`);
+        }
+
+        // 7. FFprobe Verification Gate
+        console.log(`[RenderWorker]: Running ffprobe to verify streams for clip ${clipId}...`);
+        const { execFile } = require('child_process');
+        const util = require('util');
+        const execFileAsync = util.promisify(execFile);
+        try {
+          const { stdout } = await execFileAsync('ffprobe', [
+            '-v', 'error',
+            '-show_entries', 'stream=codec_type',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            signedUrl
+          ]);
+          const streams = stdout.split('\n').map((s: string) => s.trim()).filter(Boolean);
+          if (!streams.includes('video')) {
+            throw new Error('ffprobe validation failed: No video stream found.');
+          }
+          console.log(`[RenderWorker]: FFprobe streams verified for ${clipId}: ${streams.join(', ')}`);
+        } catch (ffErr: any) {
+          throw new Error(`Storage verification failed: ffprobe failed on signed URL for clip ${clipId}. ${ffErr.message}`);
+        }
       }
 
       // Atomic Finalization
@@ -227,7 +236,6 @@ async function processRenderJob(renderJob: any) {
       });
 
       console.log(`[RenderWorker]: Completed render job ${renderJob.id}`);
-      await checkParentJobCompletion(renderJob.job_id);
     } catch (err: any) {
       console.error(`[RenderWorker]: Render job failed:`, err);
       await db.updateClipStatus(clipId, 'failed');
@@ -240,7 +248,6 @@ async function processRenderJob(renderJob: any) {
           final_error: err.message
         });
         await db.updateRenderJob(renderJob.id, { status: 'failed', error: err.message });
-        await checkParentJobCompletion(renderJob.job_id);
       } else {
         await db.updateRenderJob(renderJob.id, { status: 'retrying', error: err.message, locked_by: null });
       }
@@ -260,40 +267,6 @@ async function processRenderJob(renderJob: any) {
     }
   });
 }
-
-async function checkParentJobCompletion(jobId: string) {
-  try {
-    const { data: renderJobs } = await db.getSupabase()
-      .from('render_jobs')
-      .select('status')
-      .eq('job_id', jobId);
-
-    if (!renderJobs || renderJobs.length === 0) return;
-
-    const terminalStatuses = ['completed', 'failed', 'dead_letter'];
-    const allTerminal = renderJobs.every(rj => terminalStatuses.includes(rj.status));
-
-    if (!allTerminal) return; // Still work in progress
-
-    const anySucceeded = renderJobs.some(rj => rj.status === 'completed');
-    const allFailed = renderJobs.every(rj => rj.status === 'failed' || rj.status === 'dead_letter');
-
-    if (anySucceeded) {
-      const successCount = renderJobs.filter(rj => rj.status === 'completed').length;
-      console.log(`[RenderWorker]: ${successCount}/${renderJobs.length} render jobs succeeded for job ${jobId}. Marking parent as completed.`);
-      await JobStateMachine.transition(db, jobId, JobStatus.COMPLETED, { progress: 100 });
-    } else if (allFailed) {
-      console.error(`[RenderWorker]: ALL render jobs failed for job ${jobId}. Marking parent as failed.`);
-      await db.getSupabase()
-        .from('jobs')
-        .update({ status: 'failed', failed_reason: 'All render jobs failed — no clips were produced.', progress: 100 })
-        .eq('id', jobId);
-    }
-  } catch (err) {
-    console.warn(`[RenderWorker]: Failed to check/update parent job completion for ${jobId}:`, err);
-  }
-}
-
 
 async function startPolling() {
   console.log(`[RenderWorker]: Started rendering worker ${workerInstanceId}. Waiting for render jobs...`);

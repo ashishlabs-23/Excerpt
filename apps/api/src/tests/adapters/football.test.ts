@@ -20,7 +20,7 @@ describe('FootballAdapter', () => {
 
     const events = await goalDetector!.detect('video.mp4', context);
     expect(events).toHaveLength(1);
-    expect(events[0].type).toBe('goal');
+    expect(events[0].type).toBe('Goal');
     expect(events[0].start).toBe(12); // pre-roll subtraction (15 - 3)
     expect(events[0].end).toBe(20);   // post-roll addition (18 + 2)
   });
@@ -37,7 +37,7 @@ describe('FootballAdapter', () => {
 
     const events = await cardDetector!.detect('video.mp4', context);
     expect(events).toHaveLength(1);
-    expect(events[0].type).toBe('red_card');
+    expect(events[0].type).toBe('Card');
   });
 
   it('detects celebrations in transcripts', async () => {
@@ -52,6 +52,6 @@ describe('FootballAdapter', () => {
 
     const events = await celebrationDetector!.detect('video.mp4', context);
     expect(events).toHaveLength(1);
-    expect(events[0].type).toBe('celebration');
+    expect(events[0].type).toBe('PlayerReaction');
   });
 });
