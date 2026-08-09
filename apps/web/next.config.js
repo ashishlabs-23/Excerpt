@@ -6,6 +6,7 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_SUPABASE_URL: "https://maldlbmoeorpetllaceg.supabase.co",
     NEXT_PUBLIC_SUPABASE_ANON_KEY: "sb_publishable_9VdJC0QxIpx40M30cOb4wA_DJTQwedb",
+    NEXT_PUBLIC_API_URL: "https://excerpt-api.onrender.com",
   },
   reactStrictMode: false,
   transpilePackages: ['framer-motion'],
