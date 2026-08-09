@@ -18,6 +18,7 @@ interface Clip {
   video_url: string;
   thumbnail_url?: string;
   title?: string;
+  caption?: string;
   start_time: number;
   end_time: number;
   content: string;
