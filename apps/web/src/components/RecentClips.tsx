@@ -24,6 +24,8 @@ interface Clip {
   created_at?: string;
   metadata?: {
     title?: string;
+    caption?: string;
+    hashtags?: string | string[];
     virality_score?: number;
     reason?: string;
     generation_mode?: string;
