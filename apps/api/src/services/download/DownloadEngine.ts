@@ -58,6 +58,7 @@ export class DownloadIntelligenceEngine {
     if (/\.(mp4|webm|mov|m4v)(\?.*)?$/i.test(safeUrl)) {
       console.log(`[DownloadEngine]: 🚀 Direct media URL detected. Initiating fast HTTP stream download...`);
       try {
+        // @ts-ignore
         const fetch = (await import('node-fetch')).default;
         const res = await fetch(safeUrl);
         if (res.ok && res.body) {
