@@ -53,6 +53,42 @@ export class DownloadIntelligenceEngine {
     onProgress: (percent: number, speed: string, eta: string, strategy: string) => void
   ): Promise<{ outputPath: string; attempts: DownloadAttempt[] }> {
     const safeUrl = await assertSafeRemoteVideoUrl(url);
+
+    // Fast-path: Direct media stream (MP4 / WEBM / MOV)
+    if (/\.(mp4|webm|mov|m4v)(\?.*)?$/i.test(safeUrl)) {
+      console.log(`[DownloadEngine]: 🚀 Direct media URL detected. Initiating fast HTTP stream download...`);
+      try {
+        const fetch = (await import('node-fetch')).default;
+        const res = await fetch(safeUrl);
+        if (res.ok && res.body) {
+          const fileStream = fs.createWriteStream(outputPath);
+          const totalSize = parseInt(res.headers.get('content-length') || '0', 10);
+          let downloaded = 0;
+
+          await new Promise<void>((resolve, reject) => {
+            res.body!.on('data', (chunk: Buffer) => {
+              downloaded += chunk.length;
+              if (totalSize > 0) {
+                const percent = Math.min(100, Math.round((downloaded / totalSize) * 100));
+                onProgress(percent, `${(downloaded / (1024 * 1024)).toFixed(1)}MB`, '00:05', 'direct-stream');
+              }
+            });
+            res.body!.pipe(fileStream);
+            res.body!.on('error', reject);
+            fileStream.on('finish', resolve);
+            fileStream.on('error', reject);
+          });
+
+          if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000) {
+            console.log(`[DownloadEngine]: Direct HTTP stream download complete (${(fs.statSync(outputPath).size / 1024 / 1024).toFixed(1)}MB)`);
+            return { outputPath, attempts: [{ strategyId: 'direct-stream', success: true, durationMs: 1000 }] as any };
+          }
+        }
+      } catch (directErr: any) {
+        console.warn(`[DownloadEngine]: Direct HTTP stream failed (${directErr.message}), falling back to yt-dlp...`);
+      }
+    }
+
     const bin = getBinaryPath('yt-dlp');
     const ffmpegBin = getBinaryPath('ffmpeg');
     
@@ -255,9 +291,9 @@ export class DownloadIntelligenceEngine {
       const killTimeout = setTimeout(() => {
         if (childProcess && !childProcess.killed) {
           childProcess.kill('SIGKILL');
-          reject(new Error('Process timed out after 30 minutes'));
+          reject(new Error('Process timed out after 90 seconds'));
         }
-      }, 1000 * 60 * 30);
+      }, 1000 * 90);
 
       childProcess.on('close', (code, signal) => {
         clearTimeout(killTimeout);
