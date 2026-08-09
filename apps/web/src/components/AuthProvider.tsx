@@ -60,23 +60,61 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return { error: "Supabase is not configured." };
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return error ? { error: error.message } : {};
+    let { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    
+    // If user doesn't exist or hasn't completed sign up, auto-register them seamlessly with the same credentials
+    if (error && (error.message?.includes("Invalid login credentials") || error.message?.includes("User not found"))) {
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+      });
+
+      if (!signUpError) {
+        if (signUpData.session) {
+          setSession(signUpData.session);
+          setUser(signUpData.session.user);
+          return {};
+        }
+        // Try sign-in once more after sign-up
+        const { error: retryError } = await supabase.auth.signInWithPassword({ email, password });
+        if (!retryError) return {};
+      }
+    }
+
+    if (error) return { error: error.message };
+    return {};
   }, []);
 
   const signUp = useCallback(async (email: string, password: string, fullName?: string) => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return { error: "Supabase is not configured." };
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: { full_name: fullName || "" },
       },
     });
-    return error ? { error: error.message } : {};
-  }, []);
+
+    if (error) {
+      // If user already exists, fallback to signing in
+      if (error.message?.includes("already registered") || error.message?.includes("already exists")) {
+        return signIn(email, password);
+      }
+      return { error: error.message };
+    }
+
+    if (data.session) {
+      setSession(data.session);
+      setUser(data.session.user);
+    } else {
+      // Attempt immediate sign-in in case auto-confirm is enabled
+      await supabase.auth.signInWithPassword({ email, password });
+    }
+
+    return {};
+  }, [signIn]);
 
   const signOut = useCallback(async () => {
     const supabase = getSupabaseBrowserClient();
