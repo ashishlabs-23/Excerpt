@@ -3,6 +3,10 @@ const nextConfig = {
   // Pure static export — generates out/ with plain HTML/CSS/JS
   // No server functions, no lambdas, works perfectly on Netlify CDN
   output: 'export',
+  env: {
+    NEXT_PUBLIC_SUPABASE_URL: "https://maldlbmoeorpetllaceg.supabase.co",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: "sb_publishable_9VdJC0QxIpx40M30cOb4wA_DJTQwedb",
+  },
   reactStrictMode: false,
   transpilePackages: ['framer-motion'],
   experimental: {
