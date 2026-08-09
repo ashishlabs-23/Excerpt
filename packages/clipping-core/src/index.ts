@@ -20,5 +20,6 @@ export * from './evaluation/DeliveryValidator';
 export * from './evaluation/PlaybackValidator';
 
 export * from './contracts/RenderPlan';
+export * from './contracts/MediaArtifact';
 export * from './executor/types';
 export * from './executor/StageExecutor';
