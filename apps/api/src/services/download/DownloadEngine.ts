@@ -234,7 +234,20 @@ export class DownloadIntelligenceEngine {
       let stdoutStr = '';
       let stderrStr = '';
       
+      let inactivityTimer: NodeJS.Timeout | null = null;
+      const resetInactivityTimer = () => {
+        if (inactivityTimer) clearTimeout(inactivityTimer);
+        inactivityTimer = setTimeout(() => {
+          console.warn(`[DownloadEngine]: No output received from yt-dlp for 25s. Aborting hung process...`);
+          if (childProcess && !childProcess.killed) {
+            childProcess.kill('SIGTERM');
+          }
+        }, 25000);
+      };
+      resetInactivityTimer();
+
       childProcess.stdout?.on('data', (data) => {
+        resetInactivityTimer();
         const msg = data.toString();
         if (stdoutStr.length < 50000) stdoutStr += msg;
         
@@ -299,6 +312,7 @@ export class DownloadIntelligenceEngine {
       childProcess.on('close', (code, signal) => {
         clearTimeout(killTimeout);
         if (slowTimer) clearTimeout(slowTimer);
+        if (inactivityTimer) clearTimeout(inactivityTimer);
         
         if (code !== 0 || isThrottled) {
           if (isThrottled || signal === 'SIGTERM') {
