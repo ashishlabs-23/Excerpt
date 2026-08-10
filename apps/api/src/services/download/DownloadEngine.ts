@@ -32,7 +32,7 @@ export class DownloadIntelligenceEngine {
     try {
       const bin = getBinaryPath('yt-dlp');
       return await new Promise((resolve) => {
-        execFile(bin, ['--print', 'duration', '--no-playlist', url], { timeout: 5000 }, (err, stdout) => {
+        execFile(bin, ['--print', 'duration', '--no-playlist', url], { timeout: 10000 }, (err, stdout) => {
           if (err) return resolve(null);
           try {
             const duration = parseFloat(stdout.trim());
