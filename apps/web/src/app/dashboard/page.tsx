@@ -53,7 +53,13 @@ export default function DashboardPage() {
       authFetch('/api/video/jobs')
         .then(r => r.json())
         .then((jobs: any[]) => {
-          const activeJob = jobs?.find(j => !TERMINAL_JOB_STATUSES.has(j.status));
+          const now = Date.now();
+          const activeJob = jobs?.find(j => {
+            if (TERMINAL_JOB_STATUSES.has(j.status)) return false;
+            // Ignore orphaned jobs whose heartbeat or creation is older than 10 minutes
+            const lastActiveAt = new Date(j.heartbeat_at || j.updated_at || j.created_at).getTime();
+            return (now - lastActiveAt) < 10 * 60 * 1000;
+          });
           if (activeJob) {
             console.log('[Dashboard]: Auto-detected active job:', activeJob.id);
             localStorage.setItem('lastJobId', activeJob.id);
