@@ -340,8 +340,8 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
   let generationMode: 'ai' | 'heuristic' | 'recovery' = 'ai';
   try {
     checkCancellation();
-    // Update status to 'processing'
-    try { await JobStateMachine.transition(db, jobId, JobStatus.PROCESSING, { progress: 0 }); } catch {}
+    // Update status to 'processing' with initial 10% progress
+    try { await JobStateMachine.transition(db, jobId, JobStatus.PROCESSING, { progress: 10, stage_label: 'Initiating neural workspace & preparing satellite link' }); } catch {}
 
     let videoUrl = String(data.videoUrl || '');
     const numClips = data.numClips || 3;
