@@ -1890,6 +1890,10 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       console.warn(`[Worker]: Failed to update job telemetry in DB: ${dbError.message}`);
     }
 
+    if (isTerminal) {
+      throw error;
+    }
+
     return {
       status: isTerminal ? terminalStatus : JobStatus.PROCESSING,
       failedReason: error.message,
