@@ -425,13 +425,21 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     } else {
       console.log(`[Worker]: 🛰️ Satellite Link Active -> Downloading from ${videoUrl}`);
       try {
+        let lastReportedProgress = 10;
         const dlResult = await processor.downloadVideo(videoUrl, cachedInputPath, async (percent: number, speed?: string, eta?: string, strategy?: string) => {
-          // Map 0-100% download progress to 10%-40% overall pipeline progress
-          const scaledProgress = 10 + Math.floor(percent * 0.3);
+          // Monotonic progress model: 10% (start) -> 12% (bytes active) -> 12-40% (progressing)
+          let calculatedProgress = 10;
+          if (percent > 0) {
+            calculatedProgress = Math.min(40, Math.max(12, Math.floor(10 + (percent * 0.3))));
+          } else {
+            calculatedProgress = Math.max(lastReportedProgress, 11);
+          }
+          
+          const scaledProgress = Math.max(lastReportedProgress, calculatedProgress);
+          lastReportedProgress = scaledProgress;
           
           const updatePayload: any = { progress: scaledProgress };
           
-          // Expose rich diagnostic telemetry to the UI if available
           if (speed || eta || strategy) {
             updatePayload.debug_data = {
               ...debugData,

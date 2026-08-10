@@ -235,10 +235,23 @@ export class DownloadIntelligenceEngine {
       let stderrStr = '';
       
       let inactivityTimer: NodeJS.Timeout | null = null;
+      let lastKnownSize = 0;
+      
       const resetInactivityTimer = () => {
         if (inactivityTimer) clearTimeout(inactivityTimer);
         inactivityTimer = setTimeout(() => {
-          console.warn(`[DownloadEngine]: No output received from yt-dlp for 25s. Aborting hung process...`);
+          let currentSize = 0;
+          try {
+            if (fs.existsSync(outputPath)) currentSize = fs.statSync(outputPath).size;
+          } catch {}
+          
+          if (currentSize > lastKnownSize) {
+            lastKnownSize = currentSize;
+            resetInactivityTimer();
+            return;
+          }
+          
+          console.warn(`[DownloadEngine]: No stdout/stderr or disk byte growth from yt-dlp for 25s. Aborting strategy...`);
           if (childProcess && !childProcess.killed) {
             childProcess.kill('SIGTERM');
           }
@@ -298,6 +311,7 @@ export class DownloadIntelligenceEngine {
       });
 
       childProcess.stderr?.on('data', (data) => {
+        resetInactivityTimer();
         const msg = data.toString();
         if (stderrStr.length < 50000) stderrStr += msg;
       });
