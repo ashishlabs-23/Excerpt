@@ -482,11 +482,21 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       fs.copyFileSync(cachedInputPath, inputPath);
       console.log(`[Worker]: 🗄️ Source cached for future Neural Remixes.`);
     }
+
+    // ── Phase 1.5: Strict Post-Download Artifact Validation ─────
+    const { ArtifactValidator } = require('@excerpt/clipping-core');
+    const mediaArtifact = await ArtifactValidator.validateAndBuildArtifact(
+      inputPath,
+      videoUrl,
+      isLocal ? 'uploaded_mp4' : 'youtube_url',
+      jobId
+    );
+    console.log(`[Worker]: 🛡️ Download Artifact Verified! Format: ${mediaArtifact.videoCodec}/${mediaArtifact.audioCodec}, Duration: ${mediaArtifact.durationSec.toFixed(2)}s, Dimensions: ${mediaArtifact.width}x${mediaArtifact.height}`);
     
-    const videoSize = fs.statSync(inputPath).size;
+    const videoSize = mediaArtifact.fileSizeBytes;
     console.log(`[Worker]: Vector data ready: ${(videoSize / 1024 / 1024).toFixed(2)} MB`);
     try { await JobStateMachine.transition(db, jobId, JobStatus.PROCESSING, { progress: 15, stage_label: 'Calculating video duration & verifying media stream' }); } catch {}
-    const sourceDuration = await processor.getVideoDuration(inputPath);
+    const sourceDuration = mediaArtifact.durationSec;
     console.log(`[Worker]: Source duration: ${sourceDuration.toFixed(2)} seconds`);
 
     // Fetch video metadata for hash generation if possible (falls back safely)
