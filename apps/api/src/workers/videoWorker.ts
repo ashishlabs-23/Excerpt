@@ -475,7 +475,15 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
             performance_metrics: { download_attempts: dlError.attempts },
           });
         }
-        throw dlError;
+        const { PipelineError, ErrorCategory } = require('@excerpt/clipping-core');
+        throw new PipelineError({
+          category: ErrorCategory.DOWNLOAD,
+          message: dlError.message || 'All download strategies failed.',
+          stage: 'download',
+          jobId,
+          retryable: false,
+          rawError: dlError
+        });
       }
       
       // Copy to job-specific path for FFmpeg stability
