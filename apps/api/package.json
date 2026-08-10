@@ -7,7 +7,7 @@
     "start": "node dist/index.js",
     "dev": "npx tsx watch src/index.ts",
     "worker": "node dist/workers/videoWorker.js",
-    "build": "tsc",
+    "build": "cd ../../packages/clipping-core && npm run build && cd ../../apps/api && tsc",
     "typecheck": "tsc --noEmit",
     "test": "jest --config jest.config.js",
     "test:coverage": "jest --config jest.config.js --coverage",
