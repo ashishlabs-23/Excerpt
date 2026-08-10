@@ -189,8 +189,8 @@ export class DownloadIntelligenceEngine {
   ): Promise<{ outputPath: string; command: string[], finalSpeedBps?: number }> {
     return new Promise((resolve, reject) => {
       const args = [
-        '-f', `bestvideo[height<=${strategy.resolutionCap}]+bestaudio/best[height<=${strategy.resolutionCap}]`,
-        '--merge-output-format', 'mkv',
+        '-f', `bestvideo[height<=${strategy.resolutionCap}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${strategy.resolutionCap}]+bestaudio/best[height<=${strategy.resolutionCap}]/best`,
+        '--merge-output-format', 'mp4',
         '-o', outputPath,
         '--no-playlist',
         '--no-cache-dir',
