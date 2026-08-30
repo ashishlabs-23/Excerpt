@@ -85,17 +85,21 @@ export class StorageService {
     }
 
     // 2. Try B2 Upload (if initialized)
+    // B2 requires ContentLength — without it, x-amz-decoded-content-length is
+    // undefined and the upload throws. Always stat the file first.
     if (this.s3) {
       try {
         console.log(`[StorageService]: Attempting B2 upload for ${key}...`);
+        const fileSize = fs.statSync(filePath).size;
         const fileStream = fs.createReadStream(filePath);
         await this.s3.send(new PutObjectCommand({
           Bucket: this.bucket,
           Key: key,
           Body: fileStream,
           ContentType: contentType,
+          ContentLength: fileSize,
         }));
-        
+
         const region = process.env.B2_REGION || "us-west-004";
         const publicUrl = `https://${this.bucket}.s3.${region}.backblazeb2.com/${key}`;
         console.log(`[StorageService]: B2 Upload Success -> ${publicUrl}`);

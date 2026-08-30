@@ -129,8 +129,17 @@ async function processRenderJob(renderJob: any) {
         await processor.addCaptions(intermediatePath, outputPath, assFilePath);
         captionMs = Date.now() - captionStart;
       } else {
-        const fs = require('fs');
         fs.renameSync(intermediatePath, outputPath);
+      }
+
+      // Safety: if captioning/rename left the file under a different name, resolve it
+      if (!fs.existsSync(outputPath) && fs.existsSync(intermediatePath)) {
+        console.warn(`[RenderWorker]: outputPath missing, falling back to intermediatePath for ${clipId}`);
+        outputPath = intermediatePath;
+      }
+
+      if (!fs.existsSync(outputPath)) {
+        throw new Error(`RENDER_FILE_MISSING: Neither clip nor cut file found for ${clipId}`);
       }
 
       await db.updateClipStatus(clipId, 'rendered');
@@ -301,4 +310,15 @@ async function startPolling() {
   }
 }
 
-startPolling();
+// ── Global safety net: never crash the process ───────────────────────────────
+process.on('unhandledRejection', (reason: any) => {
+  console.error('[RenderWorker]: ⚠️ Unhandled rejection (continuing):', reason?.message || reason);
+});
+process.on('uncaughtException', (err: any) => {
+  console.error('[RenderWorker]: ⚠️ Uncaught exception (continuing):', err?.message || err);
+});
+
+startPolling().catch(err => {
+  console.error('[RenderWorker]: Fatal polling error:', err);
+  process.exit(1);
+});
