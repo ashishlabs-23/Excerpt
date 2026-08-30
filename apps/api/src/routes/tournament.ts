@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { requireUserJWT } from '../middleware/supabaseAuth';
+import { requireUserJWT } from '../middleware/firebaseAuth';
 import { supabase } from '../services/supabaseService';
 
 const router = Router();

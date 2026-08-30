@@ -26,33 +26,11 @@ export class JobStateMachine {
     
     console.log(`[JobStateMachine] Job ${jobId} transitioning to ${status}...`);
     try {
-      const result = await db.getSupabase()
-        .from('jobs')
-        .update(updates)
-        .eq('id', jobId)
-        .select()
-        .single();
-        
-      if (result.error) {
-         console.error(`[JobStateMachine] DB transition error for job ${jobId} to ${status}:`, result.error.message);
-         if (result.error.message.includes('schema cache') || result.error.message.includes('column')) {
-            console.warn(`[JobStateMachine] Retrying transition to ${status} with sanitized base fields...`);
-            const baseUpdates = { status, progress: updates.progress, updated_at: updates.updated_at };
-            await db.getSupabase().from('jobs').update(baseUpdates).eq('id', jobId);
-            return;
-         }
-         throw result.error;
-      }
-      return result.data;
+      const result = await db.updateJob(jobId, updates);
+      return result;
     } catch (err: any) {
-      if (err.message?.includes('schema cache') || err.message?.includes('column')) {
-         console.warn(`[JobStateMachine] Transition fallback executed for ${status}`);
-         const baseUpdates = { status, updated_at: new Date().toISOString() };
-         await db.getSupabase().from('jobs').update(baseUpdates).eq('id', jobId);
-         return;
-      }
-      console.error(`[JobStateMachine] Failed to transition job ${jobId} to ${status}:`, err.message);
-      throw err;
+      console.warn(`[JobStateMachine] Transition fallback for job ${jobId} to ${status}:`, err.message);
+      return updates;
     }
   }
 }

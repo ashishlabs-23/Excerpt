@@ -121,10 +121,11 @@ async function processRenderJob(renderJob: any) {
 
       if (clipWords && clipWords.length > 0) {
         const assFilePath = path.join(tempDir, `subs-${clipId}.ass`);
-        captionService.generateASS(clipWords, assFilePath);
+        const preset = payload.captionPreset || 'hormozi';
+        captionService.generateASS(clipWords, assFilePath, preset);
         
         const captionStart = Date.now();
-        console.log(`[RenderWorker]: Adding Viral Captions to clip ${clipId}...`);
+        console.log(`[RenderWorker]: Adding Viral Captions (${preset}) to clip ${clipId}...`);
         await processor.addCaptions(intermediatePath, outputPath, assFilePath);
         captionMs = Date.now() - captionStart;
       } else {

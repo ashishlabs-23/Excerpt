@@ -29,6 +29,7 @@
     "node_modules_old_web",
     "public/clips",
     ".next",
+    "src/__tests__",
     "*.log"
   ]
 }

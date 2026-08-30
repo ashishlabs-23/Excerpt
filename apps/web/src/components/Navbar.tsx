@@ -45,8 +45,8 @@ export const Navbar: React.FC = () => {
   // Get initials for avatar
   const getInitials = () => {
     if (!user) return "?";
-    const name = user.user_metadata?.full_name || user.email || "";
-    if (user.user_metadata?.full_name) {
+    const name = user.displayName || (user as any).user_metadata?.full_name || user.email || "";
+    if (name && name !== user.email) {
       return name
         .split(" ")
         .map((n: string) => n[0])
@@ -112,7 +112,7 @@ export const Navbar: React.FC = () => {
                         {getInitials()}
                       </div>
                       <span className="text-sm text-white/70 font-medium max-w-[140px] truncate">
-                        {user.user_metadata?.full_name || user.email}
+                        {user.displayName || (user as any).user_metadata?.full_name || user.email}
                       </span>
                       <ChevronDown
                         className={`w-3.5 h-3.5 text-white/40 transition-transform duration-200 ${
@@ -236,9 +236,9 @@ export const Navbar: React.FC = () => {
                         {getInitials()}
                       </div>
                       <div className="flex-1 min-w-0">
-                        {user.user_metadata?.full_name && (
+                        {(user.displayName || (user as any).user_metadata?.full_name) && (
                           <p className="text-sm text-white font-semibold truncate">
-                            {user.user_metadata.full_name}
+                            {user.displayName || (user as any).user_metadata?.full_name}
                           </p>
                         )}
                         <p className="text-xs text-white/50 truncate">{user.email}</p>

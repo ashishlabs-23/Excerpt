@@ -356,13 +356,13 @@ export function validateGeneratedFile(filePath?: string | null) {
 
 /**
  * Snaps raw AI timestamps to the nearest transcript segment boundaries.
- * Prevents mid-sentence cuts and adds breathable padding.
+ * Prevents mid-sentence cuts, eliminates dead air on hook start, and adds breathable ending padding.
  */
 export function snapToSegmentBoundary(
   rawStartMs: number,
   rawEndMs: number,
   segments: Array<{ start_ms: number; end_ms: number; text: string }>,
-  paddingMs: number = 600
+  paddingMs: number = 300
 ): { startMs: number; endMs: number } {
   if (segments.length === 0) {
     return { startMs: rawStartMs, endMs: rawEndMs };
@@ -378,8 +378,13 @@ export function snapToSegmentBoundary(
     Math.abs(curr.end_ms - rawEndMs) < Math.abs(prev.end_ms - rawEndMs) ? curr : prev
   );
 
+  // Punchy hook start: Max 50ms pre-roll to eliminate dead air before first spoken word
+  const tightStartMs = Math.max(0, startSeg.start_ms - 50);
+  // Breathable sentence completion: 300ms post-roll after final word
+  const breathableEndMs = endSeg.end_ms + Math.min(paddingMs, 350);
+
   return {
-    startMs: Math.max(0, startSeg.start_ms - paddingMs),
-    endMs: endSeg.end_ms + paddingMs,
+    startMs: tightStartMs,
+    endMs: Math.max(tightStartMs + 10000, breathableEndMs),
   };
 }

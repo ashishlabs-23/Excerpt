@@ -14,14 +14,14 @@ function testPlayTokenRoundTrip() {
 }
 
 function testRequireUserJWTRejectsApiKeyOnly() {
-  const authModule = require('./middleware/supabaseAuth');
+  const authModule = require('./middleware/firebaseAuth');
   assert.strictEqual(typeof authModule.requireUserJWT, 'function');
   assert.strictEqual(typeof authModule.requireServiceAuth, 'function');
-  assert.strictEqual(typeof authModule.validateBearerToken, 'function');
+  assert.strictEqual(typeof authModule.validateFirebaseToken, 'function');
 }
 
 async function testMiddlewareBehavior() {
-  const { requireUserJWT, requireServiceAuth } = await import('./middleware/supabaseAuth');
+  const { requireUserJWT, requireServiceAuth } = await import('./middleware/firebaseAuth');
 
   const createRes = () => {
     const res: any = {

@@ -6,6 +6,7 @@ import path from 'path';
 import fs from 'fs';
 import { Readable } from 'stream';
 import { DatabaseService, supabase } from '../services/supabaseService';
+import { firebaseDb } from '../services/firebaseService';
 import { VideoProcessor } from '../services/videoProcessor';
 import { StorageService } from '../services/storageService';
 import { assertSafeRemoteVideoUrl, fetchSecurely } from '../services/urlSafety';
@@ -14,7 +15,7 @@ import {
   metadataLookupRateLimit,
   requireJobSubmissionAuth,
 } from '../middleware/security';
-import { requireUserJWT } from '../middleware/supabaseAuth';
+import { requireUserJWT } from '../middleware/firebaseAuth';
 import { denyUnlessOwner, getClipOwnerId } from '../middleware/ownership';
 import { buildPlayUrl, createPlayToken, verifyPlayToken } from '../lib/playToken';
 import { concurrentJobCap } from '../middleware/concurrentJobCap';
@@ -617,69 +618,92 @@ router.post('/purge', jobSubmissionRateLimit, requireUserJWT, async (req: Reques
  * Returns all recent jobs (active and historical) for tracking and controls
  */
 router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
+  const userId = req.user.id || req.user.uid;
+
+  // 1. Try Firestore (primary)
   try {
-    const workerEnv = process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development');
+    const firestoreJobs = await firebaseDb.listJobsForUser(userId, 15);
+    if (firestoreJobs && firestoreJobs.length >= 0) {
+      // Normalize Firestore field names to match frontend expectations
+      const normalized = firestoreJobs.map((j: any) => ({
+        ...j,
+        id: j.id,
+        user_id: j.userId || j.user_id,
+        video_url: j.videoUrl || j.video_url,
+        num_clips: j.numClips || j.num_clips,
+        created_at: j.createdAt || j.created_at,
+        updated_at: j.updatedAt || j.updated_at,
+      }));
+      return res.json(normalized);
+    }
+  } catch (fbErr: any) {
+    console.warn('[VideoRoute]: Firestore jobs fetch failed, trying Supabase:', fbErr.message);
+  }
+
+  // 2. Try Supabase (secondary)
+  try {
+    const workerEnv = process.env.WORKER_ENV || 'development';
     const { data, error } = await supabase()
       .from('jobs')
       .select('*')
-      .eq('user_id', req.user.id)
+      .eq('user_id', userId)
       .eq('environment', workerEnv)
       .order('created_at', { ascending: false })
       .limit(15);
 
-    if (error) throw error;
-    return res.json(data || []);
-  } catch (error: any) {
-    console.warn('[VideoRoute]: Jobs fetch failed, falling back to local DB:', error.message);
-    const fs = require('fs');
-    const path = require('path');
-    const localDbPath = path.join(process.cwd(), 'temp', 'local_db.json');
-    if (fs.existsSync(localDbPath)) {
-      try {
-        const localDb = JSON.parse(fs.readFileSync(localDbPath, 'utf8'));
-        const userJobs = (localDb.jobs || [])
-          .filter((j: any) => j.user_id === req.user.id)
-          .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-          .slice(0, 15);
-        return res.json(userJobs);
-      } catch {}
-    }
-    return res.json([]);
+    if (!error) return res.json(data || []);
+  } catch (sbErr: any) {
+    console.warn('[VideoRoute]: Supabase jobs fetch failed, trying local DB:', sbErr.message);
   }
+
+  // 3. Local JSON fallback
+  const localDbPath = require('path').join(process.cwd(), 'temp', 'local_db.json');
+  if (fs.existsSync(localDbPath)) {
+    try {
+      const localDb = JSON.parse(fs.readFileSync(localDbPath, 'utf8'));
+      const userJobs = (localDb.jobs || [])
+        .filter((j: any) => j.user_id === userId)
+        .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 15);
+      return res.json(userJobs);
+    } catch {}
+  }
+  return res.json([]);
 });
 
-/**
- * GET /api/video/jobs/active
- * Returns all queued or processing jobs for real-time tracking
- */
 router.get('/jobs/active', requireUserJWT, async (req: Request, res: Response) => {
+  const userId = req.user.id || req.user.uid;
+  const activeStatuses = ['queued', 'processing', 'retrying', 'transcribing', 'detecting_clips', 'recovering', 'cutting', 'captioning'];
+
+  // 1. Try Firestore (primary)
+  try {
+    const allJobs = await firebaseDb.listJobsForUser(userId, 50);
+    const activeJobs = allJobs.filter((j: any) => activeStatuses.includes(j.status));
+    const normalized = activeJobs.map((j: any) => ({
+      ...j,
+      user_id: j.userId || j.user_id,
+      video_url: j.videoUrl || j.video_url,
+      num_clips: j.numClips || j.num_clips,
+      created_at: j.createdAt || j.created_at,
+      updated_at: j.updatedAt || j.updated_at,
+    }));
+    return res.json(normalized);
+  } catch (fbErr: any) {
+    console.warn('[VideoRoute]: Firestore active jobs fetch failed:', fbErr.message);
+  }
+
+  // 2. Supabase fallback
   try {
     const { data, error } = await supabase()
       .from('jobs')
       .select('*')
-      .eq('user_id', req.user.id)
-      .in('status', ['queued', 'processing', 'retrying', 'transcribing', 'detecting_clips', 'recovering', 'cutting', 'captioning'])
+      .eq('user_id', userId)
+      .in('status', activeStatuses)
       .order('created_at', { ascending: false });
+    if (!error) return res.json(data || []);
+  } catch {}
 
-    if (error) throw error;
-    return res.json(data || []);
-  } catch (error: any) {
-    console.warn('[VideoRoute]: Active jobs fetch failed, falling back to local DB:', error.message);
-    const fs = require('fs');
-    const path = require('path');
-    const localDbPath = path.join(process.cwd(), 'temp', 'local_db.json');
-    const activeStatuses = ['queued', 'processing', 'retrying', 'transcribing', 'detecting_clips', 'recovering', 'cutting', 'captioning'];
-    if (fs.existsSync(localDbPath)) {
-      try {
-        const localDb = JSON.parse(fs.readFileSync(localDbPath, 'utf8'));
-        const userActiveJobs = (localDb.jobs || [])
-          .filter((j: any) => j.user_id === req.user.id && activeStatuses.includes(j.status))
-          .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-        return res.json(userActiveJobs);
-      } catch {}
-    }
-    return res.json([]);
-  }
+  return res.json([]);
 });
 
 /**
@@ -735,21 +759,66 @@ router.post(
  */
 router.get('/status/:jobId', requireUserJWT, async (req: Request, res: Response) => {
   const jobId = String(req.params.jobId);
+  const userId = req.user.id || req.user.uid;
 
   try {
-    const db = new DatabaseService();
-    const dbJob = await db.getJobWithClips(jobId as string);
+    // 1. Try Firestore first (primary)
+    let dbJob: any = null;
+    try {
+      dbJob = await firebaseDb.getJob(jobId);
+      if (dbJob) {
+        // Normalize Firestore field names
+        dbJob = {
+          ...dbJob,
+          user_id: dbJob.userId || dbJob.user_id,
+          video_url: dbJob.videoUrl || dbJob.video_url,
+          num_clips: dbJob.numClips || dbJob.num_clips,
+          created_at: dbJob.createdAt || dbJob.created_at,
+          updated_at: dbJob.updatedAt || dbJob.updated_at,
+        };
+        // Attach clips from Firestore
+        const firestoreClips = await firebaseDb.getClipsForJob(jobId);
+        if (firestoreClips.length > 0) {
+          dbJob.clips = firestoreClips.map((c: any) => ({
+            ...c,
+            job_id: c.jobId || c.job_id,
+            video_url: c.videoUrl || c.video_url,
+            created_at: c.createdAt || c.created_at,
+          }));
+        }
+      }
+    } catch (fbErr: any) {
+      console.warn(`[VideoRoute]: Firestore status lookup failed, trying Supabase:`, fbErr.message);
+    }
+
+    // 2. Fallback to Supabase
+    if (!dbJob) {
+      const db = new DatabaseService();
+      dbJob = await db.getJobWithClips(jobId);
+    }
+
     if (!dbJob) {
       return res.status(404).json({ error: 'Job not found' });
     }
-    
-    if (!denyUnlessOwner(dbJob.user_id, req.user.id, res, 'job')) {
+
+    if (!denyUnlessOwner(dbJob.user_id, userId, res, 'job')) {
       return;
     }
 
-    const status = await queueService.getJobStatus(jobId as string);
+    const status = await queueService.getJobStatus(jobId);
     if (!status) {
-      return res.status(404).json({ error: 'Job not found' });
+      // Build status directly from the db record as fallback
+      const fallbackStatus: any = {
+        jobId,
+        status: dbJob.status,
+        progress: dbJob.progress || 0,
+        stage: dbJob.stage || dbJob.status,
+        clips: dbJob.clips || [],
+        result: dbJob.clips?.length > 0 ? dbJob.clips : null,
+        createdAt: dbJob.created_at || dbJob.createdAt,
+        updatedAt: dbJob.updated_at || dbJob.updatedAt,
+      };
+      return res.json(fallbackStatus);
     }
     
     // Dynamically sign any returned clips in status
@@ -776,6 +845,7 @@ router.get('/status/:jobId', requireUserJWT, async (req: Request, res: Response)
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
+
 
 /**
  * @route   GET /api/video/clips
@@ -1108,7 +1178,7 @@ router.post('/admin/reset-workspace', requireUserJWT, async (req: Request, res: 
       .eq('user_id', req.user.id);
       
     if (jobsError) throw jobsError;
-    const jobIds = jobs?.map(j => j.id) || [];
+    const jobIds = jobs?.map((j: any) => j.id) || [];
     
     if (jobIds.length > 0) {
       // Hard delete all clips since is_archived column doesn't exist

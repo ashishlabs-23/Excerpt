@@ -40,6 +40,10 @@ export default function DashboardPage() {
   const [showProcessingOverlay, setShowProcessingOverlay] = useState(false);
 
   useEffect(() => {
+    const safetyTimer = setTimeout(() => {
+      setIsLoading(false);
+    }, 800);
+
     const storedJobId = localStorage.getItem("lastJobId");
     if (storedJobId) {
       setLastJobId(storedJobId);
@@ -54,7 +58,7 @@ export default function DashboardPage() {
         .then(r => r.json())
         .then((jobs: any[]) => {
           const now = Date.now();
-          const activeJob = jobs?.find(j => {
+          const activeJob = jobs?.find((j: any) => {
             if (TERMINAL_JOB_STATUSES.has(j.status)) return false;
             // Ignore orphaned jobs whose heartbeat or creation is older than 10 minutes
             const lastActiveAt = new Date(j.heartbeat_at || j.updated_at || j.created_at).getTime();
@@ -71,7 +75,10 @@ export default function DashboardPage() {
           }
         })
         .catch(() => {})
-        .finally(() => setIsLoading(false));
+        .finally(() => {
+          clearTimeout(safetyTimer);
+          setIsLoading(false);
+        });
     }
 
     if (typeof window !== "undefined") {

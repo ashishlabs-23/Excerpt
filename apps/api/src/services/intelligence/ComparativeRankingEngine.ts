@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { ClipCandidate } from "@excerpt/clipping-core";
+import { RawClipCandidate as ClipCandidate } from "@excerpt/clipping-core";
 import { parseJsonWithRepair } from "../ollamaService";
 import fs from 'fs';
 import path from 'path';
@@ -39,7 +39,7 @@ Confidence: ${c.confidence}/100
 
     const userPrompt = `Here are the candidates:\n\n${formattedCandidates}\n\nSelect the top ${targetCount} best clips and return JSON.`;
 
-    const model = this.genAI.getGenerativeModel({ model: "gemini-2.0-flash" }, { apiVersion: "v1" });
+    const model = this.genAI.getGenerativeModel({ model: "gemini-3.6-flash" });
     const result = await model.generateContent(`${systemPrompt}\n\n${userPrompt}`);
     const responseText = await result.response.text();
     

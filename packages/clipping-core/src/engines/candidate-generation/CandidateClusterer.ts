@@ -1,11 +1,11 @@
-import { ClipCandidate } from '../../types/pipeline';
+import { RawClipCandidate } from '../../types/pipeline';
 
 export class CandidateClusterer {
   /**
    * Clusters candidates to ensure diversity and selects the best from each cluster.
    */
-  public clusterCandidates(candidates: ClipCandidate[]): ClipCandidate[] {
-    const clusters: ClipCandidate[][] = [];
+  public clusterCandidates(candidates: RawClipCandidate[]): RawClipCandidate[] {
+    const clusters: RawClipCandidate[][] = [];
 
     for (const candidate of candidates) {
       let addedToCluster = false;

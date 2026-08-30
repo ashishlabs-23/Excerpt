@@ -1,0 +1,15 @@
+{
+  "name": "@excerpt/ingestion",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc --build",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@excerpt/clipping-core": "*",
+    "@excerpt/shared": "*"
+  }
+}

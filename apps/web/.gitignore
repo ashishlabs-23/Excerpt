@@ -1,0 +1,15 @@
+# Next.js & Node
+node_modules/
+node_modules_old_web/
+.next/
+out/
+build/
+
+# Media Binaries
+public/clips/
+*.mp4
+*.webm
+
+# Environment
+.env*
+!.env.example

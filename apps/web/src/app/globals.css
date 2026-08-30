@@ -1,191 +1,86 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 
 :root {
-  --background: 349 19% 15%;
-  --foreground: 30 20% 95%;
-  --card: 349 19% 15%;
-  --card-foreground: 30 20% 95%;
-  --popover: 349 19% 15%;
-  --popover-foreground: 30 20% 95%;
-  --primary: 24 55% 52%;
-  --primary-foreground: 30 10% 10%;
-  --secondary: 349 15% 20%;
-  --secondary-foreground: 30 20% 95%;
-  --muted: 349 15% 20%;
-  --muted-foreground: 30 10% 60%;
-  --accent: 24 55% 52%;
-  --accent-foreground: 349 19% 15%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 349 15% 25%;
-  --input: 349 15% 25%;
-  --ring: 24 55% 52%;
-  --radius: 1rem;
+  --background: #030712;
+  --foreground: #f3f4f6;
 }
 
-@layer base {
-  html,
-  body {
-    min-height: 100%;
-    width: 100%;
-    overflow-x: hidden;
-  }
+body {
+  color: var(--foreground);
+  background-color: var(--background);
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
 
-  * {
-    border-color: hsl(var(--border));
-  }
+h1, h2, h3, .font-display {
+  font-family: 'Outfit', sans-serif;
+}
 
-  body {
-    background-color: hsl(var(--background));
-    color: hsl(var(--foreground));
-    background-image: 
-      radial-gradient(at 0% 0%, hsla(24, 55%, 52%, 0.1) 0px, transparent 50%),
-      radial-gradient(at 100% 0%, hsla(349, 19%, 30%, 0.1) 0px, transparent 50%),
-      radial-gradient(at 100% 100%, hsla(24, 55%, 52%, 0.05) 0px, transparent 50%),
-      radial-gradient(at 0% 100%, hsla(349, 19%, 30%, 0.05) 0px, transparent 50%);
-    background-attachment: fixed;
-    overflow-x: hidden;
-  }
+/* Glassmorphism Primitives */
+.glass-panel {
+  background: rgba(17, 24, 39, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .glass-card {
-  @apply bg-white/[0.03] backdrop-blur-xl border border-white/[0.08] shadow-2xl;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.neon-border {
-  @apply border-primary/50 shadow-[0_0_15px_-3px_rgba(200,119,64,0.3)];
+.glass-card:hover {
+  border-color: rgba(99, 102, 241, 0.4);
+  box-shadow: 0 20px 40px -15px rgba(99, 102, 241, 0.2);
+  transform: translateY(-2px);
 }
 
-.text-gradient {
-  @apply bg-clip-text text-transparent bg-gradient-to-r from-white via-white to-white/50;
+.gradient-text {
+  background: linear-gradient(135deg, #a5b4fc 0%, #c084fc 50%, #f472b6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
-.animate-glow {
-  animation: glow 4s infinite alternate;
-}
-
-@keyframes glow {
-  from {
-    box-shadow: 0 0 10px -2px rgba(200, 119, 64, 0.2);
-  }
-  to {
-    box-shadow: 0 0 20px 2px rgba(200, 119, 64, 0.4);
-  }
-}
-
-.cyber-grid {
-  background-image: linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
-  background-size: 40px 40px;
-}
-
-.scrollbar-hide {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-
-.scrollbar-hide::-webkit-scrollbar {
-  display: none;
-}
-
-@keyframes pulse-gentle {
-  0%, 100% { opacity: 0.85; filter: brightness(1); }
-  50% { opacity: 1; filter: brightness(1.2) drop-shadow(0 0 8px rgba(16, 185, 129, 0.2)); }
-}
-
-.animate-pulse-gentle {
-  animation: pulse-gentle 3s ease-in-out infinite;
-}
-
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22);
-}
-
-/* Elite iPhone Mockup & Social UI */
-.iphone-mockup {
+.gradient-border {
   position: relative;
-  width: 100%;
-  max-width: 420px;
-  aspect-ratio: 9 / 19.5;
-  background: #111827;
-  border-radius: 60px;
-  padding: 12px;
-  box-shadow: 
-    0 0 0 4px #1f2937,
-    0 40px 100px -20px rgba(0, 0, 0, 0.8),
-    inset 0 0 20px rgba(255, 255, 255, 0.05);
-  overflow: hidden;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(168, 85, 247, 0.1), rgba(236, 72, 153, 0.2));
+  padding: 1px;
 }
 
-.iphone-bezel {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  background: black;
-  border-radius: 48px;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+.gradient-border-inner {
+  background: #0b0f19;
+  border-radius: calc(1rem - 1px);
 }
 
-.iphone-notch {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 120px;
-  height: 32px;
-  background: black;
-  border-bottom-left-radius: 18px;
-  border-bottom-right-radius: 18px;
-  z-index: 20;
+/* Animations */
+@keyframes glowPulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.8; transform: scale(1.05); }
 }
 
-.social-ui-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 10;
-  pointer-events: none;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  padding: 24px;
-  background: linear-gradient(0deg, rgba(0,0,0,0.4) 0%, transparent 40%);
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-6px); }
 }
 
-.social-action-column {
-  position: absolute;
-  right: 12px;
-  bottom: 120px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  align-items: center;
+.animate-glow-pulse {
+  animation: glowPulse 3s infinite ease-in-out;
 }
 
-.social-action-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: white;
+.animate-float {
+  animation: float 4s ease-in-out infinite;
 }
+
+/* Custom Scrollbar */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: #030712; }
+::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #334155; }

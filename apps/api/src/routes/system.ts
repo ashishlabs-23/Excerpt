@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import os from 'os';
 import { DatabaseService } from '../services/supabaseService';
-import { requireUserJWT } from '../middleware/supabaseAuth';
+import { requireUserJWT } from '../middleware/firebaseAuth';
 import { AIService } from '../services/aiService';
 import { workerRegistry } from '../index';
 const router = Router();
@@ -21,10 +21,16 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-// GET /api/system/health - Liveness only. Fast, no external services.
+// GET /api/system/health - Liveness & capacity. Fast, lightweight.
 router.get('/health', (req: Request, res: Response) => {
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const memUsagePercent = ((totalMem - freeMem) / totalMem) * 100;
+  const capacity = Math.max(20, Math.min(99, Math.round(100 - (memUsagePercent * 0.25))));
+
   res.json({
     status: 'ok',
+    capacity,
     commit: GIT_COMMIT,
     buildTime: BUILD_TIMESTAMP,
     version: API_VERSION

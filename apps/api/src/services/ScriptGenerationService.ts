@@ -75,7 +75,7 @@ Validation rules:
       try {
         const key = this.geminiKeys[this.currentGeminiKeyIndex];
         const genAI = new GoogleGenerativeAI(key);
-        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-3.6-flash" });
         const result = await model.generateContent(`${systemPrompt}\n\n${userPrompt}`);
         const response = await result.response;
         const script = response.text().trim();

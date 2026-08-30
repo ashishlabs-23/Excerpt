@@ -1,11 +1,11 @@
-import { ClipCandidate } from '../../types/pipeline';
+import { RawClipCandidate } from '../../types/pipeline';
 
 export class CandidateParser {
   /**
    * Parses the raw JSON response from the LLM.
    * Throws an error if the structure is invalid.
    */
-  public parseCandidates(rawContent: string): ClipCandidate[] {
+  public parseCandidates(rawContent: string): RawClipCandidate[] {
     let parsed: any;
     try {
       parsed = JSON.parse(rawContent);
@@ -31,6 +31,6 @@ export class CandidateParser {
       c.end_time - c.start_time <= 90
     );
 
-    return validCandidates as ClipCandidate[];
+    return validCandidates as RawClipCandidate[];
   }
 }

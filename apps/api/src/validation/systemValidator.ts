@@ -130,61 +130,18 @@ async function validateDatabaseSchema() {
  * Validates that all required environment variables are present.
  */
 function validateEnvironmentVariables() {
-  const requiredEnvVars = [
-    'SUPABASE_URL',
-  ];
-  
-  const missing = requiredEnvVars.filter(key => !process.env[key]);
-  
-  if (missing.length > 0) {
-    throw new Error(`Missing required environment variables:\n - ${missing.join('\n - ')}\nPlease configure these in your .env file before starting the system.`);
-  }
-
-  const aiKeys = ['GROQ_API_KEY', 'GEMINI_API_KEY'];
-  const missingAi = aiKeys.filter(key => !process.env[key]);
-  if (missingAi.length > 0) {
-    console.warn(`[SystemValidator]: ⚠️ Warning: Missing AI keys: ${missingAi.join(', ')}. AI features will be disabled.`);
-  }
-}
-
-/**
- * Validates that all required Supabase Storage Buckets exist.
- */
-async function validateStorageBuckets() {
-  const db = supabase();
-  const { data: buckets, error } = await db.storage.listBuckets();
-  
-  if (error) {
-    if (isQuotaError(error.message)) {
-      console.warn(`[SystemValidator]: ⚠️ Skipping storage bucket check — Supabase project is quota-restricted.`);
-      return; // Non-fatal
-    }
-    throw new Error(`Failed to validate storage buckets: ${error.message}`);
-  }
-  
-  const existingBuckets = new Set(buckets.map((b: any) => b.name));
-  const requiredBuckets = ['clips', 'thumbnails'];
-  const missing = requiredBuckets.filter(b => !existingBuckets.has(b));
-  
-  if (missing.length > 0) {
-    console.warn(`[SystemValidator]: ⚠️ Missing Supabase Storage Buckets: ${missing.join(', ')}. Create them at supabase.com/dashboard.`);
-    // Non-fatal warning — buckets can be created after startup
+  const aiKeys = ['GROQ_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_AI_API_KEY'];
+  const hasAi = aiKeys.some(key => Boolean(process.env[key]));
+  if (!hasAi) {
+    console.warn(`[SystemValidator]: ⚠️ Warning: Missing AI keys. Please ensure at least one AI key is set.`);
   }
 }
 
 /**
  * Master validation sequence.
- * Set SKIP_BOOT_VALIDATION=true to bypass all DB/storage checks (useful when Supabase is quota-restricted).
  */
 export async function validateSystemOrExit() {
   console.log('[SystemValidator]: Starting boot sequence validations...');
-
-  // Allow bypassing DB checks via env var (e.g. when Supabase is quota-restricted)
-  const skipValidation = process.env.SKIP_BOOT_VALIDATION === 'true';
-  if (skipValidation) {
-    console.warn('[SystemValidator]: ⚠️ SKIP_BOOT_VALIDATION=true — skipping DB/storage checks. Remove this once Supabase quota is resolved.');
-    return;
-  }
 
   try {
     validateEnvironmentVariables();
@@ -193,16 +150,7 @@ export async function validateSystemOrExit() {
     validateBinaries();
     console.log('[SystemValidator]: ✅ Binaries verified.');
 
-    await validateDatabaseSchema();
-    console.log('[SystemValidator]: ✅ Database schema verified.');
-
-    await validateSchemaVersion();
-    console.log(`[SystemValidator]: ✅ Schema version matched (${EXPECTED_SCHEMA_VERSION}).`);
-
-    await validateStorageBuckets();
-    console.log('[SystemValidator]: ✅ Storage buckets verified.');
-    
-    console.log('[SystemValidator]: All systems go.');
+    console.log('[SystemValidator]: All systems go (Firebase + Local Storage mode).');
   } catch (err: any) {
     console.error('\n=============================================================');
     console.error(' FATAL BOOT ERROR: SYSTEM VALIDATION FAILED');

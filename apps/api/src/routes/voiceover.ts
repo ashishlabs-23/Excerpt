@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { DatabaseService } from '../services/supabaseService';
-import { requireUserJWT } from '../middleware/supabaseAuth';
+import { requireUserJWT } from '../middleware/firebaseAuth';
 import { denyUnlessOwner, getClipOwnerId } from '../middleware/ownership';
 import { verifyUploadedMedia } from '../validation/fileValidation';
 import multer from 'multer';

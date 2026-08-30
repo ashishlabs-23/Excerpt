@@ -4,7 +4,7 @@ import { parseJsonWithRepair } from "../ollamaService";
 import fs from 'fs';
 import path from 'path';
 import { TranscriptionResult } from "../transcriptionService";
-import { CandidateClusterer, ClipCandidate, StageExecutor } from "@excerpt/clipping-core";
+import { CandidateClusterer, RawClipCandidate as ClipCandidate, StageExecutor } from "@excerpt/clipping-core";
 
 export { ClipCandidate };
 

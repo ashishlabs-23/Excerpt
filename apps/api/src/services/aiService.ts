@@ -519,8 +519,10 @@ Return only JSON.`;
       new Set(
         [
           process.env.GROQ_CLIP_MODEL,
-          'llama-3.3-70b-versatile',
-          'llama-3.1-8b-instant',
+          'qwen/qwen3.6-27b',
+          'qwen/qwen3.8-27b',
+          'openai/gpt-oss-120b',
+          'openai/gpt-oss-20b',
         ].filter((value): value is string => Boolean(value))
       )
     );
@@ -547,7 +549,7 @@ Return only JSON.`;
       retryDelayMs: 1000,
       execute: async () => {
         try {
-          const model = this.genAI.getGenerativeModel({ model: "gemini-2.0-flash" }, { apiVersion: "v1" });
+          const model = this.genAI.getGenerativeModel({ model: "gemini-3.6-flash" });
           const result = await model.generateContent(`${systemPrompt}\n\n${userPrompt}`);
           const response = await result.response;
           return response.text();
@@ -555,7 +557,7 @@ Return only JSON.`;
           if (err.message && /429|quota exceeded|resource exhausted/i.test(err.message)) {
             if (this.rotateGeminiKey()) {
               // Retry with new rotated key immediately
-              const model = this.genAI.getGenerativeModel({ model: "gemini-2.0-flash" }, { apiVersion: "v1" });
+              const model = this.genAI.getGenerativeModel({ model: "gemini-3.6-flash" });
               const result = await model.generateContent(`${systemPrompt}\n\n${userPrompt}`);
               const response = await result.response;
               return response.text();
@@ -846,13 +848,14 @@ Return only JSON.`;
         })
       : normalizedClips;
 
+    // SOTA Non-Maximum Suppression (NMS) with 0.35 IoU threshold
     const finalClips = filteredClips.reduce<ClipSegment[]>((accumulator, clip) => {
       if (accumulator.length >= numClips) {
         return accumulator;
       }
 
-      const conflicts = accumulator.some((existing) => overlapRatio(existing, clip) > 0.5);
-      if (!conflicts) {
+      const hasNmsConflict = accumulator.some((existing) => overlapRatio(existing, clip) > 0.35);
+      if (!hasNmsConflict) {
         accumulator.push(clip);
       }
 

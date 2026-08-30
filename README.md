@@ -4,15 +4,15 @@
 
 # ✂️ Excerpt — AI Video Clipping Platform
 
-**Transform long-form football videos into viral, publishable clips — automatically.**
+**Transform long-form videos into viral, 9:16 vertical publishable clips — automatically.**
 
 [![Next.js](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://typescriptlang.org)
-[![Supabase](https://img.shields.io/badge/Supabase-Database-3ECF8E?style=flat-square&logo=supabase)](https://supabase.com)
-[![Redis](https://img.shields.io/badge/Redis-Queue-DC382D?style=flat-square&logo=redis)](https://redis.io)
+[![Firebase](https://img.shields.io/badge/Firebase-Auth%20%26%20Firestore-FFA611?style=flat-square&logo=firebase)](https://firebase.google.com)
+[![Gemini](https://img.shields.io/badge/Gemini-3.6%20Flash-4285F4?style=flat-square&logo=google)](https://ai.google.dev)
 [![Netlify](https://img.shields.io/badge/Netlify-Deployed-00C7B7?style=flat-square&logo=netlify)](https://netlify.com)
 
-[🚀 Live Demo](#) · [📖 Docs](#architecture) · [🐛 Report Bug](https://github.com/ashishlabs-23/Excerpt/issues)
+[🚀 Live Demo](#) · [📖 Architecture](#-architecture) · [🐛 Report Bug](https://github.com/ashishlabs-23/Excerpt/issues)
 
 </div>
 
@@ -20,26 +20,25 @@
 
 ## 🎯 What is Excerpt?
 
-Excerpt is a **full-stack AI platform** that ingests YouTube match videos and automatically detects, cuts, captions, and publishes the most exciting moments — goals, counter-attacks, near-misses, saves — without any manual editing.
+Excerpt is a **full-stack autonomous AI video clipping platform** that ingests YouTube videos and automatically detects, cuts, reframes to 9:16 vertical, captions, and prepares viral clips for social platforms (TikTok, Instagram Reels, YouTube Shorts).
 
 ```
-YouTube URL ──► AI Detection ──► Smart Cutting ──► Captions ──► Cloud Upload ──► Ready to Share
+YouTube URL ──► AI Hook Detection ──► Face Tracking Reframe ──► Smart Crop ──► Captions ──► Cloud Storage
 ```
 
 ---
 
-## ✨ Features
+## ✨ Core Capabilities & Features
 
 | Feature | Description |
 |---|---|
-| 🤖 **AI Clip Detection** | Neural pipeline detects key moments using Google AI & Groq |
-| ✂️ **Smart Boundary Engine** | Learns from human editors to perfect clip start/end times |
-| 🎙️ **Voiceover Studio** | Auto-generates sports commentary via ElevenLabs / Google TTS |
-| 📊 **Editor Arena** | Human reviewers vote on clip quality to train the AI |
-| 🏆 **Policy Tournament** | AB-tests clip boundaries to promote the best strategy |
-| 📱 **Viral Format** | Clips optimised for TikTok / Instagram / YouTube Shorts |
-| ⚡ **Real-time Updates** | Live progress via Supabase Realtime subscriptions |
-| 🔐 **Auth & RLS** | Supabase Auth with Row Level Security per user |
+| 🤖 **AI Hook Detection** | Neural multimodal pipeline detects viral hooks using **Gemini 3.6 Flash** & **Groq Qwen 3.6** |
+| 🎯 **Smart 9:16 Reframe** | Continuous face-tracking & heuristic saliency centering with smooth EMA damping |
+| 🎙️ **Voiceover Studio** | Dynamic narration & commentary generation via ElevenLabs / TTS |
+| 📊 **Editor Arena** | Reviewer scoring & comparative ranking to fine-tune viral prediction weights |
+| ⚡ **Resilient Cloud Queue** | Distributed worker orchestration with automatic failover and local JSON offline sync |
+| 🔐 **Firebase Authentication** | Secure Google OAuth and Email/Password sign-in powered by Firebase Auth |
+| 🗄️ **Cloud Firestore** | Document persistence for jobs, clips, and rendering states |
 
 ---
 
@@ -48,34 +47,35 @@ YouTube URL ──► AI Detection ──► Smart Cutting ──► Captions �
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    FRONTEND (Netlify)                    │
-│              Next.js 14 · TypeScript · Tailwind          │
+│           Next.js 14 · TypeScript · Tailwind CSS        │
+│              Firebase Client SDK (Auth & Data)          │
 └────────────────────────┬────────────────────────────────┘
-                         │ REST / Realtime
+                         │ REST / JSON
 ┌────────────────────────▼────────────────────────────────┐
-│                  BACKEND API (Render)                    │
-│              Node.js · Express · TypeScript              │
+│                  BACKEND API (Node.js)                   │
+│          Express · Firebase Admin SDK · Firestore       │
 └──────────┬────────────────────────┬─────────────────────┘
            │                        │
     ┌──────▼──────┐        ┌────────▼────────┐
-    │  Redis Queue │        │    Supabase DB   │
-    │  BullMQ Jobs │        │  PostgreSQL+RLS  │
+    │ State & Log │        │ Firebase / B2   │
+    │  Firestore  │        │  Cloud Storage  │
     └──────┬──────┘        └─────────────────┘
            │
-    ┌──────▼──────────────────────────────────┐
-    │           WORKER (Render)                │
-    │  yt-dlp → FFmpeg → AI → Caption → B2    │
-    └─────────────────────────────────────────┘
+    ┌──────▼──────────────────────────────────────────────┐
+    │                   WORKER PIPELINE                   │
+    │  DownloadEngine ──► Whisper ──► Gemini 3.6 Flash    │
+    │  ──► Cinematic Reframe ──► FFmpeg 9:16 ──► Storage  │
+    └─────────────────────────────────────────────────────┘
 ```
 
-### Stack
+### Tech Stack
 
-- **Frontend**: Next.js 14, TypeScript, Tailwind CSS, Framer Motion, Supabase JS
-- **Backend API**: Node.js, Express, TypeScript, BullMQ
-- **Worker**: yt-dlp, FFmpeg, Google AI (Gemini), Groq, ElevenLabs
-- **Database**: Supabase (PostgreSQL) with Row Level Security
-- **Queue**: Redis (BullMQ)
-- **Storage**: Backblaze B2 (S3-compatible)
-- **Deployment**: Netlify (web) · Render (api + worker) · Upstash (Redis)
+- **Frontend**: Next.js 14, React, TypeScript, Tailwind CSS, Firebase Client SDK
+- **Backend API**: Node.js, Express, TypeScript, Firebase Admin SDK
+- **AI & Perception**: Google Gemini 3.6 Flash, Groq (`qwen/qwen3.6-27b`, Whisper-large-v3)
+- **Video Processing**: FFmpeg, Smart Crop Planner, Dynamic Face Tracker
+- **Database & Auth**: Firebase Authentication & Cloud Firestore (Project `excerpt-d0ab8`)
+- **Storage**: Firebase Storage / Backblaze B2 (S3-compatible)
 
 ---
 
@@ -84,24 +84,22 @@ YouTube URL ──► AI Detection ──► Smart Cutting ──► Captions �
 ```
 Excerpt/
 ├── apps/
-│   ├── web/                 # Next.js frontend (Netlify)
+│   ├── web/                 # Next.js frontend application
 │   │   ├── src/
-│   │   │   ├── app/         # App router pages
-│   │   │   ├── components/  # UI components
-│   │   │   └── lib/         # Supabase client, utils
-│   │   └── netlify.toml
-│   └── api/                 # Express API + Worker (Render)
+│   │   │   ├── app/         # App router pages (dashboard, editor, auth, arena)
+│   │   │   ├── components/  # React UI components & player
+│   │   │   └── lib/         # Firebase client config & API client
+│   └── api/                 # Express API + Video/Render Workers
 │       ├── src/
-│       │   ├── routes/      # API endpoints
-│       │   ├── services/    # Supabase, B2, AI services
-│       │   └── workers/     # BullMQ clip processing workers
-│       └── scripts/         # Migration & preflight scripts
-├── packages/                # Shared packages
-├── supabase/
-│   └── migrations/          # Database schema migrations
-├── netlify.toml             # Frontend deployment config
-├── render.yaml              # Backend deployment config
-└── docker-compose.yml       # Local development stack
+│       │   ├── middleware/  # Firebase Auth & Security guards
+│       │   ├── routes/      # Video, clip, and system endpoints
+│       │   ├── services/    # AI, Firebase, VideoProcessor, Storage
+│       │   └── workers/     # VideoWorker & RenderWorker pipelines
+├── packages/
+│   ├── clipping-core/       # Core pipeline contracts, artifact validators & scoring
+│   └── ui/                  # Shared UI components
+├── temp/                    # Resilient local cache & storage mirror
+└── render.yaml              # Backend deployment specification
 ```
 
 ---
@@ -111,11 +109,10 @@ Excerpt/
 ### Prerequisites
 
 - Node.js 20+
-- Redis (local or [Upstash](https://upstash.com))
-- [Supabase](https://supabase.com) project
-- [Backblaze B2](https://backblaze.com) bucket
-- FFmpeg installed locally
-- yt-dlp installed locally
+- FFmpeg installed and available on PATH
+- Google AI Studio API Key (`gemini-3.6-flash`)
+- Groq API Key
+- Firebase Project Service Account credentials (`excerpt-d0ab8`)
 
 ### 1. Clone & Install
 
@@ -125,110 +122,72 @@ cd Excerpt
 npm install
 ```
 
-### 2. Environment Variables
+### 2. Environment Configuration
 
-Copy the example and fill in your keys:
+Create `.env` at root:
 
-```bash
-cp .env.example .env
+```ini
+# Google AI Studio & Groq
+GOOGLE_AI_API_KEY=your_gemini_api_key
+GROQ_API_KEY=your_groq_api_key
+
+# Firebase Client Configuration
+NEXT_PUBLIC_FIREBASE_API_KEY=your_firebase_api_key
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=excerpt-d0ab8.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=excerpt-d0ab8
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=excerpt-d0ab8.appspot.com
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
+
+# Storage (Optional / Backblaze B2)
+B2_KEY_ID=your_b2_key_id
+B2_APPLICATION_KEY=your_b2_app_key
+B2_BUCKET_NAME=excerpt-clips
+B2_REGION=us-east-005
 ```
 
-| Variable | Description |
-|---|---|
-| `SUPABASE_URL` | Your Supabase project URL |
-| `SUPABASE_ANON_KEY` | Supabase anon public key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (backend only) |
-| `GOOGLE_AI_API_KEY` | Google Gemini API key |
-| `GROQ_API_KEY` | Groq API key for fast inference |
-| `ELEVENLABS_API_KEY` | ElevenLabs for voiceover |
-| `REDIS_URL` | Redis connection URL |
-| `B2_KEY_ID` | Backblaze B2 key ID |
-| `B2_APPLICATION_KEY` | Backblaze B2 application key |
+Place `firebase-service-account.json` into `apps/api/` for backend Admin SDK verification.
 
-### 3. Set Up Database
-
-Run the complete schema setup against your Supabase project:
+### 3. Run Development Servers
 
 ```bash
-node scripts/setup_database.mjs
-```
+# Start Web Frontend
+npm run dev --workspace=apps/web
 
-Or paste `supabase/setup_complete_schema.sql` directly into the Supabase SQL Editor.
-
-### 4. Start Development
-
-```bash
-# Start all services (Redis + API + Web)
-docker-compose up -d redis
-
-# Start API
+# Start API Server
 npm run dev --workspace=apps/api
 
-# Start Web
-npm run dev --workspace=apps/web
+# Start Video Worker (processes clip jobs)
+npx tsx apps/api/src/workers/videoWorker.ts
+
+# Start Render Worker (renders 9:16 vertical cuts)
+npx tsx apps/api/src/workers/renderWorker.ts
 ```
 
 ---
 
 ## 🌐 Deployment
 
-### Frontend → Netlify
+### Frontend → Netlify / Vercel
 
-The `netlify.toml` at the repo root is pre-configured:
-
-```toml
-[build]
-  base    = "apps/web"
-  command = "npm install && npm run build"
-  publish = ".next"
+```bash
+npm run build --workspace=apps/web
 ```
 
-Connect this repo to Netlify and set the required `NEXT_PUBLIC_*` environment variables.
+Set `NEXT_PUBLIC_FIREBASE_*` environment variables in your deployment dashboard.
 
-### Backend + Worker → Render
+### Backend API & Workers → Render
 
-The `render.yaml` defines two services:
-- `excerpt-api` — Express REST API
-- `excerpt-worker` — BullMQ clip processing worker
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy)
-
-### Redis → Upstash
-
-Create a free Redis database at [upstash.com](https://upstash.com) and set `REDIS_URL`.
-
----
-
-## 📊 Database Schema
-
-30 tables covering the full platform:
-
-| Category | Tables |
-|---|---|
-| Core | `jobs`, `clips` |
-| Processing | `job_events`, `worker_heartbeats`, `production_failures` |
-| AI Learning | `editorial_corrections`, `boundary_policy_cache`, `policy_versions` |
-| Benchmarking | `clip_scorecards`, `ground_truth_clips`, `engine_shadow_results` |
-| Voiceover | `voiceover_clips`, `voiceover_feedback` |
-| Reward Model | `reward_features`, `arena_matches`, `model_versions` |
-
----
-
-## 🤝 Contributing
-
-1. Fork the repo
-2. Create a feature branch (`git checkout -b feat/amazing-feature`)
-3. Commit changes (`git commit -m 'feat: add amazing feature'`)
-4. Push the branch (`git push origin feat/amazing-feature`)
-5. Open a Pull Request
+The repository includes `render.yaml` configuring:
+- `excerpt-api` (Web Service)
+- `excerpt-video-worker` (Background Worker)
+- `excerpt-render-worker` (Background Worker)
 
 ---
 
 ## 📄 License
 
 Private repository — all rights reserved © 2026 Ashish Labs.
-
----
 
 <div align="center">
 

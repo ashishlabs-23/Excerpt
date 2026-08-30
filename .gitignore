@@ -1,77 +1,76 @@
-# ─── Logs ───────────────────────────────────────────────────────────────────
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-lerna-debug.log*
-
-# ─── Dependencies ────────────────────────────────────────────────────────────
+# Dependencies
 node_modules/
-node_modules_old/
 node_modules_old_web/
-jspm_packages/
-.npm
 
-# ─── Environment Variables (NEVER commit) ───────────────────────────────────
-.env
-.env.*
-!.env.example
-render.env
-
-# ─── Build Outputs ──────────────────────────────────────────────────────────
+# Next.js Build Outputs
 .next/
-.dist/
-dist/
-build/
 out/
+build/
+dist/
+.dist/
 
-# ─── Large Dataset Directories ──────────────────────────────────────────────
-football_gold_dataset/
-human_editor_dataset_v2/
+# Local Environment Variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+render.env
+netlify.env
 
-# ─── Temp / Scratch / Debug scripts ─────────────────────────────────────────
+# Media Artifacts
+public/clips/
+*.mp4
+*.webm
+test_out.mp4
+
+# Logs — all runtime logs (never commit these)
+*.log
+apps/api/api_*.log
+apps/api/pipeline_result*.log
+apps/api/startup_error*.log
+apps/web/*.log
+api_v*.log
+render_v*.log
+worker_v*.log
+error.log
+
+# Temp runtime state (never commit — cross-process queue lives here)
 temp/
-scratch/
-.cache/
+apps/api/temp/
+
+# One-off test/debug scripts in root & apps/api/scripts
+test_*.mjs
+test_*.ts
+check_deploy.mjs
+confirm_user.mjs
+db_test.mjs
+list_all_netlify.mjs
+netlify_sync.mjs
 apps/api/scripts/test_*.ts
 apps/api/scripts/merge_sql.ts
-apps/api/scripts/*_auditor.ts
-apps/api/scripts/*_audit.ts
-apps/api/scripts/*redteam*.ts
-apps/api/scripts/*_hardening.ts
-apps/api/scripts/*_live_*.ts
+apps/api/scripts/apply_*.ts
+apps/api/src/test_*.ts
 
-# ─── Web App Build Logs ──────────────────────────────────────────────────────
-apps/web/*.log
-apps/web/*.txt
-apps/web/build_output.txt
-apps/web/ts_errors*.txt
-apps/web/dev_error_capture.log
+# Supabase — deleted (project uses Firebase + local JSON queue now)
+supabase/
+apps/api/supabase/
 
-# ─── TypeScript Build Info ──────────────────────────────────────────────────
+# Firebase/Netlify local caches
+.firebase/
+apps/web/.netlify/
+apps/web/apps/
+
+# TypeScript incremental build info
 *.tsbuildinfo
 
-# ─── OS / Editor ────────────────────────────────────────────────────────────
-.DS_Store
-*.pem
-Thumbs.db
-
-# ─── yt-dlp Cookies ─────────────────────────────────────────────────────────
-cookies/
-cookies.txt
-*.cookie
-yt-dlp-cookies-*.txt
-
-# ─── Netlify & Docker Local State ───────────────────────────────────────────
-.netlify/
-.docker-local/
-
-# ─── Python ─────────────────────────────────────────────────────────────────
-__pycache__/
+# Python caches
+**/__pycache__/
 *.pyc
-.pytest_cache/
 
-# ─── AI / Tooling ────────────────────────────────────────────────────────────
-.stitch/
-.claude/
-AI_CONTEXT_MEMORY.md
+# System & Credentials
+.DS_Store
+Thumbs.db
+*service_account*.json
+*service-account*.json
+firebase-service-account.json

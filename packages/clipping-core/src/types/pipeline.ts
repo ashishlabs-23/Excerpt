@@ -62,7 +62,7 @@ export interface StoryArc {
   eventIds: string[];
 }
 
-export interface ClipCandidate {
+export interface RawClipCandidate {
   start_time: number;
   end_time: number;
   hook: string;
@@ -73,3 +73,4 @@ export interface ClipCandidate {
   confidence: number;
   summary: string;
 }
+

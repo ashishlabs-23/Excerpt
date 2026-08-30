@@ -74,7 +74,7 @@ import { universalWowMomentEngineV2 } from '../services/intelligence/UniversalWo
 import { learningSubsystem } from '../services/intelligence/LearningSubsystem';
 import { IntelligenceOrchestrator, OrchestrationContext } from '../services/nexus/IntelligenceOrchestrator';
 import { classifyPipelineError } from '../utils/errorClassifier';
-import { createRenderPlan, DeliveryValidator, DEFAULT_PIPELINE_CONFIG } from '@excerpt/clipping-core';
+import { createRenderPlan, DeliveryValidator, DEFAULT_PIPELINE_CONFIG, ArtifactValidator } from '@excerpt/clipping-core';
 import { TimelineEvent, JobDebugData, JobPerformanceMetrics } from '../types/diagnostics';
 
 installConsoleLogger();
@@ -492,7 +492,6 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     }
 
     // ── Phase 1.5: Strict Post-Download Artifact Validation ─────
-    const { ArtifactValidator } = require('@excerpt/clipping-core');
     const mediaArtifact = await ArtifactValidator.validateAndBuildArtifact(
       inputPath,
       videoUrl,
@@ -2090,6 +2089,18 @@ export const startWorker = async () => {
 
   isPolling = true;
   console.log(`[Worker]: 🚀 Gen-4 Cloud-Polling Worker Starting with Concurrency ${MAX_CONCURRENT_WORKERS}...`);
+
+  // ── Startup Reclaim: immediately rescue any jobs orphaned by previous worker ──
+  try {
+    const reclaimedOnStart = await db.startupReclaim();
+    if (reclaimedOnStart.length > 0) {
+      console.log(`[Worker]: ♻️ Startup reclaim rescued ${reclaimedOnStart.length} orphaned jobs:`, reclaimedOnStart);
+    } else {
+      console.log('[Worker]: ✅ Startup reclaim: no orphaned jobs found.');
+    }
+  } catch (err: any) {
+    console.warn('[Worker]: Startup reclaim failed (non-fatal):', err.message);
+  }
 
   // Start the stale job reclamation sweeper periodically (every 5 minutes)
   const sweeperInterval = setInterval(async () => {

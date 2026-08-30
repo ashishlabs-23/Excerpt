@@ -19,7 +19,7 @@ export class OfflineTrainer {
     const { data: users } = await db.from('clip_preferences').select('user_id').neq('user_id', null);
     
     if (users) {
-      const uniqueUsers = [...new Set(users.map(u => u.user_id))];
+      const uniqueUsers: string[] = Array.from(new Set(users.map((u: any) => String(u.user_id))));
       
       for (const userId of uniqueUsers) {
         await this.updateUserEmbedding(userId);

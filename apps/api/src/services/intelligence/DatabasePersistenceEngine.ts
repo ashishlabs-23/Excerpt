@@ -26,7 +26,7 @@ export class DatabasePersistenceEngine {
             publishability_score: n.publishabilityScore || 0,
             confidence: n.confidence
          }));
-         db.from('narratives').insert(narrativeRecords).then(({ error }) => {
+         db.from('narratives').insert(narrativeRecords).then(({ error }: any) => {
             if (error) console.error('[DatabasePersistenceEngine] Failed to save narratives:', error);
          });
       }
@@ -62,13 +62,13 @@ export class DatabasePersistenceEngine {
          });
 
          if (emotionRecords.length > 0) {
-            db.from('emotion_profiles').insert(emotionRecords).then(({ error }) => {
+            db.from('emotion_profiles').insert(emotionRecords).then(({ error }: any) => {
                if (error) console.error('[DatabasePersistenceEngine] Failed to save emotion profiles:', error);
             });
          }
          
          if (tensionRecords.length > 0) {
-            db.from('tension_profiles').insert(tensionRecords).then(({ error }) => {
+            db.from('tension_profiles').insert(tensionRecords).then(({ error }: any) => {
                if (error) console.error('[DatabasePersistenceEngine] Failed to save tension profiles:', error);
             });
          }
@@ -82,7 +82,7 @@ export class DatabasePersistenceEngine {
             job_id: jobId,
             nodes: JSON.stringify(nodes),
             edges: JSON.stringify(legacyGraph.edges)
-         }).then(({ error }) => {
+         }).then(({ error }: any) => {
             if (error) console.error('[DatabasePersistenceEngine] Failed to save story graph:', error);
          });
       }

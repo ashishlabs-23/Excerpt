@@ -78,9 +78,14 @@ function spawnWorker(scriptPath: string, label: string): void {
 
     console.log(`[WorkerManager]: ▶ Starting [${label}]`);
 
-    const child = spawn('node', [scriptPath], {
+    const isTs = scriptPath.endsWith('.ts');
+    const cmd = isTs ? 'npx' : 'node';
+    const args = isTs ? ['tsx', scriptPath] : [scriptPath];
+
+    const child = spawn(cmd, args, {
       env: process.env,
-      stdio: 'inherit', // stream worker logs directly to Render console
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
     });
 
     state.child    = child;
@@ -307,14 +312,14 @@ async function bootstrap() {
     // Render Free plan doesn't support background worker services,
     // so we run them here. Each is fully isolated — a worker crash cannot
     // take down Express or sibling workers.
-    if (process.env.NODE_ENV === 'production' || process.env.SPAWN_WORKERS === 'true') {
+    if (process.env.NODE_ENV === 'production' || process.env.SPAWN_WORKERS !== 'false') {
       const distDir = __dirname;
       const ext = process.env.NODE_ENV === 'production' ? 'js' : 'ts';
       spawnWorker(path.join(distDir, 'workers', `videoWorker.${ext}`),     'VideoWorker');
       spawnWorker(path.join(distDir, 'workers', `renderWorker.${ext}`),    'RenderWorker');
       spawnWorker(path.join(distDir, 'workers', `voiceoverWorker.${ext}`), 'VoiceoverWorker');
     } else {
-      console.log('[WorkerManager]: Skipping internal worker spawn in development (use concurrently).');
+      console.log('[WorkerManager]: Skipping internal worker spawn in development.');
     }
   });
 }

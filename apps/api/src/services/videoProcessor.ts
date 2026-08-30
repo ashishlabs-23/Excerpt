@@ -553,7 +553,19 @@ export class VideoProcessor {
 
         let cropFilter = '';
 
-        if (contentType === 'screen_recording' || contentType === 'presentation') {
+        if (contentType === 'dual_split' || contentType === 'podcast_split' || nexusCropPlan?.layout === 'dual_split') {
+          // SOTA Dual-Speaker Stacked Split Layout (Top: Host / Speaker A, Bottom: Guest / Speaker B)
+          console.log(`[VideoProcessor]: Applying SOTA Dual-Speaker Stacked Split Layout (1080x960 Top + 1080x960 Bottom)...`);
+          const s1X = nexusCropPlan?.speaker1_x ?? 0;
+          const s2X = nexusCropPlan?.speaker2_x ?? 0.5;
+          cropFilter = `split[s1][s2];[s1]crop=iw*0.5:ih:iw*${s1X}:0,scale=${cropWidth}:${cropHeight/2}:flags=lanczos[top];[s2]crop=iw*0.5:ih:iw*${s2X}:0,scale=${cropWidth}:${cropHeight/2}:flags=lanczos[bot];[top][bot]vstack=inputs=2,setsar=1`;
+          cropPlan = {
+            mode: 'static',
+            xExpression: '0',
+            yExpression: '0',
+            debug: 'dual-speaker stacked split (1080x1920)',
+          };
+        } else if (contentType === 'screen_recording' || contentType === 'presentation') {
           // Content-Focused Screen Mode: Fit 16:9 screen/slides inside 9:16 frame with High-Speed Ambient Blurred Video Backdrop
           console.log(`[VideoProcessor]: Content type is '${contentType}'. Applying High-Speed Ambient Blurred Video Backdrop filter...`);
           cropFilter = `split[bg][fg];[bg]scale=108:-1,scale=${cropWidth}:${cropHeight}:flags=bicubic[blurred];[fg]scale=${cropWidth}:-2:flags=lanczos[scaled];[blurred][scaled]overlay=0:(H-h)/2,setsar=1`;

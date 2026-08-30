@@ -1,4 +1,3 @@
-import { describe, it, expect } from 'vitest';
 import { createRenderPlan, DeliveryValidator } from '../src';
 
 describe('RenderPlan Contract & DeliveryValidator', () => {

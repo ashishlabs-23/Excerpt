@@ -1,1 +1,0 @@
-SELECT id, source_clip_id, status, provider, created_at FROM public.voiceover_clips ORDER BY created_at DESC;

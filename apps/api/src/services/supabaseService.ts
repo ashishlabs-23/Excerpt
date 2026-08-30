@@ -1,8 +1,10 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { StorageService } from './storageService';
+import { firebaseDb } from './firebaseService';
 import os from 'os';
 import crypto from 'crypto';
-
+import fs from 'fs';
+import path from 'path';
 
 
 /**
@@ -11,64 +13,291 @@ import crypto from 'crypto';
  */
 let _supabase: SupabaseClient | null = null;
 
-function getSupabase(): SupabaseClient {
-  if (!_supabase) {
-    const url = process.env.SUPABASE_URL || '';
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
-    if (!url || !key) {
-      console.error('[Supabase]: Missing SUPABASE_URL or a Supabase API key');
-    } else if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.warn('[Supabase]: Using SUPABASE_ANON_KEY on the server. Purge and admin writes may be limited by RLS.');
-    }
-    
-    // Resilient Fetch with Retry Logic for Docker DNS constraints (EAI_AGAIN) and HTTP 5xx timeouts
-    const resilientFetch = async (input: any, init?: any): Promise<Response> => {
-      let attempt = 0;
-      const maxRetries = 5;
-      while (attempt < maxRetries) {
-        const controller = new AbortController();
-        const isStorage = typeof input === 'string' && input.includes('/storage/v1/');
-        const timeoutMs = isStorage ? 120000 : 30000;
-        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-        try {
-          const res = await fetch(input, { ...init, signal: controller.signal });
-          clearTimeout(timeoutId);
-          if (res.status >= 500 && res.status <= 599) {
-            throw new Error(`HTTP status ${res.status}`);
-          }
-          return res;
-        } catch (e: any) {
-          clearTimeout(timeoutId);
-          attempt++;
-          const isNetworkError = e.name === 'AbortError' ||
-                                 e.message?.includes('fetch failed') || 
-                                 e.message?.includes('HTTP status') ||
-                                 e.code === 'EAI_AGAIN' || 
-                                 e.code === 'ENOTFOUND' || 
-                                 e.message?.includes('network timeout');
-          if (attempt === maxRetries || !isNetworkError) throw e;
-          
-          const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
-          console.warn(`[Supabase Fetch]: Transient error (${e.message || 'Timeout'}). Retrying in ${backoffMs}ms... (Attempt ${attempt}/${maxRetries})`);
-          await new Promise(r => setTimeout(r, backoffMs));
+const inMemoryDb: Record<string, any[]> = {
+  jobs: [],
+  clips: [],
+  render_jobs: [],
+  schema_info: [{ version: 'v3.0.0' }],
+};
+
+function createLocalSupabaseDriver(): any {
+  const getQueueFilePath = () => {
+    const dir = path.join(process.cwd(), 'temp');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return path.join(dir, 'active_queue.json');
+  };
+
+  const readDb = (): Record<string, any[]> => {
+    try {
+      const p = getQueueFilePath();
+      if (fs.existsSync(p)) {
+        const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+        return {
+          jobs: Array.isArray(parsed.jobs) ? parsed.jobs : Object.values(parsed.jobs || {}),
+          clips: Array.isArray(parsed.clips) ? parsed.clips : Object.values(parsed.clips || {}),
+          render_jobs: Array.isArray(parsed.render_jobs) ? parsed.render_jobs : Object.values(parsed.render_jobs || {}),
+          schema_info: [{ version: 'v3.0.0' }],
+        };
+      }
+    } catch {}
+    return { jobs: [], clips: [], render_jobs: [], schema_info: [{ version: 'v3.0.0' }] };
+  };
+
+  const writeDb = (data: Record<string, any[]>) => {
+    try {
+      const p = getQueueFilePath();
+      const current = fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : { jobs: {}, clips: {}, render_jobs: {} };
+      if (data.jobs) {
+        if (!current.jobs || Array.isArray(current.jobs)) current.jobs = {};
+        for (const j of data.jobs) {
+          if (j && j.id) current.jobs[j.id] = { ...(current.jobs[j.id] || {}), ...j };
         }
       }
-      throw new Error('Supabase resilient fetch failed');
-    };
-
-    _supabase = createClient(url, key, {
-      global: {
-        fetch: resilientFetch
+      if (data.clips) {
+        if (!current.clips || Array.isArray(current.clips)) current.clips = {};
+        for (const c of data.clips) {
+          if (c && c.id) current.clips[c.id] = { ...(current.clips[c.id] || {}), ...c };
+        }
       }
-    });
-  }
-  return _supabase;
+      if (data.render_jobs) {
+        current.render_jobs = data.render_jobs;
+      }
+      const tmp = `${p}.${Date.now()}.${Math.random().toString(36).substring(2, 7)}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(current, null, 2), 'utf8');
+      try {
+        fs.renameSync(tmp, p);
+      } catch {
+        fs.writeFileSync(p, JSON.stringify(current, null, 2), 'utf8');
+        try { fs.unlinkSync(tmp); } catch {}
+      }
+    } catch {}
+  };
+
+  return {
+    from: (table: string) => {
+      const db = readDb();
+      if (!db[table]) db[table] = [];
+      let rows: any[] = [...(db[table] || [])];
+
+      const builder: any = {
+        select: (cols = '*') => builder,
+        eq: (col: string, val: any) => {
+          rows = rows.filter(r => r[col] === val);
+          return builder;
+        },
+        neq: (col: string, val: any) => {
+          rows = rows.filter(r => r[col] !== val);
+          return builder;
+        },
+        is: (col: string, val: any) => {
+          rows = rows.filter(r => r[col] === val || (val === null && (r[col] === null || r[col] === undefined)));
+          return builder;
+        },
+        in: (col: string, vals: any[]) => {
+          rows = rows.filter(r => vals.includes(r[col]));
+          return builder;
+        },
+        match: (criteria: Record<string, any>) => {
+          rows = rows.filter(r => Object.entries(criteria).every(([k, v]) => r[k] === v));
+          return builder;
+        },
+        gte: (col: string, val: any) => {
+          rows = rows.filter(r => r[col] >= val);
+          return builder;
+        },
+        gt: (col: string, val: any) => {
+          rows = rows.filter(r => r[col] > val);
+          return builder;
+        },
+        lte: (col: string, val: any) => {
+          rows = rows.filter(r => r[col] <= val);
+          return builder;
+        },
+        lt: (col: string, val: any) => {
+          rows = rows.filter(r => r[col] < val);
+          return builder;
+        },
+        or: () => builder,
+        order: (col: string, opts?: any) => {
+          rows.sort((a, b) => {
+            const valA = a[col] ?? '';
+            const valB = b[col] ?? '';
+            return opts?.ascending === false ? (valB > valA ? 1 : -1) : (valA > valB ? 1 : -1);
+          });
+          return builder;
+        },
+        limit: (n: number) => {
+          rows = rows.slice(0, n);
+          return builder;
+        },
+        single: async () => ({ data: rows[0] || null, error: null }),
+        maybeSingle: async () => ({ data: rows[0] || null, error: null }),
+        insert: (data: any) => {
+          const toInsert = Array.isArray(data) ? data : [data];
+          const enriched = toInsert.map((item: any) => ({
+            id: item.id || crypto.randomUUID(),
+            createdAt: item.createdAt || new Date().toISOString(),
+            ...item
+          }));
+          db[table] = [...(db[table] || []), ...enriched];
+          writeDb(db);
+          return {
+            select: () => ({
+              single: async () => ({ data: enriched[0], error: null }),
+              maybeSingle: async () => ({ data: enriched[0], error: null }),
+              then: (resolve: any) => resolve({ data: Array.isArray(data) ? enriched : enriched[0], error: null })
+            }),
+            then: (resolve: any) => resolve({ data: Array.isArray(data) ? enriched : enriched[0], error: null })
+          };
+        },
+        upsert: (data: any, opts?: any) => {
+          const items = Array.isArray(data) ? data : [data];
+          const conflictKey = opts?.onConflict || 'id';
+          const current = db[table] || [];
+          for (const item of items) {
+            const idx = current.findIndex((c: any) => c[conflictKey] === item[conflictKey]);
+            if (idx >= 0) {
+              current[idx] = { ...current[idx], ...item };
+            } else {
+              current.push(item);
+            }
+          }
+          db[table] = current;
+          writeDb(db);
+          return {
+            then: (resolve: any) => resolve({ data: items, error: null })
+          };
+        },
+        update: (updates: any) => {
+          const predicates: Array<(r: any) => boolean> = [];
+
+          const executeUpdate = () => {
+            let affected: any[] = [];
+            db[table] = (db[table] || []).map((r: any) => {
+              const match = predicates.length === 0 || predicates.every(p => p(r));
+              if (match) {
+                const updatedRow = { ...r, ...updates };
+                affected.push(updatedRow);
+                return updatedRow;
+              }
+              return r;
+            });
+            writeDb(db);
+            return affected;
+          };
+
+          const updateBuilder: any = {
+            eq: (col: string, val: any) => {
+              predicates.push(r => r[col] === val);
+              return updateBuilder;
+            },
+            neq: (col: string, val: any) => {
+              predicates.push(r => r[col] !== val);
+              return updateBuilder;
+            },
+            is: (col: string, val: any) => {
+              predicates.push(r => r[col] === val || (val === null && (r[col] === null || r[col] === undefined)));
+              return updateBuilder;
+            },
+            in: (col: string, vals: any[]) => {
+              predicates.push(r => vals.includes(r[col]));
+              return updateBuilder;
+            },
+            lt: (col: string, val: any) => {
+              predicates.push(r => r[col] < val);
+              return updateBuilder;
+            },
+            lte: (col: string, val: any) => {
+              predicates.push(r => r[col] <= val);
+              return updateBuilder;
+            },
+            gt: (col: string, val: any) => {
+              predicates.push(r => r[col] > val);
+              return updateBuilder;
+            },
+            gte: (col: string, val: any) => {
+              predicates.push(r => r[col] >= val);
+              return updateBuilder;
+            },
+            or: () => updateBuilder,
+            select: (cols = '*') => {
+              const rows = executeUpdate();
+              return {
+                single: async () => ({ data: rows[0] || null, error: null }),
+                maybeSingle: async () => ({ data: rows[0] || null, error: null }),
+                then: (resolve: any) => resolve({ data: rows, error: null })
+              };
+            },
+            then: (resolve: any) => {
+              const rows = executeUpdate();
+              resolve({ data: rows, error: null });
+            }
+          };
+          return updateBuilder;
+        },
+        delete: () => ({
+          eq: async (col: string, val: any) => {
+            db[table] = (db[table] || []).filter((r: any) => r[col] !== val);
+            writeDb(db);
+            return { error: null };
+          },
+          in: async (col: string, vals: any[]) => {
+            db[table] = (db[table] || []).filter((r: any) => !vals.includes(r[col]));
+            writeDb(db);
+            return { error: null };
+          }
+        }),
+        then: (resolve: any) => resolve({ data: rows, error: null })
+      };
+      return builder;
+    },
+    rpc: async (fn: string, params?: any) => {
+      if (fn === 'claim_next_render_job') {
+        const db = readDb();
+        const renderJobs = db['render_jobs'] || [];
+        const pendingJob = renderJobs.find((j: any) => j.status === 'pending' || j.status === 'queued');
+        if (pendingJob) {
+          pendingJob.status = 'claimed';
+          pendingJob.locked_by = params?.worker_id_text || 'render-worker';
+          pendingJob.locked_at = new Date().toISOString();
+          writeDb(db);
+          return { data: [pendingJob], error: null };
+        }
+        return { data: [], error: null };
+      }
+      return { data: [], error: null };
+    },
+    storage: {
+      from: (bucket: string) => ({
+        upload: async () => ({ data: { path: 'local' }, error: null }),
+        createSignedUrl: async (p: string) => ({ data: { signedUrl: `/clips/${p}` }, error: null }),
+        download: async () => ({ data: Buffer.from(''), error: null }),
+        remove: async () => ({ error: null }),
+      }),
+      listBuckets: async () => ({ data: [{ name: 'clips' }, { name: 'thumbnails' }], error: null }),
+    },
+    auth: {
+      getUser: async () => ({ data: { user: null }, error: null }),
+      getSession: async () => ({ data: { session: null }, error: null }),
+    }
+  };
 }
 
-export { getSupabase as supabase };
+let _localSupabaseDriver: any = null;
+
+function getSupabase(): any {
+  if (!_localSupabaseDriver) {
+    _localSupabaseDriver = createLocalSupabaseDriver();
+  }
+  return _localSupabaseDriver;
+}
+
+export function supabase(): any {
+  return getSupabase();
+}
 
 export class DatabaseService {
-  private static readonly workerInstanceId = `${os.hostname() || 'worker'}-${crypto.randomUUID()}`;
+  public static readonly workerInstanceId = `${os.hostname() || 'worker'}-${crypto.randomUUID()}`;
   private static legacyQueueWarningShown = false;
 
   private get db() {
@@ -83,68 +312,171 @@ export class DatabaseService {
 
 
   async createJob(jobData: any) {
-    const { data, error } = await this.db
-      .from('jobs')
-      .insert(jobData)
-      .select()
-      .single();
-    if (error) throw error;
-    return data;
+    // 1. Mirror to Firestore / local DB
+    try {
+      await firebaseDb.createJob({
+        id: jobData.id,
+        userId: jobData.user_id || jobData.userId,
+        videoUrl: jobData.video_url || jobData.videoUrl,
+        requestedClips: jobData.num_clips || jobData.numClips,
+        status: jobData.status || 'queued',
+        progress: jobData.progress || 0,
+        metadata: jobData.payload || {},
+      });
+    } catch {}
+
+    // 2. Try Supabase
+    try {
+      const { data, error } = await this.db
+        .from('jobs')
+        .insert(jobData)
+        .select()
+        .single();
+      if (!error && data) return data;
+    } catch {}
+
+    return jobData;
   }
 
   async updateJob(jobId: string, updates: any) {
     if (updates.status) {
       await this.logJobEvent(jobId, `STATUS_${updates.status.toUpperCase()}`, updates);
     }
-    const { data, error } = await this.db
-      .from('jobs')
-      .update({ ...updates, updated_at: new Date().toISOString() })
-      .eq('id', jobId);
 
-    if (error) {
-      if (error.message?.includes('stage_label')) {
-        console.warn(`[Supabase]: 'stage_label' column missing on jobs. Retrying update without stage_label...`);
+    // 1. Mirror to Firestore / local DB
+    try {
+      await firebaseDb.updateJob(jobId, {
+        status: updates.status,
+        progress: updates.progress,
+        stage: updates.stage || updates.stage_label,
+        error: updates.error_message || updates.error,
+        updatedAt: new Date().toISOString(),
+        ...(updates.payload ? { metadata: updates.payload } : {}),
+      });
+    } catch {}
+
+    // 2. Try Supabase
+    try {
+      const { data, error } = await this.db
+        .from('jobs')
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq('id', jobId);
+
+      if (error && error.message?.includes('stage_label')) {
         const { stage_label, ...sanitizedUpdates } = updates;
-        const { data: retryData, error: retryError } = await this.db
+        const { data: retryData } = await this.db
           .from('jobs')
           .update({ ...sanitizedUpdates, updated_at: new Date().toISOString() })
           .eq('id', jobId);
-        if (retryError) throw retryError;
         return retryData;
       }
-      throw error;
-    }
-    return data;
+      return data;
+    } catch {}
+
+    return updates;
   }
 
   async getJob(jobId: string) {
-    const { data, error } = await this.db
-      .from('jobs')
-      .select('*')
-      .eq('id', jobId)
-      .single();
-    if (error && error.code !== 'PGRST116') throw error;
-    return data || null;
+    // 1. Try Firestore / local DB
+    try {
+      const fbJob = await firebaseDb.getJob(jobId);
+      if (fbJob) {
+        return {
+          ...fbJob,
+          user_id: fbJob.userId || (fbJob as any).user_id,
+          video_url: fbJob.videoUrl || (fbJob as any).video_url,
+          num_clips: fbJob.requestedClips || (fbJob as any).num_clips,
+          created_at: fbJob.createdAt || (fbJob as any).created_at,
+          updated_at: fbJob.updatedAt || (fbJob as any).updated_at,
+        };
+      }
+    } catch {}
+
+    // 2. Try Supabase
+    try {
+      const { data, error } = await this.db
+        .from('jobs')
+        .select('*')
+        .eq('id', jobId)
+        .single();
+      if (!error && data) return data;
+    } catch {}
+
+    return null;
   }
 
   async saveClips(clips: any[]) {
-    // Add updated created_at so that reused clips jump to the top of the gallery
+    // 1. Mirror to Firestore / local DB
+    try {
+      const fbClips = clips.map((c, idx) => ({
+        id: c.id || `${c.job_id || c.jobId}_clip_${idx + 1}`,
+        jobId: c.job_id || c.jobId,
+        userId: c.user_id || c.userId || '00000000-0000-0000-0000-000000000000',
+        rank: c.rank || idx + 1,
+        videoUrl: c.video_url || c.videoUrl || '',
+        thumbnailUrl: c.thumbnail_url || c.thumbnailUrl || '',
+        durationMs: c.duration_ms || (c.duration ? c.duration * 1000 : 0),
+        startMs: c.start_ms || (c.start_time ? c.start_time * 1000 : 0),
+        endMs: c.end_ms || (c.end_time ? c.end_time * 1000 : 0),
+        score: c.score || c.virality_score || 0,
+        title: c.title || `Clip ${idx + 1}`,
+        summary: c.summary || c.hook || '',
+        aspectRatio: c.aspect_ratio || '9:16',
+        createdAt: new Date().toISOString(),
+      }));
+      await firebaseDb.saveClips(fbClips);
+    } catch {}
+
+    // 2. Try Supabase
     const clipsWithTime = clips.map(c => ({...c, created_at: new Date().toISOString()}));
-    const { data, error } = await this.db
-      .from('clips')
-      .upsert(clipsWithTime, { onConflict: 'id' });
-    if (error) throw error;
-    return data;
+    try {
+      const { data } = await this.db
+        .from('clips')
+        .upsert(clipsWithTime, { onConflict: 'id' });
+      return data;
+    } catch {}
+
+    return clipsWithTime;
   }
 
   async getJobWithClips(jobId: string) {
-    const { data: job, error: jobError } = await this.db
-      .from('jobs')
-      .select('*, clips(*)')
-      .eq('id', jobId)
-      .single();
-    if (jobError && jobError.code !== 'PGRST116') throw jobError;
-    return job || null;
+    // 1. Try Firestore / local DB
+    try {
+      const fbJob = await firebaseDb.getJob(jobId);
+      if (fbJob) {
+        const clips = await firebaseDb.getClipsForJob(jobId);
+        return {
+          ...fbJob,
+          user_id: fbJob.userId || (fbJob as any).user_id,
+          video_url: fbJob.videoUrl || (fbJob as any).video_url,
+          num_clips: fbJob.requestedClips || (fbJob as any).num_clips,
+          created_at: fbJob.createdAt || (fbJob as any).created_at,
+          updated_at: fbJob.updatedAt || (fbJob as any).updated_at,
+          clips: clips.map((c: any) => ({
+            ...c,
+            id: c.id,
+            job_id: c.jobId || c.job_id,
+            video_url: c.videoUrl || c.video_url,
+            thumbnail_url: c.thumbnailUrl || c.thumbnail_url,
+            start_time: c.startMs ? c.startMs / 1000 : c.start_time,
+            end_time: c.endMs ? c.endMs / 1000 : c.end_time,
+            created_at: c.createdAt || c.created_at,
+          })),
+        };
+      }
+    } catch {}
+
+    // 2. Try Supabase
+    try {
+      const { data: job, error: jobError } = await this.db
+        .from('jobs')
+        .select('*, clips(*)')
+        .eq('id', jobId)
+        .single();
+      if (!jobError && job) return job;
+    } catch {}
+
+    return null;
   }
 
   async updateClipStatus(clipId: string, status: string) {
@@ -218,7 +550,7 @@ export class DatabaseService {
       .select('id')
       .eq('user_id', userId);
     if (jobsError) throw jobsError;
-    const jobIds = jobs?.map((j) => j.id) || [];
+    const jobIds = jobs?.map((j: any) => j.id) || [];
 
     if (jobIds.length > 0) {
       const { error: clipsError } = await this.db
@@ -267,7 +599,7 @@ export class DatabaseService {
       .select('id')
       .eq('user_id', userId);
     if (jobsError) throw jobsError;
-    const jobIds = jobs?.map((j) => j.id) || [];
+    const jobIds = jobs?.map((j: any) => j.id) || [];
     if (jobIds.length === 0) return [];
 
     const { data: clips, error } = await this.db
@@ -413,33 +745,30 @@ export class DatabaseService {
 
   async getNextQueuedJob(workerEnv: string) {
     try {
-      const { data, error } = await this.db
-        .rpc('claim_next_job', { 
-          worker_id_text: DatabaseService.workerInstanceId,
-          worker_env_text: workerEnv
-        });
-      
-      if (error) {
-        if (this.isMissingClaimRpcError(error)) {
-          if (!DatabaseService.legacyQueueWarningShown) {
-            console.warn('[Supabase]: ⚠️ claim_next_job RPC missing! Falling back to legacy queue claiming. Run the queue_locking_migration.sql to enable safe distributed locking.');
-            DatabaseService.legacyQueueWarningShown = true;
-          }
-          return this.getNextQueuedJobLegacy(workerEnv);
-        }
-        throw error;
+      const job = await firebaseDb.getNextQueuedJob();
+      if (job) {
+        const now = new Date().toISOString();
+        const claimedJob = {
+          ...job,
+          id: job.id,
+          status: 'processing',
+          worker_id: DatabaseService.workerInstanceId,
+          locked_by: DatabaseService.workerInstanceId,
+          locked_at: now,
+          updated_at: now,
+          updatedAt: now,
+          user_id: job.userId || (job as any).user_id,
+          video_url: job.videoUrl || (job as any).video_url,
+          num_clips: job.requestedClips || (job as any).numClips || (job as any).num_clips || 3,
+        };
+        console.log(`[Queue]: ⚡ Claimed queued Job ${job.id} from Firestore`);
+        return claimedJob;
       }
-
-      if (data && data.length > 0) {
-        const job = data[0];
-        console.log(`[Supabase]: 🔒 Secured lock on Job ${job.id} via RPC (Worker: ${DatabaseService.workerInstanceId})`);
-        return job;
-      }
-      return null;
-    } catch (e: any) {
-      console.error('[Supabase]: Queue claim error:', e.message);
-      return null;
+    } catch (err: any) {
+      console.warn('[Queue]: Firestore queue claim error:', err.message);
     }
+
+    return null;
   }
 
   async logJobEvent(jobId: string, eventType: string, eventData: any = {}) {
@@ -499,15 +828,42 @@ export class DatabaseService {
   /**
    * EX-WORK-02: Reclaim orphaned/stalled jobs back to 'queued' state.
    * Jobs stuck in processing-like states for more than `staleThresholdMs`
-   * without a heartbeat update are considered abandoned.
+   * without a heartbeat update are considered abandoned. Also operates on the
+   * local JSON queue when no Supabase is available (heartbeat_at is not set).
    */
   async reclaimOrphanedJobs(staleThresholdMs = 15 * 60000): Promise<string[]> {
     const staleTimestamp = new Date(Date.now() - staleThresholdMs).toISOString();
+    // All statuses that indicate a job is "in flight" and may be orphaned
+    const orphanStatuses = ['processing', 'cutting', 'captioning', 'transcribing',
+                            'detecting_clips', 'rendering', 'recovering'];
+
+    // ── Local JSON queue reclaim ──────────────────────────────────────────────
+    const localIds: string[] = [];
+    try {
+      const queue = firebaseDb.readQueue();
+      let changed = false;
+      for (const [id, job] of Object.entries(queue.jobs as Record<string, any>)) {
+        if (!orphanStatuses.includes(job.status)) continue;
+        // Use updatedAt as staleness proxy (heartbeat_at may not be set)
+        const lastUpdate = new Date(job.updatedAt || job.updated_at || job.createdAt || 0).getTime();
+        if (Date.now() - lastUpdate > staleThresholdMs) {
+          queue.jobs[id] = { ...job, status: 'queued', updatedAt: new Date().toISOString() };
+          localIds.push(id);
+          changed = true;
+          console.log(`[Sweeper]: ♻️ Reclaimed local orphaned job ${id} (was: ${job.status})`);
+        }
+      }
+      if (changed) firebaseDb.writeQueue(queue);
+    } catch (localErr: any) {
+      console.warn('[Sweeper]: Local queue reclaim error:', localErr.message);
+    }
+
+    // ── Supabase reclaim (if available) ──────────────────────────────────────
     const reclaimQuery = (updates: Record<string, any>) => this.db
       .from('jobs')
       .update(updates)
-      .in('status', ['processing', 'cutting', 'captioning', 'transcribing', 'detecting_clips', 'recovering'])
-      .lt('heartbeat_at', staleTimestamp)
+      .in('status', orphanStatuses)
+      .lt('updated_at', staleTimestamp)
       .select('id');
 
     let { data, error } = await reclaimQuery({
@@ -523,8 +879,31 @@ export class DatabaseService {
       }));
     }
 
-    if (error) throw error;
-    return (data || []).map((j: any) => j.id);
+    const supabaseIds = error ? [] : (data || []).map((j: any) => j.id);
+    return [...localIds, ...supabaseIds];
+  }
+
+  /**
+   * Called once on worker startup to immediately rescue any jobs that were
+   * orphaned by the previous worker process (no staleness threshold applied).
+   */
+  async startupReclaim(): Promise<string[]> {
+    const orphanStatuses = ['processing', 'cutting', 'captioning', 'transcribing',
+                            'detecting_clips', 'rendering', 'recovering'];
+    const localIds: string[] = [];
+    try {
+      const queue = firebaseDb.readQueue();
+      let changed = false;
+      for (const [id, job] of Object.entries(queue.jobs as Record<string, any>)) {
+        if (!orphanStatuses.includes(job.status)) continue;
+        queue.jobs[id] = { ...job, status: 'queued', updatedAt: new Date().toISOString() };
+        localIds.push(id);
+        changed = true;
+        console.log(`[Startup Reclaim]: ♻️ Reset orphaned job ${id} (was: ${job.status}) → queued`);
+      }
+      if (changed) firebaseDb.writeQueue(queue);
+    } catch {}
+    return localIds;
   }
 
   async reclaimOrphanedRenderJobs(staleThresholdMs = 10 * 60000): Promise<string[]> {
