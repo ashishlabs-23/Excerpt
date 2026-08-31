@@ -13,10 +13,10 @@
 *   **Generation**: 85%
 *   **Voiceover**: 95%
 *   **Deployment Architecture**: 
-    *   **Frontend**: Web App hosted on **Netlify** (auto-deployed via `git push`).
-    *   **Backend**: API and Workers hosted on **Render** (`https://excerpt-api.onrender.com`), triggered by `git push` to `master`.
-    *   **Database**: **Supabase** (PostgreSQL) acts as the single source of truth for the job state machine.
-    *   **Storage**: **Backblaze B2** is fully integrated using a private bucket approach. `@aws-sdk/s3-request-presigner` is used for secure signed URLs, Object Existence Checks, and Bucket Purging, avoiding Supabase storage limits.
+    *   **Frontend**: Web App hosted on Next.js (`http://localhost:3000`).
+    *   **Backend**: API and Workers run locally (`http://localhost:8010`), with local queue and local storage fallbacks.
+    *   **Database**: Local Queue (`temp/active_queue.json`) & Supabase.
+    *   **Storage**: Local static server (`http://localhost:8010/temp/...`) with Backblaze/Firebase cloud support.
 
 **Pending Focus Areas:**
 *   **Production Hardening Phase (CURRENT)**: We are in a strict **Feature Freeze**. No new AI features or UI components. Focus is entirely on proving reliability, CI/CD, performance benchmarking, and zero-drift database reconciliation.

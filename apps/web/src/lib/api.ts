@@ -1,7 +1,10 @@
-import { VideoJob } from '@excerpt/clipping-core';
-import { ErrorType } from '../components/primitives/ErrorState';
+import { getSupabaseBrowserClient } from "./supabase";
 
 const LOCAL_API_URL = "http://localhost:8010";
+
+export function getApiBaseUrl(): string {
+  return (process.env.NEXT_PUBLIC_API_URL || LOCAL_API_URL).replace(/\/$/, "");
+}
 
 export const API_BASE_URL = (
   process.env.NEXT_PUBLIC_API_URL || LOCAL_API_URL
@@ -14,33 +17,55 @@ export class AuthRequiredError extends Error {
   }
 }
 
-export function apiUrl(path: string): string {
-  return `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+export function apiUrl(path: string) {
+  const base = getApiBaseUrl();
+  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 export async function getAccessToken(): Promise<string | null> {
-  try {
-    const { getFirebaseAuth } = await import("./firebase");
-    const auth = getFirebaseAuth();
-    if (auth?.currentUser) {
-      const idToken = await auth.currentUser.getIdToken();
-      if (idToken) return idToken;
-    }
-  } catch (err) {
-    // Ignore and fallback
-  }
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) return null;
 
-  return null;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return null;
+
+    const expiresAtMs = session.expires_at ? session.expires_at * 1000 : 0;
+    if (expiresAtMs && expiresAtMs - Date.now() < 60_000) {
+      const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+      if (!refreshError && refreshed.session?.access_token) {
+        return refreshed.session.access_token;
+      }
+    }
+
+    return session.access_token;
+  } catch (err) {
+    console.warn('[api]: Failed to get session token:', err);
+    return null;
+  }
 }
 
 export async function authHeaders(init?: HeadersInit): Promise<Headers> {
   const headers = new Headers(init);
   const token = await getAccessToken();
 
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
+  // Temporarily bypass frontend auth check for live testing
+  // if (!token) {
+  //   throw new AuthRequiredError();
+  // }
+
+  headers.set("Authorization", `Bearer ${token || 'mock-token'}`);
   return headers;
+}
+
+/**
+ * @deprecated Use authHeaders() or authFetch() so requests carry the Supabase JWT.
+ */
+export function authorizedHeaders(headers?: HeadersInit) {
+  console.warn(
+    "[api]: authorizedHeaders() is deprecated and does not attach a user JWT. Use authFetch() instead.",
+  );
+  return new Headers(headers);
 }
 
 export async function authFetch(path: string, init?: RequestInit): Promise<Response> {
@@ -61,6 +86,11 @@ export async function getClipPlayUrl(clipId: string): Promise<string> {
   return apiUrl(playUrl);
 }
 
+/**
+ * Gets a short-lived direct download URL for a clip.
+ * The browser opens this URL natively — no blob buffering needed.
+ * The API sets Content-Disposition: attachment with the correct filename.
+ */
 export async function getDirectDownloadUrl(clipId: string): Promise<string> {
   const response = await authFetch(`/api/video/download-token/${clipId}`, { method: "POST" });
   const data = await response.json();
@@ -90,6 +120,7 @@ export async function downloadAuthenticatedClip(
   }
 
   const arrayBuffer = await response.arrayBuffer();
+  // Force video/mp4 MIME type so the browser always saves as a playable file.
   const blob = new Blob([arrayBuffer], { type: "video/mp4" });
   const objectUrl = URL.createObjectURL(blob);
 
@@ -101,106 +132,45 @@ export async function downloadAuthenticatedClip(
   document.body.appendChild(anchor);
   anchor.click();
 
+  // Defer cleanup so the browser has time to start the download
   window.setTimeout(() => {
     anchor.remove();
     URL.revokeObjectURL(objectUrl);
   }, 5000);
 }
 
+export type ApiResult<T> =
+  | { success: true; data: T; error?: never }
+  | { success: false; error: { statusCode: number; message: string }; data?: never };
+
+export const apiClient = {
+  createJob: async (videoUrl: string, numClips: number = 3): Promise<ApiResult<any>> => {
+    try {
+      const response = await authFetch("/api/video/generate-clips", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoUrl, numClips }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        return {
+          success: false,
+          error: {
+            statusCode: response.status,
+            message: data.error || (data.errors ? data.errors.map((e: any) => e.msg).join(", ") : `Request failed with status ${response.status}`),
+          },
+        };
+      }
+      return { success: true, data: { id: data.jobId, ...data } };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: { statusCode: 500, message: err.message || "Network error occurred" },
+      };
+    }
+  },
+};
+
 export const isPurgeEnabled =
   process.env.NEXT_PUBLIC_ENABLE_PURGE === "true" ||
   process.env.NODE_ENV !== "production";
-
-export interface ApiError {
-  type: ErrorType;
-  message: string;
-  statusCode?: number;
-  rawDetails?: unknown;
-}
-
-export type Result<T> = 
-  | { success: true; data: T; error?: undefined }
-  | { success: false; error: ApiError; data?: undefined };
-
-export class ExcerptApiClient {
-  private baseUrl: string;
-
-  constructor(baseUrl = API_BASE_URL) {
-    this.baseUrl = baseUrl;
-  }
-
-  private async request<T>(endpoint: string, options?: RequestInit): Promise<Result<T>> {
-    try {
-      const response = await authFetch(endpoint, {
-        headers: {
-          'Content-Type': 'application/json',
-          ...options?.headers,
-        },
-        ...options,
-      });
-
-      if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
-          return {
-            success: false,
-            error: {
-              type: 'AUTH_RLS_DENIED',
-              message: 'Authentication failed or resource access denied by RLS policy.',
-              statusCode: response.status
-            }
-          };
-        }
-
-        return {
-          success: false,
-          error: {
-            type: 'SERVER_ERROR',
-            message: `Server returned error status ${response.status}`,
-            statusCode: response.status
-          }
-        };
-      }
-
-      const data = await response.json();
-      return { success: true, data };
-
-    } catch (err: any) {
-      if (err instanceof SyntaxError) {
-        return {
-          success: false,
-          error: {
-            type: 'UNKNOWN',
-            message: 'Failed to parse JSON response payload from backend.',
-            rawDetails: err
-          }
-        };
-      }
-
-      return {
-        success: false,
-        error: {
-          type: 'NETWORK_ERROR',
-          message: err?.message || 'Network fetch failure encountered.',
-          rawDetails: err
-        }
-      };
-    }
-  }
-
-  async getJob(jobId: string): Promise<Result<VideoJob>> {
-    return this.request<VideoJob>(`/jobs/${jobId}`);
-  }
-
-  async listJobs(): Promise<Result<VideoJob[]>> {
-    return this.request<VideoJob[]>('/jobs');
-  }
-
-  async createJob(inputUrl: string, requestedClips: number): Promise<Result<VideoJob>> {
-    return this.request<VideoJob>('/jobs', {
-      method: 'POST',
-      body: JSON.stringify({ inputUrl, requestedClips })
-    });
-  }
-}
-
-export const apiClient = new ExcerptApiClient();

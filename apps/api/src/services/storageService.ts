@@ -85,29 +85,45 @@ export class StorageService {
     }
 
     // 2. Try B2 Upload (if initialized)
-    // B2 requires ContentLength — without it, x-amz-decoded-content-length is
-    // undefined and the upload throws. Always stat the file first.
     if (this.s3) {
       try {
         console.log(`[StorageService]: Attempting B2 upload for ${key}...`);
-        const fileSize = fs.statSync(filePath).size;
-        const fileStream = fs.createReadStream(filePath);
-        await this.s3.send(new PutObjectCommand({
+        const fileBuffer = fs.readFileSync(filePath);
+        const uploadPromise = this.s3.send(new PutObjectCommand({
           Bucket: this.bucket,
           Key: key,
-          Body: fileStream,
+          Body: fileBuffer,
           ContentType: contentType,
-          ContentLength: fileSize,
+          ContentLength: fileBuffer.length,
         }));
+
+        await Promise.race([
+          uploadPromise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('B2_UPLOAD_TIMEOUT')), 8000))
+        ]);
 
         const region = process.env.B2_REGION || "us-west-004";
         const publicUrl = `https://${this.bucket}.s3.${region}.backblazeb2.com/${key}`;
         console.log(`[StorageService]: B2 Upload Success -> ${publicUrl}`);
         return publicUrl;
       } catch (error: any) {
-        console.error(`[StorageService]: Cloud storage upload failed: ${error.message}`);
-        throw new Error(`Cloud storage upload failed for ${key}: ${error.message}`);
+        console.warn(`[StorageService]: Cloud storage upload fallback: ${error.message}`);
       }
+    }
+
+    // 3. Local fallback for development / offline environments
+    try {
+      const port = process.env.PORT === '3000' ? 8010 : (process.env.PORT || 8010);
+      const destPath = path.resolve(process.cwd(), 'temp', key);
+      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      if (path.resolve(filePath) !== destPath) {
+        fs.copyFileSync(filePath, destPath);
+      }
+      const localUrl = `http://localhost:${port}/temp/${key}`;
+      console.log(`[StorageService]: Local static fallback -> ${localUrl}`);
+      return localUrl;
+    } catch (localErr: any) {
+      console.error(`[StorageService]: Local fallback failed:`, localErr.message);
     }
 
     throw new Error(`No cloud storage provider available for ${key}`);
@@ -143,10 +159,17 @@ export class StorageService {
       }
     }
 
-    return `https://${this.bucket}.s3.${region}.backblazeb2.com/${key}`;
+    const port = process.env.PORT === '3000' ? 8010 : (process.env.PORT || 8010);
+    return `http://localhost:${port}/temp/${key}`;
   }
 
   async checkObjectExists(key: string): Promise<boolean> {
+    // 0. Check local filesystem first
+    try {
+      const localPath = path.resolve(process.cwd(), 'temp', key);
+      if (fs.existsSync(localPath)) return true;
+    } catch {}
+
     const firebaseBucket = this.getFirebaseBucket();
     if (firebaseBucket) {
       try {

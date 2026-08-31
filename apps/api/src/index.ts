@@ -79,7 +79,7 @@ function spawnWorker(scriptPath: string, label: string): void {
     console.log(`[WorkerManager]: ▶ Starting [${label}]`);
 
     const isTs = scriptPath.endsWith('.ts');
-    const cmd = isTs ? 'npx' : 'node';
+    const cmd = process.platform === 'win32' ? (isTs ? 'npx.cmd' : 'node') : (isTs ? 'npx' : 'node');
     const args = isTs ? ['tsx', scriptPath] : [scriptPath];
 
     const child = spawn(cmd, args, {
@@ -197,6 +197,8 @@ async function bootstrap() {
   app.use(bodyParser.json());
   app.use(bodyParser.urlencoded({ extended: true }));
   app.use(requestLogger);
+  app.use('/temp', express.static(path.resolve(process.cwd(), 'temp')));
+  app.use('/jobs', express.static(path.resolve(process.cwd(), 'temp/jobs')));
 
   // Routes
   app.use('/api/video', videoRoutes);
@@ -303,8 +305,8 @@ async function bootstrap() {
 
   // 3. Start listening — workers only spawn AFTER Express is confirmed ready.
   //    This ensures clean startup logs and avoids race conditions with Supabase/B2 init.
-  server.listen(Number(PORT), () => {
-    console.log(`[Server]: Excerpt API is running on port ${PORT}`);
+  server.listen(Number(PORT), '0.0.0.0', () => {
+    console.log(`[Server]: Excerpt API is running on 0.0.0.0:${PORT}`);
 
     // Register graceful shutdown handler (propagates SIGTERM to all children)
     setupGracefulShutdown();

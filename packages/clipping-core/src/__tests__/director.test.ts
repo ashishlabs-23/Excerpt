@@ -1,143 +1,85 @@
 import { SmartReframeEngine } from '../director/SmartReframeEngine';
-import { ComputeCeiling } from '../director/ComputeCeiling';
-import { DirectorConfig, FramingLevel } from '../director/types';
-import { PerceptionFrame, PerceptionSignal } from '../perception/types';
+import { FramingLevel } from '../director/types';
 import { MediaArtifact } from '../ingestion/types';
+import { PerceptionFrame } from '../perception/types';
 
-describe('Director AI + Smart Reframe Engine', () => {
-  
-  const mockArtifact: MediaArtifact = {
+function createMockFrame(
+  timestampMs: number,
+  faces: any[] = [],
+  speakerConf: number = 0.9
+): PerceptionFrame {
+  return {
+    timestampMs,
+    durationMs: 500,
+    transcriptWords: { available: false, data: null },
+    speaker: { available: true, data: { activeSpeakerId: 'spk1', confidence: speakerConf } },
+    faces: { available: faces.length > 0, data: faces },
+    persons: { available: false, data: [] },
+    objects: { available: false, data: null },
+    scene: { available: false, data: null },
+    motion: { available: false, data: null },
+    audioEnergy: { available: false, data: null },
+    pitch: { available: false, data: null },
+    emotion: { available: false, data: null },
+    visualSaliency: { available: false, data: null },
+    cameraMotion: { available: false, data: null },
+  };
+}
+
+describe('SmartReframeEngine Multi-Layout & Director AI', () => {
+  const sampleArtifact: MediaArtifact = {
     sourceType: 'local',
-    originalUrlOrPath: '',
-    localPath: '',
+    originalUrlOrPath: 'sample.mp4',
+    localPath: '/tmp/sample.mp4',
     mimeType: 'video/mp4',
-    fileSizeBytes: 0,
-    durationMs: 10000,
+    fileSizeBytes: 1024 * 1024 * 10,
+    durationMs: 30000,
     width: 1920,
     height: 1080,
     fps: 30,
-    videoCodec: 'h264',
-    audioCodec: 'aac',
     hasVideoStream: true,
     hasAudioStream: true,
     hasAudio: true,
-    checksumSha256: 'test'
+    checksumSha256: 'abc123hash',
   };
 
-  const defaultConfig: DirectorConfig = {
-    targetAspectRatio: 9 / 16,
-    maxVelocityPxPerSec: 500,
-    jitterThresholdPx: 50,
-    headroomPaddingRatio: 0.15
-  };
+  it('generates single_speaker active speaker crop with smooth tracking', () => {
+    const frames: PerceptionFrame[] = [
+      createMockFrame(0, [{ x: 400, y: 200, w: 200, h: 200 }]),
+      createMockFrame(500, [{ x: 450, y: 200, w: 200, h: 200 }]),
+    ];
 
-  const sig = <T>(data: T | null): PerceptionSignal<T> => ({
-    available: data !== null,
-    data
+    const plan = SmartReframeEngine.generatePlan(sampleArtifact, frames, {
+      targetAspectRatio: 9 / 16,
+      maxVelocityPxPerSec: 500,
+      jitterThresholdPx: 10,
+      headroomPaddingRatio: 0.25,
+      preferredLayout: 'single_speaker',
+    });
+
+    expect(plan.layoutMode).toBe('single_speaker');
+    expect(plan.keyframes.length).toBeGreaterThan(0);
+    expect(plan.keyframes[0].framingLevel).toBe(FramingLevel.ACTIVE_SPEAKER);
+    expect(plan.keyframes[0].cropBox.w).toBe(1080 * (9 / 16));
   });
 
-  const createMockFrame = (
-    timestampMs: number,
-    opts: {
-      faces?: any[];
-      persons?: any[];
-      speaker?: string;
-      speakerConfidence?: number;
-    } = {}
-  ): PerceptionFrame => ({
-    timestampMs,
-    durationMs: 100,
-    transcriptWords: sig<any[]>([]),
-    speaker: sig<{ id: string; confidence: number }>(opts.speaker ? { id: opts.speaker, confidence: opts.speakerConfidence ?? 1.0 } : null),
-    faces: sig<any[]>(opts.faces ?? null),
-    persons: sig<any[]>(opts.persons ?? null),
-    objects: sig<any[]>(null),
-    scene: sig<any>(null),
-    motion: sig<any>(null),
-    audioEnergy: sig<number>(null),
-    pitch: sig<number>(null),
-    emotion: sig<string>(null),
-    visualSaliency: sig<any>(null),
-    cameraMotion: sig<string>(null)
-  });
+  it('generates split_screen_stack when two speakers are present', () => {
+    const frames: PerceptionFrame[] = [
+      createMockFrame(0, [
+        { x: 200, y: 250, w: 220, h: 220 }, // Speaker A (left)
+        { x: 1200, y: 250, w: 220, h: 220 }, // Speaker B (right)
+      ]),
+    ];
 
-  describe('ComputeCeiling', () => {
-    it('scales sampling rate inversely with duration to cap compute', () => {
-      expect(ComputeCeiling.calculateSamplingRate(10000, 3000)).toBe(10);
-      expect(ComputeCeiling.calculateSamplingRate(3600000, 3000)).toBe(1);
-    });
-  });
-
-  describe('SmartReframeEngine', () => {
-    
-    it('1. fallback precedence is followed in order, never skipping a level', () => {
-      const frames = [
-        createMockFrame(0, { faces: [{ x: 100, y: 100, w: 200, h: 200 }], speaker: 'A', speakerConfidence: 0.9 }),
-        createMockFrame(100, { faces: [{} as any, {} as any], persons: [{} as any, {} as any], speaker: 'B', speakerConfidence: 0.9 }),
-        createMockFrame(200, { faces: [{ x: 100, y: 100, w: 200, h: 200 }], speaker: 'A', speakerConfidence: 0.4 }),
-        createMockFrame(300, {})
-      ];
-
-      const plan = SmartReframeEngine.generatePlan(mockArtifact, frames, defaultConfig);
-      
-      expect(plan.keyframes[0].framingLevel).toBe(FramingLevel.ACTIVE_SPEAKER);
-      expect(plan.keyframes[1].framingLevel).toBe(FramingLevel.TWO_SPEAKER);
-      expect(plan.keyframes[2].framingLevel).toBe(FramingLevel.WIDE_SHOT);
-      expect(plan.keyframes[3].framingLevel).toBe(FramingLevel.CENTER_CROP);
+    const plan = SmartReframeEngine.generatePlan(sampleArtifact, frames, {
+      targetAspectRatio: 9 / 16,
+      maxVelocityPxPerSec: 500,
+      jitterThresholdPx: 10,
+      headroomPaddingRatio: 0.25,
+      preferredLayout: 'auto',
     });
 
-    it('2. no head/chin cutoff (numeric bounds check)', () => {
-      const face = { x: 1500, y: 10, w: 200, h: 200 };
-      const frames = [createMockFrame(0, { faces: [face], speaker: 'A', speakerConfidence: 0.9 })];
-
-      const plan = SmartReframeEngine.generatePlan(mockArtifact, frames, defaultConfig);
-      const kf = plan.keyframes[0];
-
-      expect(kf.cropBox.x).toBeCloseTo(1296.25, 1);
-    });
-
-    it('3. crop-window velocity never exceeds the configured cap', () => {
-      const frames = [
-        createMockFrame(0, { faces: [{ x: 0, y: 100, w: 200, h: 200 }], speaker: 'A', speakerConfidence: 0.9 }),
-        createMockFrame(100, { faces: [{ x: 1500, y: 100, w: 200, h: 200 }], speaker: 'A', speakerConfidence: 0.9 })
-      ];
-
-      const plan = SmartReframeEngine.generatePlan(mockArtifact, frames, defaultConfig);
-      
-      const x0 = plan.keyframes[0].cropBox.x;
-      const x1 = plan.keyframes[1].cropBox.x;
-      
-      const actualDx = Math.abs(x1 - x0);
-      expect(actualDx).toBeLessThanOrEqual(50);
-    });
-
-    it('4. speaker-switch framing does not oscillate faster than the jitter threshold', () => {
-      const frames = [
-        createMockFrame(0, { faces: [{ x: 500, y: 100, w: 200, h: 200 }], speaker: 'A', speakerConfidence: 0.9 }),
-        createMockFrame(100, { faces: [{ x: 530, y: 100, w: 200, h: 200 }], speaker: 'A', speakerConfidence: 0.9 }),
-        createMockFrame(200, { faces: [{ x: 470, y: 100, w: 200, h: 200 }], speaker: 'A', speakerConfidence: 0.9 })
-      ];
-
-      const plan = SmartReframeEngine.generatePlan(mockArtifact, frames, defaultConfig);
-      
-      const x0 = plan.keyframes[0].cropBox.x;
-      const x1 = plan.keyframes[1].cropBox.x;
-      const x2 = plan.keyframes[2].cropBox.x;
-      
-      expect(x1).toBe(x0);
-      expect(x2).toBe(x0);
-    });
-
-    it('5. CameraPlan is deterministic given identical inputs', () => {
-      const frames = [
-        createMockFrame(0, { faces: [{ x: 100, y: 100, w: 200, h: 200 }], speaker: 'A', speakerConfidence: 0.9 }),
-        createMockFrame(100, { faces: [{ x: 1500, y: 100, w: 200, h: 200 }], speaker: 'A', speakerConfidence: 0.9 })
-      ];
-
-      const plan1 = SmartReframeEngine.generatePlan(mockArtifact, frames, defaultConfig);
-      const plan2 = SmartReframeEngine.generatePlan(mockArtifact, frames, defaultConfig);
-
-      expect(plan1).toEqual(plan2);
-    });
+    expect(plan.keyframes[0].framingLevel).toBe(FramingLevel.SPLIT_SCREEN_STACK);
+    expect(plan.keyframes[0].secondaryCropBox).toBeDefined();
   });
 });

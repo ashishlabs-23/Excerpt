@@ -625,14 +625,18 @@ router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
     const firestoreJobs = await firebaseDb.listJobsForUser(userId, 15);
     if (firestoreJobs && firestoreJobs.length >= 0) {
       // Normalize Firestore field names to match frontend expectations
-      const normalized = firestoreJobs.map((j: any) => ({
-        ...j,
-        id: j.id,
-        user_id: j.userId || j.user_id,
-        video_url: j.videoUrl || j.video_url,
-        num_clips: j.numClips || j.num_clips,
-        created_at: j.createdAt || j.created_at,
-        updated_at: j.updatedAt || j.updated_at,
+      const normalized = await Promise.all(firestoreJobs.map(async (j: any) => {
+        const clips = await firebaseDb.getClipsForJob(j.id);
+        return {
+          ...j,
+          id: j.id,
+          user_id: j.userId || j.user_id,
+          video_url: j.videoUrl || j.video_url,
+          num_clips: j.numClips || j.num_clips,
+          created_at: j.createdAt || j.created_at,
+          updated_at: j.updatedAt || j.updated_at,
+          clips: (clips && clips.length > 0) ? clips : (j.clips || []),
+        };
       }));
       return res.json(normalized);
     }
@@ -673,7 +677,7 @@ router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
 
 router.get('/jobs/active', requireUserJWT, async (req: Request, res: Response) => {
   const userId = req.user.id || req.user.uid;
-  const activeStatuses = ['queued', 'processing', 'retrying', 'transcribing', 'detecting_clips', 'recovering', 'cutting', 'captioning'];
+  const activeStatuses = ['queued', 'processing', 'retrying', 'transcribing', 'detecting_clips', 'recovering', 'cutting', 'captioning', 'rendering'];
 
   // 1. Try Firestore (primary)
   try {

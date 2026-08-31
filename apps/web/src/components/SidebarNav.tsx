@@ -16,22 +16,14 @@ export const SidebarNav: React.FC = () => {
     // Poll system health every 10 seconds
     const fetchHealth = async () => {
       try {
-        const res = await authFetch('/api/system/live');
+        const res = await authFetch('/api/system/health');
         if (res.ok) {
           const data = await res.json();
-          setCapacity(typeof data.capacity === 'number' ? data.capacity : 92);
-          setStatus(data.status || 'active');
-        } else {
-          const hRes = await authFetch('/api/system/health');
-          if (hRes.ok) {
-            const hData = await hRes.json();
-            setCapacity(typeof hData.capacity === 'number' ? hData.capacity : 92);
-            setStatus(hData.status || 'active');
-          }
+          setCapacity(data.capacity);
+          setStatus(data.status);
         }
       } catch (err) {
-        setStatus('active');
-        setCapacity(92);
+        setStatus('offline');
       }
     };
     

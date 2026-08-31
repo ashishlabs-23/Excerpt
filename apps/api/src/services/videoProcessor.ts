@@ -118,6 +118,10 @@ const highQualityEncodeArgs = () => {
     '-profile:v', 'high',
     '-level', '4.2',
     '-pix_fmt', 'yuv420p',
+    '-color_primaries', 'bt709',
+    '-color_trc', 'bt709',
+    '-colorspace', 'bt709',
+    '-vsync', 'cfr',
     '-c:a', 'aac',
     '-b:a', '320k',
     '-ar', '48000',
@@ -607,9 +611,13 @@ export class VideoProcessor {
 
         return new Promise<string>((resolve, reject) => {
           console.log(`[VideoProcessor]: Cutting clip with ${bin} at ${start}s -> ${outputPath}`);
+          const preSeek = Math.max(0, start - 3);
+          const fineSeek = Number((start - preSeek).toFixed(3));
+
           const args = [
-            '-ss', String(start),
+            ...(preSeek > 0 ? ['-ss', String(preSeek)] : []),
             '-i', inputPath,
+            ...(fineSeek > 0 ? ['-ss', String(fineSeek)] : []),
             '-t', String(duration),
             '-vf', cropFilter,
             ...highQualityEncodeArgs(),
@@ -791,5 +799,120 @@ export class VideoProcessor {
       });
     });
   }
+
+  /**
+   * Overlays contextual B-roll video clips with smooth fades onto a 9:16 base vertical video.
+   */
+  async overlayBRoll(
+    inputPath: string,
+    bRollClips: Array<{ videoPath: string; startSec: number; durationSec: number; layout?: string }>,
+    outputPath: string
+  ): Promise<string> {
+    if (!bRollClips || bRollClips.length === 0) {
+      fs.copyFileSync(inputPath, outputPath);
+      return outputPath;
+    }
+
+    const bin = getBinaryPath('ffmpeg');
+    const inputs: string[] = ['-i', inputPath];
+    for (const clip of bRollClips) {
+      inputs.push('-i', clip.videoPath);
+    }
+
+    let filterGraph = '';
+    let currentBase = '[0:v]';
+
+    for (let i = 0; i < bRollClips.length; i++) {
+      const clip = bRollClips[i];
+      const inputIdx = i + 1;
+      const overlayOut = `[ovl${i}]`;
+      const nextBase = i === bRollClips.length - 1 ? '[outv]' : `[base${i}]`;
+
+      const start = clip.startSec;
+      const end = clip.startSec + clip.durationSec;
+      const fadeDuration = 0.3;
+
+      let scaledBRoll = `[${inputIdx}:v]scale=960:540:force_original_aspect_ratio=decrease,format=yuva420p,fade=t=in:st=0:d=${fadeDuration}:alpha=1,fade=t=out:st=${clip.durationSec - fadeDuration}:d=${fadeDuration}:alpha=1${overlayOut}`;
+      let overlayX = '(W-w)/2';
+      let overlayY = clip.layout === 'picture_in_picture_top' ? '180' : '(H-h)/2';
+
+      if (clip.layout === 'full_cutaway') {
+        scaledBRoll = `[${inputIdx}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,format=yuva420p,fade=t=in:st=0:d=${fadeDuration}:alpha=1,fade=t=out:st=${clip.durationSec - fadeDuration}:d=${fadeDuration}:alpha=1${overlayOut}`;
+        overlayX = '0';
+        overlayY = '0';
+      }
+
+      filterGraph += (filterGraph ? ';' : '') + `${scaledBRoll};${currentBase}${overlayOut}overlay=${overlayX}:${overlayY}:enable='between(t,${start},${end})'${nextBase}`;
+      currentBase = nextBase;
+    }
+
+    const args = [
+      ...inputs,
+      '-filter_complex', filterGraph,
+      '-map', '[outv]',
+      '-map', '0:a?',
+      ...highQualityEncodeArgs(),
+      '-c:a', 'copy',
+      '-y',
+      outputPath,
+    ];
+
+    console.log(`[VideoProcessor]: Applying ${bRollClips.length} AI B-Roll contextual overlays -> ${outputPath}`);
+    return new Promise((resolve, reject) => {
+      execFile(bin, args, { maxBuffer: 1024 * 1024 * 500, timeout: 1000 * 60 * 10 }, (error, _stdout, stderr) => {
+        if (error) {
+          console.error('[VideoProcessor]: FFmpeg B-Roll overlay error:', stderr);
+          return reject(new Error(`FFmpeg B-roll overlay failed: ${error.message}`));
+        }
+        resolve(outputPath);
+      });
+    });
+  }
+
+  /**
+   * Adds an editorial top hook card and an animated bottom progress bar to the vertical video.
+   */
+  async addHookAndProgressBar(
+    inputPath: string,
+    outputPath: string,
+    hookText: string,
+    totalDurationSec: number
+  ): Promise<string> {
+    const bin = getBinaryPath('ffmpeg');
+    const safeHook = hookText.replace(/'/g, '').replace(/:/g, ' - ');
+    const fontPath = 'C\\:/Windows/Fonts/arial.ttf';
+    const fontOption = fs.existsSync('C:/Windows/Fonts/arial.ttf') ? `:fontfile='${fontPath}'` : '';
+
+    const dur = Math.max(0.1, totalDurationSec);
+    const filterGraph =
+      // 1. Top Hook Banner for first 4.5 seconds
+      `drawbox=x=60:y=80:w=960:h=85:color=black@0.8:t=fill:enable='lt(t,4.5)',` +
+      `drawbox=x=60:y=80:w=12:h=85:color=red@1.0:t=fill:enable='lt(t,4.5)',` +
+      `drawtext=text='${safeHook}'${fontOption}:fontsize=34:fontcolor=white:x=(w-text_w)/2+10:y=105:enable='lt(t,4.5)',` +
+      // 2. Animated Progress Bar at bottom (y=1900)
+      `drawbox=x=0:y=1905:w=1080:h=15:color=white@0.2:t=fill,` +
+      `drawbox=x=0:y=1905:w='1080*(t/${dur})':h=15:color=yellow@0.95:t=fill`;
+
+    const args = [
+      '-i', inputPath,
+      '-vf', filterGraph,
+      ...highQualityEncodeArgs(),
+      '-c:a', 'copy',
+      '-y',
+      outputPath,
+    ];
+
+    console.log(`[VideoProcessor]: Adding Hook Card ("${hookText}") & Animated Progress Bar -> ${outputPath}`);
+    return new Promise((resolve, reject) => {
+      execFile(bin, args, { maxBuffer: 1024 * 1024 * 500, timeout: 1000 * 60 * 10 }, (error, _stdout, stderr) => {
+        if (error) {
+          console.error('[VideoProcessor]: Hook & Progress bar render error:', stderr);
+          return reject(new Error(`Hook & Progress bar render failed: ${error.message}`));
+        }
+        resolve(outputPath);
+      });
+    });
+  }
 }
+
 

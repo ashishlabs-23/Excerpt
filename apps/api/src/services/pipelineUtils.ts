@@ -355,7 +355,7 @@ export function validateGeneratedFile(filePath?: string | null) {
 }
 
 /**
- * Snaps raw AI timestamps to the nearest transcript segment boundaries.
+ * Snaps raw AI timestamps to the nearest transcript segment and acoustic boundaries.
  * Prevents mid-sentence cuts, eliminates dead air on hook start, and adds breathable ending padding.
  */
 export function snapToSegmentBoundary(
@@ -368,23 +368,42 @@ export function snapToSegmentBoundary(
     return { startMs: rawStartMs, endMs: rawEndMs };
   }
 
-  // Find segment whose start is closest to rawStart
-  const startSeg = segments.reduce((prev, curr) =>
-    Math.abs(curr.start_ms - rawStartMs) < Math.abs(prev.start_ms - rawStartMs) ? curr : prev
+  // 1. Check if rawStart cuts inside an active segment (Zero-Truncation Guard)
+  const intersectingStart = segments.find(
+    (s) => rawStartMs > s.start_ms && rawStartMs < s.end_ms
   );
 
-  // Find segment whose end is closest to rawEnd
-  const endSeg = segments.reduce((prev, curr) =>
-    Math.abs(curr.end_ms - rawEndMs) < Math.abs(prev.end_ms - rawEndMs) ? curr : prev
+  let tightStartMs = rawStartMs;
+  if (intersectingStart) {
+    // Cut is inside a segment -> Snap to beginning of segment with 150ms breath padding
+    tightStartMs = Math.max(0, intersectingStart.start_ms - 150);
+  } else {
+    // Find segment whose start is closest to rawStart
+    const startSeg = segments.reduce((prev, curr) =>
+      Math.abs(curr.start_ms - rawStartMs) < Math.abs(prev.start_ms - rawStartMs) ? curr : prev
+    );
+    tightStartMs = Math.max(0, startSeg.start_ms - 150);
+  }
+
+  // 2. Check if rawEnd cuts inside an active segment
+  const intersectingEnd = segments.find(
+    (s) => rawEndMs > s.start_ms && rawEndMs < s.end_ms
   );
 
-  // Punchy hook start: Max 50ms pre-roll to eliminate dead air before first spoken word
-  const tightStartMs = Math.max(0, startSeg.start_ms - 50);
-  // Breathable sentence completion: 300ms post-roll after final word
-  const breathableEndMs = endSeg.end_ms + Math.min(paddingMs, 350);
+  let breathableEndMs = rawEndMs;
+  if (intersectingEnd) {
+    // Complete the sentence + breathable padding
+    breathableEndMs = intersectingEnd.end_ms + Math.min(paddingMs, 350);
+  } else {
+    // Find segment whose end is closest to rawEnd
+    const endSeg = segments.reduce((prev, curr) =>
+      Math.abs(curr.end_ms - rawEndMs) < Math.abs(prev.end_ms - rawEndMs) ? curr : prev
+    );
+    breathableEndMs = endSeg.end_ms + Math.min(paddingMs, 350);
+  }
 
   return {
-    startMs: tightStartMs,
-    endMs: Math.max(tightStartMs + 10000, breathableEndMs),
+    startMs: Math.round(tightStartMs),
+    endMs: Math.max(Math.round(tightStartMs) + 10000, Math.round(breathableEndMs)),
   };
 }

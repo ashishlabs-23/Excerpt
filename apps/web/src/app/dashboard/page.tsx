@@ -42,7 +42,7 @@ export default function DashboardPage() {
   useEffect(() => {
     const safetyTimer = setTimeout(() => {
       setIsLoading(false);
-    }, 800);
+    }, 1000);
 
     const storedJobId = localStorage.getItem("lastJobId");
     if (storedJobId) {
@@ -51,6 +51,7 @@ export default function DashboardPage() {
       if (!minimized) {
         setShowProcessingOverlay(true);
       }
+      clearTimeout(safetyTimer);
       setIsLoading(false);
     } else {
       // Auto-detect any running job even if not started from this browser
@@ -58,12 +59,12 @@ export default function DashboardPage() {
         .then(r => r.json())
         .then((jobs: any[]) => {
           const now = Date.now();
-          const activeJob = jobs?.find((j: any) => {
+          const activeJob = Array.isArray(jobs) ? jobs.find(j => {
             if (TERMINAL_JOB_STATUSES.has(j.status)) return false;
             // Ignore orphaned jobs whose heartbeat or creation is older than 10 minutes
             const lastActiveAt = new Date(j.heartbeat_at || j.updated_at || j.created_at).getTime();
             return (now - lastActiveAt) < 10 * 60 * 1000;
-          });
+          }) : null;
           if (activeJob) {
             console.log('[Dashboard]: Auto-detected active job:', activeJob.id);
             localStorage.setItem('lastJobId', activeJob.id);
@@ -88,6 +89,8 @@ export default function DashboardPage() {
         setImportUrl(urlParam);
       }
     }
+
+    return () => clearTimeout(safetyTimer);
   }, []);
 
   const consecutive404s = React.useRef(0);

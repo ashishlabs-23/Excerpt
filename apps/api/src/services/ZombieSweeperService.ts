@@ -67,7 +67,7 @@ export class ZombieSweeperService {
         }
       }
 
-      // Transition 2: stale -> requeued
+      // Transition 2: stale -> queued
       const requeueThreshold = new Date(Date.now() - this.FAIL_THRESHOLD_MINUTES * 60000).toISOString();
       const { data: toRequeueJobs } = await supabase
         .from('jobs')
@@ -76,17 +76,17 @@ export class ZombieSweeperService {
         .lt('updated_at', requeueThreshold);
         
       if (toRequeueJobs && toRequeueJobs.length > 0) {
-        console.warn(`[ZombieSweeper]: Requeuing ${toRequeueJobs.length} stale jobs.`);
+        console.warn(`[ZombieSweeper]: Requeuing ${toRequeueJobs.length} stale jobs back to queued.`);
         for (const job of toRequeueJobs) {
-          await supabase.from('jobs').update({ status: 'requeued', updated_at: new Date().toISOString() }).eq('id', job.id);
+          await supabase.from('jobs').update({ status: 'queued', locked_by: null, worker_id: null, updated_at: new Date().toISOString() }).eq('id', job.id);
         }
       }
 
-      // Transition 3: requeued -> failed
+      // Transition 3: stale jobs that never recovered -> failed
       const { data: toFailJobs } = await supabase
         .from('jobs')
         .select('id')
-        .eq('status', 'requeued')
+        .eq('status', 'stale')
         .lt('updated_at', requeueThreshold);
         
       if (toFailJobs && toFailJobs.length > 0) {
@@ -104,7 +104,7 @@ export class ZombieSweeperService {
       const { data: staleRenders } = await supabase
         .from('render_jobs')
         .select('id, status, attempt_count')
-        .in('status', ['pending', 'processing'])
+        .in('status', ['pending', 'processing', 'claimed', 'rendering', 'uploading', 'retrying'])
         .lt('updated_at', staleJobThreshold);
 
       if (staleRenders && staleRenders.length > 0) {
@@ -123,14 +123,19 @@ export class ZombieSweeperService {
       if (toRequeueRenders && toRequeueRenders.length > 0) {
         console.warn(`[ZombieSweeper]: Requeuing ${toRequeueRenders.length} stale render_jobs.`);
         for (const rjob of toRequeueRenders) {
-          await supabase.from('render_jobs').update({ status: 'requeued', attempt_count: rjob.attempt_count + 1, updated_at: new Date().toISOString() }).eq('id', rjob.id);
+          await supabase.from('render_jobs').update({
+            status: 'pending',
+            locked_by: null,
+            attempt_count: Number(rjob.attempt_count || 0) + 1,
+            updated_at: new Date().toISOString()
+          }).eq('id', rjob.id);
         }
       }
 
       const { data: toFailRenders } = await supabase
         .from('render_jobs')
         .select('id, clip_id')
-        .eq('status', 'requeued')
+        .eq('status', 'stale')
         .lt('updated_at', requeueThreshold);
         
       if (toFailRenders && toFailRenders.length > 0) {

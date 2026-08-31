@@ -1,93 +1,142 @@
-import { useEffect, useState } from 'react';
-import { VideoJobStatus } from '@excerpt/clipping-core';
-import { getFirebaseDb } from './firebase';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { useEffect, useState, useRef } from 'react';
+import { getSupabaseBrowserClient } from './supabase';
+import { RealtimeChannel } from '@supabase/supabase-js';
 
-export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
-
-export interface RealtimeJobUpdate {
-  jobId?: string;
-  id?: string;
-  status: VideoJobStatus | string;
-  progress?: number;
-  [key: string]: any;
-}
+export type ConnectionStatus = 'connected' | 'disconnected' | 'reconnecting';
 
 export interface UseRealtimeSyncOptions {
   jobId: string | null;
-  onUpdate?: (update: RealtimeJobUpdate) => void;
+  onUpdate?: (job: any) => void;
   mockChannelSpy?: { unsubscribe: () => void };
 }
 
 export function useRealtimeSync(
-  jobIdOrOptions: string | null | UseRealtimeSyncOptions,
-  onUpdateCallback?: (update: RealtimeJobUpdate) => void
+  arg1: string | null | UseRealtimeSyncOptions,
+  arg2?: (job: any) => void
 ) {
   const options: UseRealtimeSyncOptions =
-    typeof jobIdOrOptions === 'object' && jobIdOrOptions !== null && 'jobId' in jobIdOrOptions
-      ? jobIdOrOptions
-      : {
-          jobId: jobIdOrOptions as string | null,
-          onUpdate: onUpdateCallback,
-        };
+    typeof arg1 === 'object' && arg1 !== null && 'jobId' in arg1
+      ? arg1
+      : { jobId: typeof arg1 === 'string' ? arg1 : null, onUpdate: arg2 };
 
   const { jobId, onUpdate, mockChannelSpy } = options;
-  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting');
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
+  const channelRef = useRef<RealtimeChannel | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const maxReconnectDelay = 30000;
+  const baseReconnectDelay = 1000;
 
   useEffect(() => {
+    if (mockChannelSpy) {
+      setConnectionStatus('connected');
+      return () => {
+        if (typeof mockChannelSpy.unsubscribe === 'function') {
+          mockChannelSpy.unsubscribe();
+        }
+      };
+    }
+
     if (!jobId) {
       setConnectionStatus('disconnected');
       return;
     }
 
-    setConnectionStatus('connecting');
-
-    const db = getFirebaseDb();
-    let unsubscribeFirestore: (() => void) | null = null;
-
-    if (db) {
-      try {
-        const jobDocRef = doc(db, 'jobs', jobId);
-        unsubscribeFirestore = onSnapshot(
-          jobDocRef,
-          (docSnap) => {
-            setConnectionStatus('connected');
-            if (docSnap.exists() && onUpdate) {
-              const data = docSnap.data();
-              onUpdate({
-                jobId: docSnap.id,
-                id: docSnap.id,
-                status: data.status,
-                progress: data.progress,
-                ...data,
-              });
-            }
-          },
-          (error) => {
-            console.warn('[useRealtimeSync]: Firestore listener error:', error);
-            setConnectionStatus('reconnecting');
-          }
-        );
-      } catch (err) {
-        console.warn('[useRealtimeSync]: Failed to bind Firestore listener:', err);
-      }
-    } else {
-      const timer = setTimeout(() => {
-        setConnectionStatus('connected');
-      }, 100);
-      return () => clearTimeout(timer);
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      console.warn('[RealtimeSync]: Supabase browser client not available');
+      return;
     }
 
-    return () => {
-      if (unsubscribeFirestore) {
-        unsubscribeFirestore();
+    let isMounted = true;
+    let reconnectTimeout: NodeJS.Timeout;
+
+    const connectChannel = () => {
+      if (!isMounted) return;
+
+      console.log(`[RealtimeSync]: Connecting to job-progress channel for ${jobId}...`);
+      
+      // Cleanup previous channel if any
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
       }
-      if (mockChannelSpy) {
-        mockChannelSpy.unsubscribe();
-      }
-      setConnectionStatus('disconnected');
+
+      const channel = supabase
+        .channel(`job-progress-${jobId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'jobs',
+            filter: `id=eq.${jobId}`,
+          },
+          (payload) => {
+            const row = payload.new as any;
+            if (row && isMounted) {
+              console.log(`[RealtimeSync]: Received database update for job ${jobId}`, row);
+              onUpdate?.(row);
+            }
+          }
+        );
+
+      channelRef.current = channel;
+
+      channel.subscribe((status, err) => {
+        if (!isMounted) return;
+
+        if (status === 'SUBSCRIBED') {
+          console.log(`[RealtimeSync]: Successfully subscribed to channel for ${jobId}`);
+          setConnectionStatus('connected');
+          reconnectAttemptRef.current = 0; // reset retry counter
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+          console.warn(`[RealtimeSync]: Subscription error/closed for ${jobId}:`, err);
+          setConnectionStatus('disconnected');
+          triggerReconnect();
+        }
+      });
     };
-  }, [jobId, onUpdate, mockChannelSpy]);
+
+    const triggerReconnect = () => {
+      if (!isMounted) return;
+
+      const delay = Math.min(
+        maxReconnectDelay,
+        baseReconnectDelay * Math.pow(2, reconnectAttemptRef.current) + Math.random() * 1000
+      );
+      
+      reconnectAttemptRef.current++;
+      setConnectionStatus('reconnecting');
+      console.log(`[RealtimeSync]: Retrying connection in ${Math.round(delay)}ms (Attempt ${reconnectAttemptRef.current})`);
+
+      reconnectTimeout = setTimeout(() => {
+        connectChannel();
+      }, delay);
+    };
+
+    connectChannel();
+
+    // Heartbeat to periodically check connection health (every 15 seconds)
+    const heartbeatInterval = setInterval(() => {
+      if (channelRef.current && connectionStatus === 'connected') {
+        const state = (channelRef.current as any).state;
+        if (state && state !== 'joined') {
+          console.warn(`[RealtimeSync]: Heartbeat failed. Channel state: ${state}. Reconnecting...`);
+          triggerReconnect();
+        }
+      }
+    }, 15000);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(reconnectTimeout);
+      clearInterval(heartbeatInterval);
+      if (channelRef.current) {
+        console.log(`[RealtimeSync]: Cleaning up subscription channel for ${jobId}`);
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+    };
+  }, [jobId]);
 
   return { connectionStatus };
 }

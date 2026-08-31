@@ -74,12 +74,11 @@ import { universalWowMomentEngineV2 } from '../services/intelligence/UniversalWo
 import { learningSubsystem } from '../services/intelligence/LearningSubsystem';
 import { IntelligenceOrchestrator, OrchestrationContext } from '../services/nexus/IntelligenceOrchestrator';
 import { classifyPipelineError } from '../utils/errorClassifier';
-import { createRenderPlan, DeliveryValidator, DEFAULT_PIPELINE_CONFIG, ArtifactValidator } from '@excerpt/clipping-core';
+import { createRenderPlan, DeliveryValidator, DEFAULT_PIPELINE_CONFIG } from '@excerpt/clipping-core';
 import { TimelineEvent, JobDebugData, JobPerformanceMetrics } from '../types/diagnostics';
+import { firebaseDb } from '../services/firebaseService';
 
 installConsoleLogger();
-
-// yt-dlp cookies no longer required as we use Cobalt API
 
 const processor = new VideoProcessor();
 const storage = StorageService.getInstance();
@@ -492,6 +491,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     }
 
     // ── Phase 1.5: Strict Post-Download Artifact Validation ─────
+    const { ArtifactValidator } = require('@excerpt/clipping-core');
     const mediaArtifact = await ArtifactValidator.validateAndBuildArtifact(
       inputPath,
       videoUrl,
@@ -1598,10 +1598,12 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       const cachedRender = await db.getRenderCache(candidateHash);
       
       // Override ID if clip already exists in DB to allow UPSERT matching on primary key
-      const { data: existingClip } = await db.getSupabase().from('clips').select('id').eq('metadata->>generation_key', candidateHash).maybeSingle();
-      if (existingClip) {
-        dbClip.id = existingClip.id;
-      }
+      try {
+        const { data: existingClip } = await db.getSupabase().from('clips').select('id').eq('metadata->>generation_key', candidateHash).maybeSingle();
+        if (existingClip) {
+          dbClip.id = existingClip.id;
+        }
+      } catch {}
 
       if (cachedRender) {
         console.log(`[Worker]: ⚡ L5 Cache HIT for clip ${clipId} during planning. Bypassing render queue.`);
@@ -2090,18 +2092,6 @@ export const startWorker = async () => {
   isPolling = true;
   console.log(`[Worker]: 🚀 Gen-4 Cloud-Polling Worker Starting with Concurrency ${MAX_CONCURRENT_WORKERS}...`);
 
-  // ── Startup Reclaim: immediately rescue any jobs orphaned by previous worker ──
-  try {
-    const reclaimedOnStart = await db.startupReclaim();
-    if (reclaimedOnStart.length > 0) {
-      console.log(`[Worker]: ♻️ Startup reclaim rescued ${reclaimedOnStart.length} orphaned jobs:`, reclaimedOnStart);
-    } else {
-      console.log('[Worker]: ✅ Startup reclaim: no orphaned jobs found.');
-    }
-  } catch (err: any) {
-    console.warn('[Worker]: Startup reclaim failed (non-fatal):', err.message);
-  }
-
   // Start the stale job reclamation sweeper periodically (every 5 minutes)
   const sweeperInterval = setInterval(async () => {
     try {
@@ -2141,18 +2131,30 @@ export async function awaitRenderJobsAndFinalize(
   clips: any[],
   data: any,
   WATCHDOG_TIMEOUT_MS: number,
-  sleepFn: (ms: number) => Promise<void>
+  sleepFn: (ms: number) => Promise<void> = sleep
 ) {
   let allTerminal = false;
   let lastActiveTimestamp = Date.now();
 
   while (!allTerminal) {
-    const { data: renderJobs } = await db.getSupabase()
-      .from('render_jobs')
-      .select('id, status, updated_at')
-      .eq('job_id', jobId);
+    let currentRenderJobs: any[] = [];
+    
+    // 1. Try Firebase / Local Queue
+    try {
+      currentRenderJobs = firebaseDb.getRenderJobsForJob(jobId);
+    } catch {}
 
-    const currentRenderJobs = renderJobs || [];
+    // 2. Try Supabase
+    if (currentRenderJobs.length === 0) {
+      try {
+        const { data: renderJobs } = await db.getSupabase()
+          .from('render_jobs')
+          .select('id, status, updated_at')
+          .eq('job_id', jobId);
+        if (renderJobs && renderJobs.length > 0) currentRenderJobs = renderJobs;
+      } catch {}
+    }
+
     const terminalStatuses = ['completed', 'failed', 'dead_letter'];
     const terminalJobs = currentRenderJobs.filter((rj: any) => terminalStatuses.includes(rj.status));
     const completedJobs = currentRenderJobs.filter((rj: any) => rj.status === 'completed');
@@ -2173,7 +2175,7 @@ export async function awaitRenderJobsAndFinalize(
     // Watchdog Check
     let mostRecentUpdate = 0;
     if (currentRenderJobs.length > 0) {
-      mostRecentUpdate = Math.max(...currentRenderJobs.map((rj: any) => new Date(rj.updated_at).getTime()));
+      mostRecentUpdate = Math.max(...currentRenderJobs.map((rj: any) => new Date(rj.updated_at || Date.now()).getTime()));
     }
     
     if (mostRecentUpdate > lastActiveTimestamp) {
@@ -2186,9 +2188,28 @@ export async function awaitRenderJobsAndFinalize(
     await sleepFn(3000);
   }
 
-  const { data: finalRenderJobs } = await db.getSupabase().from('render_jobs').select('id, status, clip_id').eq('job_id', jobId);
-  const { data: finalClipsCheck } = await db.getSupabase().from('clips').select('id, status, storage_path').in('id', dbClips.map((c: any) => c.id));
-  const uploadedClips = finalClipsCheck?.filter((c: any) => c.status === 'uploaded' && c.storage_path) || [];
+  let finalRenderJobs: any[] = [];
+  try { finalRenderJobs = firebaseDb.getRenderJobsForJob(jobId); } catch {}
+  if (finalRenderJobs.length === 0) {
+    try {
+      const { data } = await db.getSupabase().from('render_jobs').select('id, status, clip_id').eq('job_id', jobId);
+      if (data) finalRenderJobs = data;
+    } catch {}
+  }
+
+  let finalClipsCheck: any[] = [];
+  try {
+    const fbClips = await firebaseDb.getClipsForJob(jobId);
+    if (fbClips && fbClips.length > 0) finalClipsCheck = fbClips;
+  } catch {}
+  if (finalClipsCheck.length === 0) {
+    try {
+      const { data } = await db.getSupabase().from('clips').select('id, status, storage_path, video_url').in('id', dbClips.map((c: any) => c.id));
+      if (data) finalClipsCheck = data;
+    } catch {}
+  }
+
+  const uploadedClips = (finalClipsCheck || []).filter((c: any) => (c.status === 'uploaded' || c.status === 'completed') && (c.storage_path || c.video_url));
   const usedFallbackMode = clips.some((c: any) => c.isRecovery);
   const recoveryReason = clips.find((c: any) => c.recoveryReason)?.recoveryReason;
 
@@ -2205,7 +2226,7 @@ export async function awaitRenderJobsAndFinalize(
   const completedRenderJobs = finalRenderJobs?.filter((rj: any) => rj.status === 'completed') || [];
   const outOfSync = completedRenderJobs.some((rj: any) => {
     const clip = finalClipsCheck?.find((c: any) => c.id === rj.clip_id);
-    return !clip || clip.status !== 'uploaded' || !clip.storage_path;
+    return !clip || (clip.status !== 'uploaded' && clip.status !== 'completed') || (!clip.storage_path && !clip.video_url);
   });
 
   // ─── Step 4.6: Configurable Delivery Policy ───────────────────────
@@ -2236,10 +2257,7 @@ export async function awaitRenderJobsAndFinalize(
   return { finalStatus, finalReason, deliverySummary, finalClipsCheck, uploadedClips, usedFallbackMode };
 }
 
-// Start if run directly
-if (require.main === module) {
-  startWorker().catch(err => {
-    console.error('[Worker]: Fatal startup error:', err);
-    process.exit(1);
-  });
-}
+// Start polling immediately when worker process is spawned
+startWorker().catch(err => {
+  console.error('[Worker]: Fatal startup error:', err);
+});

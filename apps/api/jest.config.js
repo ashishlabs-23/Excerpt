@@ -9,6 +9,8 @@ module.exports = {
         // Relax strict mode for tests
         strict: false,
         esModuleInterop: true,
+        target: 'ES2022',
+        lib: ['ES2022', 'ES2022.Intl', 'DOM'],
       },
     }],
   },

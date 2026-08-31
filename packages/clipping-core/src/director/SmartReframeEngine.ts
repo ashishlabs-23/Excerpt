@@ -1,6 +1,6 @@
 import { PerceptionFrame } from '../perception/types';
 import { MediaArtifact } from '../ingestion/types';
-import { CameraPlan, CameraKeyframe, DirectorConfig, FramingLevel } from './types';
+import { CameraPlan, CameraKeyframe, DirectorConfig, FramingLevel, LayoutMode } from './types';
 import { ComputeCeiling } from './ComputeCeiling';
 
 export class SmartReframeEngine {
@@ -27,8 +27,21 @@ export class SmartReframeEngine {
 
     const smoothed = this.applyTemporalSmoothing(keyframes, config);
 
+    // Determine overall layout mode
+    let layoutMode: LayoutMode = config.preferredLayout && config.preferredLayout !== 'auto'
+      ? config.preferredLayout
+      : 'single_speaker';
+
+    if (config.preferredLayout === 'auto' || !config.preferredLayout) {
+      const splitFramesCount = smoothed.filter(k => k.framingLevel === FramingLevel.SPLIT_SCREEN_STACK).length;
+      if (splitFramesCount > smoothed.length * 0.4) {
+        layoutMode = 'split_screen_stack';
+      }
+    }
+
     return {
-      schemaVersion: '1.0.0',
+      schemaVersion: '1.1.0',
+      layoutMode,
       keyframes: smoothed
     };
   }
@@ -37,46 +50,74 @@ export class SmartReframeEngine {
     const { faces, persons, speaker } = frame;
     let level = FramingLevel.CENTER_CROP;
     let targetFace: any = null;
+    let secondaryFace: any = null;
 
     const facesData = faces?.available && Array.isArray(faces.data) ? faces.data : [];
     const personsData = persons?.available && Array.isArray(persons.data) ? persons.data : [];
     const speakerData = speaker?.available ? speaker.data : null;
     const speakerConfidence = speakerData?.confidence ?? 0;
 
-    // Fallback Precedence Logic
-    if (facesData.length === 1 && speakerData && speakerConfidence > 0.8) {
+    // Multi-Speaker / Podcast Split Screen Check
+    if (facesData.length >= 2) {
+      // Sort faces by horizontal X coordinate (left to right)
+      const sortedFaces = [...facesData].sort((a, b) => a.x - b.x);
+      targetFace = sortedFaces[0];
+      secondaryFace = sortedFaces[1];
+      level = FramingLevel.SPLIT_SCREEN_STACK;
+    } else if (facesData.length === 1 && speakerData && speakerConfidence > 0.7) {
       // Level 1: Active Speaker
       level = FramingLevel.ACTIVE_SPEAKER;
       targetFace = facesData[0];
-    } else if (facesData.length === 2 && personsData.length === 2) {
-      // Level 2: Two Speaker
-      level = FramingLevel.TWO_SPEAKER;
-    } else if (facesData.length > 0 || personsData.length > 0) {
-      // Level 3: Wide Shot
+    } else if (facesData.length === 1) {
+      level = FramingLevel.ACTIVE_SPEAKER;
+      targetFace = facesData[0];
+    } else if (personsData.length > 0) {
       level = FramingLevel.WIDE_SHOT;
     } else {
-      // Level 4: Center Crop fallback
       level = FramingLevel.CENTER_CROP;
     }
 
-    const targetWidth = (artifact.height ?? 1080) * config.targetAspectRatio;
-    const targetHeight = artifact.height ?? 1080;
+    const artW = artifact.width ?? 1920;
+    const artH = artifact.height ?? 1080;
+    const targetWidth = artH * config.targetAspectRatio;
+    const targetHeight = artH;
     
-    let x = ((artifact.width ?? 1920) - targetWidth) / 2; // Default center
+    let x = (artW - targetWidth) / 2; // Default center
     let y = 0;
 
     if (level === FramingLevel.ACTIVE_SPEAKER && targetFace) {
       const faceCenterX = targetFace.x + (targetFace.w / 2);
       x = faceCenterX - (targetWidth / 2);
+      x = Math.max(0, Math.min(x, artW - targetWidth));
+    }
 
-      // Clamp to screen bounds
-      x = Math.max(0, Math.min(x, (artifact.width ?? 1920) - targetWidth));
+    let secondaryCropBox: CameraKeyframe['secondaryCropBox'] = undefined;
+    if (level === FramingLevel.SPLIT_SCREEN_STACK && targetFace && secondaryFace) {
+      // Calculate top box (Speaker A) and bottom box (Speaker B)
+      const halfTargetW = targetWidth;
+      const speakerAX = Math.max(0, Math.min(targetFace.x + (targetFace.w / 2) - (halfTargetW / 2), artW - halfTargetW));
+      const speakerBX = Math.max(0, Math.min(secondaryFace.x + (secondaryFace.w / 2) - (halfTargetW / 2), artW - halfTargetW));
+
+      x = speakerAX;
+      secondaryCropBox = {
+        x: speakerBX,
+        y: 0,
+        w: halfTargetW,
+        h: targetHeight
+      };
+    }
+
+    // Micro punch-in for high speaker engagement
+    let scale = 1.0;
+    if (config.enablePunchIn && speakerConfidence > 0.9) {
+      scale = 1.06;
     }
 
     return {
       timestampMs: frame.timestampMs,
       cropBox: { x, y, w: targetWidth, h: targetHeight },
-      scale: 1.0,
+      secondaryCropBox,
+      scale,
       framingLevel: level
     };
   }

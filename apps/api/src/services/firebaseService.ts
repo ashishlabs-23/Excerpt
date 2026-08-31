@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 
 let isInitialized = false;
+let hasRealCredentials = false;
 
 export function initFirebaseAdmin(): typeof admin {
   if (isInitialized || admin.apps.length > 0) {
@@ -25,6 +26,7 @@ export function initFirebaseAdmin(): typeof admin {
         projectId: saContent.project_id || 'excerpt-d0ab8',
       });
       isInitialized = true;
+      hasRealCredentials = true;
       console.log(`[Firebase Admin]: Initialized with service account from ${serviceAccountPath}`);
       return admin;
     } catch (err: any) {
@@ -46,15 +48,22 @@ export function initFirebaseAdmin(): typeof admin {
       }),
       projectId,
     });
+    hasRealCredentials = true;
   } else {
     // Graceful fallback for local development & mock environments
     admin.initializeApp({
       projectId,
     });
+    hasRealCredentials = false;
   }
 
   isInitialized = true;
   return admin;
+}
+
+export function isFirebaseConfiguredWithCredentials(): boolean {
+  initFirebaseAdmin();
+  return hasRealCredentials;
 }
 
 export function getFirestoreDb(): admin.firestore.Firestore {
@@ -190,10 +199,12 @@ export class FirebaseDatabaseService {
   }
 
   async getJob(jobId: string): Promise<FirestoreJobRecord | null> {
-    try {
-      const doc = await this.db.collection('jobs').doc(jobId).get();
-      if (doc.exists) return doc.data() as FirestoreJobRecord;
-    } catch {}
+    if (isFirebaseConfiguredWithCredentials()) {
+      try {
+        const doc = await this.db.collection('jobs').doc(jobId).get();
+        if (doc.exists) return doc.data() as FirestoreJobRecord;
+      } catch {}
+    }
 
     const queue = this.readQueue();
     if (queue.jobs[jobId]) return queue.jobs[jobId] as FirestoreJobRecord;
@@ -202,17 +213,19 @@ export class FirebaseDatabaseService {
   }
 
   async listJobsForUser(userId: string, limitCount = 50): Promise<FirestoreJobRecord[]> {
-    try {
-      const snapshot = await this.db.collection('jobs')
-        .where('userId', '==', userId)
-        .orderBy('createdAt', 'desc')
-        .limit(limitCount)
-        .get();
+    if (isFirebaseConfiguredWithCredentials()) {
+      try {
+        const snapshot = await this.db.collection('jobs')
+          .where('userId', '==', userId)
+          .orderBy('createdAt', 'desc')
+          .limit(limitCount)
+          .get();
 
-      if (snapshot && !snapshot.empty) {
-        return snapshot.docs.map(d => d.data() as FirestoreJobRecord);
-      }
-    } catch {}
+        if (snapshot && !snapshot.empty) {
+          return snapshot.docs.map(d => d.data() as FirestoreJobRecord);
+        }
+      } catch {}
+    }
 
     const queue = this.readQueue();
     const allJobs = { ...Object.fromEntries(this.inMemoryJobs), ...queue.jobs };
@@ -233,27 +246,31 @@ export class FirebaseDatabaseService {
     }
     this.writeQueue(queue);
 
-    try {
-      const batch = this.db.batch();
-      for (const clip of clips) {
-        const ref = this.db.collection('clips').doc(clip.id);
-        batch.set(ref, clip, { merge: true });
-      }
-      await batch.commit();
-    } catch {}
+    if (isFirebaseConfiguredWithCredentials()) {
+      try {
+        const batch = this.db.batch();
+        for (const clip of clips) {
+          const ref = this.db.collection('clips').doc(clip.id);
+          batch.set(ref, clip, { merge: true });
+        }
+        await batch.commit();
+      } catch {}
+    }
   }
 
   async getClipsForJob(jobId: string): Promise<FirestoreClipRecord[]> {
-    try {
-      const snapshot = await this.db.collection('clips')
-        .where('jobId', '==', jobId)
-        .orderBy('rank', 'asc')
-        .get();
+    if (isFirebaseConfiguredWithCredentials()) {
+      try {
+        const snapshot = await this.db.collection('clips')
+          .where('jobId', '==', jobId)
+          .orderBy('rank', 'asc')
+          .get();
 
-      if (snapshot && !snapshot.empty) {
-        return snapshot.docs.map(d => d.data() as FirestoreClipRecord);
-      }
-    } catch {}
+        if (snapshot && !snapshot.empty) {
+          return snapshot.docs.map(d => d.data() as FirestoreClipRecord);
+        }
+      } catch {}
+    }
 
     const queue = this.readQueue();
     const allClips = { ...Object.fromEntries(this.inMemoryClips), ...queue.clips };
@@ -266,10 +283,12 @@ export class FirebaseDatabaseService {
   }
 
   async getClip(clipId: string): Promise<FirestoreClipRecord | null> {
-    try {
-      const doc = await this.db.collection('clips').doc(clipId).get();
-      if (doc.exists) return doc.data() as FirestoreClipRecord;
-    } catch {}
+    if (isFirebaseConfiguredWithCredentials()) {
+      try {
+        const doc = await this.db.collection('clips').doc(clipId).get();
+        if (doc.exists) return doc.data() as FirestoreClipRecord;
+      } catch {}
+    }
 
     const queue = this.readQueue();
     if (queue.clips[clipId]) return queue.clips[clipId] as FirestoreClipRecord;
@@ -278,20 +297,22 @@ export class FirebaseDatabaseService {
   }
 
   async getNextQueuedJob(): Promise<FirestoreJobRecord | null> {
-    try {
-      const snapshot = await this.db.collection('jobs')
-        .where('status', '==', 'queued')
-        .orderBy('createdAt', 'asc')
-        .limit(1)
-        .get();
+    if (isFirebaseConfiguredWithCredentials()) {
+      try {
+        const snapshot = await this.db.collection('jobs')
+          .where('status', '==', 'queued')
+          .orderBy('createdAt', 'asc')
+          .limit(1)
+          .get();
 
-      if (snapshot && !snapshot.empty) {
-        const doc = snapshot.docs[0];
-        const job = doc.data() as FirestoreJobRecord;
-        await this.updateJob(doc.id, { status: 'processing' });
-        return { ...job, id: doc.id, status: 'processing' };
-      }
-    } catch {}
+        if (snapshot && !snapshot.empty) {
+          const doc = snapshot.docs[0];
+          const job = doc.data() as FirestoreJobRecord;
+          await this.updateJob(doc.id, { status: 'processing' });
+          return { ...job, id: doc.id, status: 'processing' };
+        }
+      } catch {}
+    }
 
     const queue = this.readQueue();
     for (const [id, job] of Object.entries(queue.jobs)) {
@@ -305,6 +326,28 @@ export class FirebaseDatabaseService {
     }
 
     return null;
+  }
+
+  clearAllJobs(): void {
+    this.inMemoryJobs.clear();
+    this.inMemoryClips.clear();
+    const emptyQueue = { jobs: {}, clips: {}, render_jobs: [] };
+    this.writeQueue(emptyQueue);
+  }
+
+  clearUserJobs(userId: string): void {
+    for (const [id, job] of this.inMemoryJobs.entries()) {
+      if (job.userId === userId || (job as any).user_id === userId) {
+        this.inMemoryJobs.delete(id);
+      }
+    }
+    const queue = this.readQueue();
+    for (const [id, job] of Object.entries(queue.jobs)) {
+      if (job.userId === userId || (job as any).user_id === userId) {
+        delete queue.jobs[id];
+      }
+    }
+    this.writeQueue(queue);
   }
 
   async registerUserDevice(userId: string, fcmToken: string, platform = 'web'): Promise<void> {
@@ -351,6 +394,71 @@ export class FirebaseDatabaseService {
       ...costData,
       createdAt: now,
     });
+  }
+
+  createRenderJob(renderJobData: any): any {
+    const queue = this.readQueue();
+    if (!queue.render_jobs) queue.render_jobs = [];
+    const jobWithTimestamp = {
+      ...renderJobData,
+      id: renderJobData.id || crypto.randomUUID(),
+      status: renderJobData.status || 'queued',
+      created_at: renderJobData.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    queue.render_jobs.push(jobWithTimestamp);
+    this.writeQueue(queue);
+    return jobWithTimestamp;
+  }
+
+  claimRenderJob(workerId: string): any | null {
+    const queue = this.readQueue();
+    if (!queue.render_jobs || queue.render_jobs.length === 0) return null;
+    const queuedIdx = queue.render_jobs.findIndex((rj: any) => rj.status === 'pending' || rj.status === 'queued');
+    if (queuedIdx !== -1) {
+      const renderJob = queue.render_jobs[queuedIdx];
+      if (!renderJob.id) renderJob.id = crypto.randomUUID();
+      renderJob.status = 'rendering';
+      renderJob.worker_id = workerId;
+      renderJob.locked_at = new Date().toISOString();
+      renderJob.updated_at = new Date().toISOString();
+      this.writeQueue(queue);
+      return renderJob;
+    }
+    return null;
+  }
+
+  updateRenderJob(id: string, updates: any): void {
+    const queue = this.readQueue();
+    if (!queue.render_jobs) return;
+    const idx = queue.render_jobs.findIndex((rj: any) => (id && rj.id === id) || (updates.clip_id && rj.clip_id === updates.clip_id) || (updates.clipId && rj.clip_id === updates.clipId));
+    if (idx !== -1) {
+      queue.render_jobs[idx] = {
+        ...queue.render_jobs[idx],
+        ...updates,
+        updated_at: new Date().toISOString(),
+      };
+      this.writeQueue(queue);
+    }
+  }
+
+  getRenderJobsForJob(jobId: string): any[] {
+    const queue = this.readQueue();
+    return (queue.render_jobs || []).filter((rj: any) => rj.job_id === jobId || rj.jobId === jobId);
+  }
+
+  updateClipStatus(clipId: string, status: string): void {
+    const queue = this.readQueue();
+    if (queue.clips && queue.clips[clipId]) {
+      queue.clips[clipId].status = status;
+      queue.clips[clipId].updated_at = new Date().toISOString();
+      this.writeQueue(queue);
+    }
+    const memClip = this.inMemoryClips.get(clipId);
+    if (memClip) {
+      memClip.status = status;
+      memClip.updated_at = new Date().toISOString();
+    }
   }
 }
 

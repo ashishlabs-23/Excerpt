@@ -11,6 +11,7 @@ export * from './validation/types';
 export * from './perception/types';
 export * from './understanding/types';
 export * from './candidates/types';
+export * from './candidates/AcousticBoundarySnapper';
 export * from './evaluation/types';
 export * from './evaluation/IEvaluator';
 export * from './evaluation/BoundaryEvaluator';

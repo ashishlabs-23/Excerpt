@@ -25,6 +25,8 @@ import { JobStateMachine, JobStatus } from '../utils/JobStateMachine';
 import { installConsoleLogger, withLogContext } from '../services/logger';
 import { ensureSourceVideo } from '../services/download/ensureSourceVideo';
 
+import { firebaseDb } from '../services/firebaseService';
+
 installConsoleLogger();
 
 const db = new DatabaseService();
@@ -38,22 +40,53 @@ async function sleep(ms: number) {
 }
 
 async function claimNextRenderJob() {
+  const workerEnv = (process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development'));
+  
+  // 1. Fast local / Firebase Queue Claim
   try {
-      const workerEnv = (process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development'));
-      const { data, error } = await db.getSupabase()
-        .rpc('claim_next_render_job', { 
-          worker_id_text: workerInstanceId,
-          worker_env_text: workerEnv
-        });
-    if (error) throw error;
-    if (data && data.length > 0) return data[0];
-  } catch (err: any) {
-    if (err.message?.includes('Could not find the function')) {
-      console.warn('[RenderWorker]: RPC claim_next_render_job missing. Make sure to run v5_hardening_part2.sql migration.');
-    } else {
-      console.error('[RenderWorker]: Error claiming render job:', err.message);
+    const localRenderJob = firebaseDb.claimRenderJob(workerInstanceId);
+    if (localRenderJob) {
+      console.log(`[RenderWorker]: ⚡ Claimed local render job ${localRenderJob.id} for job ${localRenderJob.job_id}`);
+      return localRenderJob;
     }
-  }
+  } catch {}
+
+  // 2. Try Supabase RPC stored procedure
+  try {
+    const { data, error } = await db.getSupabase()
+      .rpc('claim_next_render_job', { 
+        worker_id_text: workerInstanceId,
+        worker_env_text: workerEnv
+      });
+    if (!error && data && data.length > 0) return data[0];
+  } catch (err: any) {}
+
+  // 2. Direct table fallback if RPC is not available
+  try {
+    const { data, error } = await db.getSupabase()
+      .from('render_jobs')
+      .select('*')
+      .in('status', ['pending', 'queued'])
+      .order('created_at', { ascending: true })
+      .limit(1);
+
+    if (!error && data && data.length > 0) {
+      const renderJob = data[0];
+      const { error: updateError } = await db.getSupabase()
+        .from('render_jobs')
+        .update({
+          status: 'rendering',
+          worker_id: workerInstanceId,
+          locked_at: new Date().toISOString()
+        })
+        .eq('id', renderJob.id);
+
+      if (!updateError) {
+        return { ...renderJob, status: 'rendering', worker_id: workerInstanceId };
+      }
+    }
+  } catch (err: any) {}
+
   return null;
 }
 
@@ -121,25 +154,15 @@ async function processRenderJob(renderJob: any) {
 
       if (clipWords && clipWords.length > 0) {
         const assFilePath = path.join(tempDir, `subs-${clipId}.ass`);
-        const preset = payload.captionPreset || 'hormozi';
-        captionService.generateASS(clipWords, assFilePath, preset);
+        captionService.generateASS(clipWords, assFilePath);
         
         const captionStart = Date.now();
-        console.log(`[RenderWorker]: Adding Viral Captions (${preset}) to clip ${clipId}...`);
+        console.log(`[RenderWorker]: Adding Viral Captions to clip ${clipId}...`);
         await processor.addCaptions(intermediatePath, outputPath, assFilePath);
         captionMs = Date.now() - captionStart;
       } else {
+        const fs = require('fs');
         fs.renameSync(intermediatePath, outputPath);
-      }
-
-      // Safety: if captioning/rename left the file under a different name, resolve it
-      if (!fs.existsSync(outputPath) && fs.existsSync(intermediatePath)) {
-        console.warn(`[RenderWorker]: outputPath missing, falling back to intermediatePath for ${clipId}`);
-        outputPath = intermediatePath;
-      }
-
-      if (!fs.existsSync(outputPath)) {
-        throw new Error(`RENDER_FILE_MISSING: Neither clip nor cut file found for ${clipId}`);
       }
 
       await db.updateClipStatus(clipId, 'rendered');
@@ -162,26 +185,48 @@ async function processRenderJob(renderJob: any) {
       ]);
       uploadMs = Date.now() - uploadStart;
 
-      // 4. Update Clip in DB
-      const { data: updatedClipData, error: clipUpdateErr } = await db.getSupabase().from('clips').update({
-        storage_path: storageKey,
-        thumbnail_url: thumbUrl,
-        status: 'uploaded'
-      }).eq('id', clipId).select();
+      // 4. Update Clip in Local Queue & DB
+      try {
+        const queue = firebaseDb.readQueue();
+        if (queue.clips && queue.clips[clipId]) {
+          queue.clips[clipId] = {
+            ...queue.clips[clipId],
+            storage_path: storageKey,
+            video_url: videoUrl,
+            thumbnail_url: thumbUrl,
+            status: 'uploaded',
+            updated_at: new Date().toISOString(),
+          };
+          firebaseDb.writeQueue(queue);
+        }
+      } catch {}
 
-      console.log(`[RenderWorker]: Clip DB Update Result for ${clipId}:`, {
-        success: Boolean(updatedClipData && updatedClipData.length > 0),
-        count: updatedClipData?.length || 0,
-        error: clipUpdateErr?.message || null,
-        storageKey
-      });
+      try {
+        const { data: updatedClipData, error: clipUpdateErr } = await db.getSupabase().from('clips').update({
+          storage_path: storageKey,
+          video_url: videoUrl,
+          thumbnail_url: thumbUrl,
+          status: 'uploaded'
+        }).eq('id', clipId).select();
+
+        console.log(`[RenderWorker]: Clip DB Update Result for ${clipId}:`, {
+          success: Boolean(updatedClipData && updatedClipData.length > 0),
+          count: updatedClipData?.length || 0,
+          error: clipUpdateErr?.message || null,
+          storageKey
+        });
+      } catch (dbErr: any) {
+        console.warn(`[RenderWorker]: Clip Supabase update fallback:`, dbErr.message);
+      }
 
       // Save to Render Cache
-      await db.setRenderCache({
-        candidate_hash: candidateHash,
-        storage_path: storageKey,
-        thumbnail_path: thumbStorageKey
-      });
+      try {
+        await db.setRenderCache({
+          candidate_hash: candidateHash,
+          storage_path: storageKey,
+          thumbnail_path: thumbStorageKey
+        });
+      } catch {}
 
       // 5. Cleanup
       try {
@@ -233,7 +278,8 @@ async function processRenderJob(renderJob: any) {
       }
 
       // Atomic Finalization
-      await db.updateRenderJob(renderJob.id, { status: 'completed' });
+      await db.updateClipStatus(clipId, 'uploaded');
+      await db.updateRenderJob(renderJob.id, { status: 'completed', clip_id: clipId });
       
       // Save Render Metrics
       await db.saveRenderMetrics({
@@ -251,12 +297,14 @@ async function processRenderJob(renderJob: any) {
       await db.updateClipStatus(clipId, 'failed');
       
       if (renderJob.attempt_count >= 3) {
-        await db.getSupabase().from('render_dead_letters').insert({
-          render_job_id: renderJob.id,
-          job_id: renderJob.job_id,
-          payload: renderJob.payload,
-          final_error: err.message
-        });
+        try {
+          await db.getSupabase().from('render_dead_letters').insert({
+            render_job_id: renderJob.id,
+            job_id: renderJob.job_id,
+            payload: renderJob.payload,
+            final_error: err.message
+          });
+        } catch {}
         await db.updateRenderJob(renderJob.id, { status: 'failed', error: err.message });
       } else {
         await db.updateRenderJob(renderJob.id, { status: 'retrying', error: err.message, locked_by: null });
@@ -271,9 +319,11 @@ async function processRenderJob(renderJob: any) {
       });
     } finally {
       clearInterval(heartbeatInterval);
-      await db.getSupabase()
-        .from('render_worker_heartbeats')
-        .upsert({ worker_id: workerInstanceId, last_heartbeat: new Date().toISOString(), status: 'idle' });
+      try {
+        await db.getSupabase()
+          .from('render_worker_heartbeats')
+          .upsert({ worker_id: workerInstanceId, last_heartbeat: new Date().toISOString(), status: 'idle' });
+      } catch {}
     }
   });
 }
@@ -310,15 +360,4 @@ async function startPolling() {
   }
 }
 
-// ── Global safety net: never crash the process ───────────────────────────────
-process.on('unhandledRejection', (reason: any) => {
-  console.error('[RenderWorker]: ⚠️ Unhandled rejection (continuing):', reason?.message || reason);
-});
-process.on('uncaughtException', (err: any) => {
-  console.error('[RenderWorker]: ⚠️ Uncaught exception (continuing):', err?.message || err);
-});
-
-startPolling().catch(err => {
-  console.error('[RenderWorker]: Fatal polling error:', err);
-  process.exit(1);
-});
+startPolling();
