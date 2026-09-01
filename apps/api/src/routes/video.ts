@@ -82,30 +82,21 @@ function getLocalClipRelativePath(videoUrl: string) {
         parsed.hostname === '127.0.0.1' ||
         parsed.hostname === '::1';
 
-      if (!isLoopbackHost || !parsed.pathname.startsWith('/clips/')) {
-        return null;
+      if (isLoopbackHost) {
+        return parsed.pathname.replace(/^\/(?:temp\/|clips\/)?/, '');
       }
-
-      return parsed.pathname.slice('/clips/'.length);
-    } catch {
-      return null;
-    }
+    } catch {}
   }
 
   const normalized = videoUrl.replace(/\\/g, '/');
-
-  if (normalized.startsWith('/clips/')) {
-    return normalized.slice('/clips/'.length);
-  }
-
-  if (normalized.startsWith('clips/')) {
-    return normalized.slice('clips/'.length);
-  }
-
-  return null;
+  return normalized
+    .replace(/^https?:\/\/[^\/]+\//, '')
+    .replace(/^\/?(?:temp\/|clips\/)?/, '');
 }
 
 function resolveLocalClipPath(videoUrl: string, jobId?: string, showCaptions = true) {
+  if (!videoUrl) return null;
+
   let adjustedUrl = videoUrl;
   if (showCaptions) {
     adjustedUrl = videoUrl.replace('-clean.mp4', '.mp4');
@@ -115,39 +106,32 @@ function resolveLocalClipPath(videoUrl: string, jobId?: string, showCaptions = t
     }
   }
 
-  const relativePath = getLocalClipRelativePath(adjustedUrl);
-  if (!relativePath) return null;
+  const cleanPath = adjustedUrl.split('?')[0].replace(/\\/g, '/');
+  const fileName = path.basename(cleanPath);
 
-  const segments = relativePath
-    .split('/')
-    .filter(Boolean)
-    .map((segment) => decodeURIComponent(segment));
-
-  if (segments.length === 0) return null;
-  if (segments.some((segment) => (
-    segment === '.' ||
-    segment === '..' ||
-    segment.includes('/') ||
-    segment.includes('\\')
-  ))) {
-    return null;
-  }
-
-  const basePath = path.resolve(localClipsDir);
-  const fileName = segments[segments.length - 1];
-  
-  // Array of local candidate paths to check
-  const candidatePaths = [
-    path.resolve(basePath, ...segments),
-    path.resolve(basePath, fileName),
-    ...(jobId ? [
-      path.resolve(basePath, jobId, fileName),
-      path.resolve(process.cwd(), 'temp', jobId, fileName),
-      path.resolve(process.cwd(), 'temp', jobId, `clip-${fileName}`),
-      path.resolve(process.cwd(), 'temp', jobId, `cut-${fileName}`),
-    ] : []),
-    path.resolve(process.cwd(), 'clips', fileName),
+  const rootCandidates = [
+    process.cwd(),
+    path.resolve(process.cwd(), '../..'),
+    path.resolve(__dirname, '../../../..'),
+    path.resolve(__dirname, '../../..'),
   ];
+
+  const candidatePaths: string[] = [];
+  for (const root of rootCandidates) {
+    if (jobId) {
+      candidatePaths.push(
+        path.resolve(root, 'temp', 'jobs', jobId, fileName),
+        path.resolve(root, 'temp', jobId, fileName),
+        path.resolve(root, 'temp', 'jobs', jobId, `clip-${fileName}`),
+      );
+    }
+    candidatePaths.push(
+      path.resolve(root, 'temp', cleanPath),
+      path.resolve(root, 'temp', 'clips', fileName),
+      path.resolve(root, 'temp', fileName),
+      path.resolve(root, 'clips', fileName),
+    );
+  }
 
   for (const candidate of candidatePaths) {
     if (fs.existsSync(candidate)) {
@@ -626,7 +610,15 @@ router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
     if (firestoreJobs && firestoreJobs.length >= 0) {
       // Normalize Firestore field names to match frontend expectations
       const normalized = await Promise.all(firestoreJobs.map(async (j: any) => {
-        const clips = await firebaseDb.getClipsForJob(j.id);
+        let clips = await firebaseDb.getClipsForJob(j.id);
+        try {
+          const queue = firebaseDb.readQueue();
+          const queueClips = Object.values(queue.clips || {}).filter((c: any) => c.job_id === j.id || c.jobId === j.id) as any;
+          if (queueClips && queueClips.length > 0) {
+            clips = queueClips;
+          }
+        } catch {}
+        const finalClips = (clips && clips.length > 0) ? clips : (j.result || j.clips || []);
         return {
           ...j,
           id: j.id,
@@ -635,7 +627,8 @@ router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
           num_clips: j.numClips || j.num_clips,
           created_at: j.createdAt || j.created_at,
           updated_at: j.updatedAt || j.updated_at,
-          clips: (clips && clips.length > 0) ? clips : (j.clips || []),
+          clips: finalClips,
+          result: finalClips,
         };
       }));
       return res.json(normalized);
@@ -708,6 +701,94 @@ router.get('/jobs/active', requireUserJWT, async (req: Request, res: Response) =
   } catch {}
 
   return res.json([]);
+});
+
+/**
+ * @route   GET /api/video/clips
+ * @desc    Get all completed clips for the user gallery & dashboard
+ */
+router.get('/clips', requireUserJWT, async (req: Request, res: Response) => {
+  const userId = req.user.id || req.user.uid;
+
+  try {
+    const allClips: any[] = [];
+    const seenClipIds = new Set<string>();
+
+    // 1. Fetch from active local queue first (has latest uploaded status and storage paths)
+    try {
+      const queue = firebaseDb.readQueue();
+      if (queue.clips) {
+        for (const [id, c] of Object.entries(queue.clips)) {
+          const clip: any = c;
+          if (!seenClipIds.has(id)) {
+            seenClipIds.add(id);
+            allClips.push({
+              ...clip,
+              id: clip.id || id,
+              job_id: clip.jobId || clip.job_id,
+              video_url: clip.videoUrl || clip.video_url || clip.storage_path,
+              created_at: clip.createdAt || clip.created_at,
+            });
+          }
+        }
+      }
+    } catch {}
+
+    // 2. Fetch from Firestore jobs
+    const jobs = await firebaseDb.listJobsForUser(userId, 50);
+    for (const j of jobs) {
+      const jobRecord: any = j;
+      const clips = await firebaseDb.getClipsForJob(j.id);
+      if (clips && clips.length > 0) {
+        for (const c of clips) {
+          const clipRecord: any = c;
+          if (!seenClipIds.has(clipRecord.id)) {
+            seenClipIds.add(clipRecord.id);
+            allClips.push({
+              ...clipRecord,
+              job_id: clipRecord.jobId || clipRecord.job_id,
+              video_url: clipRecord.videoUrl || clipRecord.video_url,
+              created_at: clipRecord.createdAt || clipRecord.created_at,
+            });
+          }
+        }
+      }
+      if (jobRecord.result && Array.isArray(jobRecord.result)) {
+        for (const c of jobRecord.result) {
+          if (c?.id && !seenClipIds.has(c.id)) {
+            seenClipIds.add(c.id);
+            allClips.push(c);
+          }
+        }
+      }
+    }
+
+    // 3. Fallback to Supabase
+    if (allClips.length === 0) {
+      try {
+        const { data } = await supabase()
+          .from('clips')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(50);
+        if (data) {
+          for (const c of data) {
+            if (!seenClipIds.has(c.id)) {
+              seenClipIds.add(c.id);
+              allClips.push(c);
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // Sign URLs and return
+    const signedClips = await signClips(allClips);
+    return res.json(signedClips);
+  } catch (error: any) {
+    console.error('[VideoRoute]: /clips route failed:', error);
+    return res.status(500).json({ error: 'Failed to fetch clips' });
+  }
 });
 
 /**
@@ -873,12 +954,36 @@ router.get('/clips', requireUserJWT, async (req: Request, res: Response) => {
  *          Hardened: Accept-Ranges, keep-alive, client-disconnect cleanup,
  *          nosniff, stream error boundaries.
  */
+async function fetchClipAnywhere(clipId: string): Promise<any> {
+  // 1. Try Firebase / local queue
+  try {
+    const fbClip: any = await firebaseDb.getClip(clipId);
+    if (fbClip) {
+      return {
+        ...fbClip,
+        id: fbClip.id || clipId,
+        job_id: fbClip.jobId || fbClip.job_id,
+        user_id: fbClip.userId || fbClip.user_id,
+        video_url: fbClip.videoUrl || fbClip.video_url,
+      };
+    }
+  } catch {}
+
+  // 2. Try Supabase
+  try {
+    const db = new DatabaseService();
+    const sbClip = await db.getClip(clipId);
+    if (sbClip) return sbClip;
+  } catch {}
+
+  return null;
+}
+
 router.post('/play-token/:clipId', requireUserJWT, async (req: Request, res: Response) => {
   const clipId = String(req.params.clipId);
-  const db = new DatabaseService();
 
   try {
-    const clip = await db.getClip(clipId as string);
+    const clip = await fetchClipAnywhere(clipId);
     if (!clip) {
       return res.status(404).json({ error: 'Clip not found' });
     }
@@ -888,8 +993,7 @@ router.post('/play-token/:clipId', requireUserJWT, async (req: Request, res: Res
     }
 
     const token = createPlayToken(clipId, req.user.id);
-    const playUrl = buildPlayUrl(req, clipId as string, token);
-    // Also provide a direct download URL using the same token
+    const playUrl = buildPlayUrl(req, clipId, token);
     const downloadUrl = `${playUrl}&dl=1`;
 
     return res.json({
@@ -903,17 +1007,11 @@ router.post('/play-token/:clipId', requireUserJWT, async (req: Request, res: Res
   }
 });
 
-/**
- * @route   POST /api/video/download-token/:clipId
- * @desc    Issue a short-lived signed download URL for direct browser download.
- *          Opens natively in the browser with proper filename — no JS blob needed.
- */
 router.post('/download-token/:clipId', requireUserJWT, async (req: Request, res: Response) => {
   const clipId = String(req.params.clipId);
-  const db = new DatabaseService();
 
   try {
-    const clip = await db.getClip(clipId as string);
+    const clip = await fetchClipAnywhere(clipId);
     if (!clip) {
       return res.status(404).json({ error: 'Clip not found' });
     }
@@ -923,7 +1021,7 @@ router.post('/download-token/:clipId', requireUserJWT, async (req: Request, res:
     }
 
     const token = createPlayToken(clipId, req.user.id);
-    const playUrl = buildPlayUrl(req, clipId as string, token);
+    const playUrl = buildPlayUrl(req, clipId, token);
     const downloadUrl = `${playUrl}&dl=1`;
 
     return res.json({
@@ -939,16 +1037,14 @@ router.post('/download-token/:clipId', requireUserJWT, async (req: Request, res:
 router.get('/play/:clipId', async (req: Request, res: Response) => {
   const clipId = String(req.params.clipId);
   const playToken = typeof req.query.pt === 'string' ? req.query.pt : '';
-  const userId = verifyPlayToken(playToken, clipId as string);
+  const userId = verifyPlayToken(playToken, clipId);
 
   if (!userId) {
     return res.status(401).json({ error: 'Invalid or expired play token' });
   }
 
-  const db = new DatabaseService();
-
   try {
-    const clip = await db.getClip(clipId as string);
+    const clip = await fetchClipAnywhere(clipId);
     if (!clip) {
       return res.status(404).json({ error: 'Clip not found' });
     }
@@ -989,10 +1085,9 @@ router.get('/play/:clipId', async (req: Request, res: Response) => {
 
 router.get('/download/:clipId', requireUserJWT, async (req: Request, res: Response) => {
   const clipId = String(req.params.clipId);
-  const db = new DatabaseService();
 
   try {
-    const clip = await db.getClip(clipId as string);
+    const clip = await fetchClipAnywhere(clipId);
     if (!clip) {
       return res.status(404).json({ error: 'Clip not found' });
     }

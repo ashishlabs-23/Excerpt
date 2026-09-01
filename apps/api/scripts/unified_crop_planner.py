@@ -46,14 +46,13 @@ _mp_face_mesh = None
 
 try:
     import mediapipe as mp
-    _mp_face_detection = mp.solutions.face_detection
-    _MEDIAPIPE_AVAILABLE = True
-    try:
-        _mp_face_mesh = mp.solutions.face_mesh
-        _FACE_MESH_AVAILABLE = True
-    except Exception:
-        pass
-except ImportError:
+    if hasattr(mp, 'solutions') and hasattr(mp.solutions, 'face_detection'):
+        _mp_face_detection = mp.solutions.face_detection
+        _MEDIAPIPE_AVAILABLE = True
+        if hasattr(mp.solutions, 'face_mesh'):
+            _mp_face_mesh = mp.solutions.face_mesh
+            _FACE_MESH_AVAILABLE = True
+except Exception:
     pass
 
 _YOLO_AVAILABLE = False
@@ -604,6 +603,7 @@ def generate_crop_plan(frame_dir: Path, duration: float, output_path: Optional[P
     else:
         cascade_candidates = [
             os.environ.get("OPENCV_FACE_CASCADE"),
+            str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml") if hasattr(cv2, 'data') and hasattr(cv2.data, 'haarcascades') else None,
             "/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
             "/usr/local/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
             "/opt/opencv-data/haarcascade_frontalface_default.xml",

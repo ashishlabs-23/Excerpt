@@ -1705,6 +1705,44 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     });
     console.log(`[Worker]: RenderPlan created for job ${jobId} -> Scheduled ${renderPlan.renderJobs.length} render jobs for ${renderPlan.requestedClips} requested clips.`);
 
+    // Enqueue each planned render job into the local/Firebase & DB queue
+    for (const rj of renderPlan.renderJobs) {
+      const clip = dbClips.find((c: any) => c.id === rj.clipId);
+      const rawClip = clips.find((c: any) => c.id === rj.clipId || c.metadata?.id === rj.clipId);
+      const renderPayload = {
+        videoUrl: videoUrl,
+        clipId: rj.clipId,
+        clipStart: clip?.start_time ?? rawClip?.start_time ?? 0,
+        clipEnd: clip?.end_time ?? rawClip?.end_time ?? 0,
+        clipWords: (clip as any)?.words || (rawClip as any)?.words || [],
+        cropPlan: (clip as any)?.metadata?.nexus?.crop_plan || (rawClip as any)?.metadata?.nexus?.crop_plan || (clip as any)?.cropPlan || null,
+        aspectRatio: rj.aspectRatio,
+        quality: rj.quality,
+      };
+
+      try {
+        firebaseDb.createRenderJob({
+          id: rj.id,
+          job_id: jobId,
+          clip_id: rj.clipId,
+          status: 'queued',
+          payload: renderPayload,
+        });
+      } catch (err: any) {
+        console.warn(`[Worker]: Failed to queue render job in firebaseDb: ${err.message}`);
+      }
+
+      try {
+        await db.getSupabase().from('render_jobs').insert({
+          id: rj.id,
+          job_id: jobId,
+          clip_id: rj.clipId,
+          status: 'pending',
+          payload: renderPayload,
+        });
+      } catch {}
+    }
+
     try { await JobStateMachine.transition(db, jobId, JobStatus.RENDERING, { progress: 85 }); } catch (err: any) { console.warn(`Failed to set rendering status: ${err.message}`) }
     console.log('[Worker]: Awaiting RenderWorker completion contract...');
     

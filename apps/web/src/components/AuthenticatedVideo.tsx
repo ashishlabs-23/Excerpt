@@ -10,7 +10,7 @@ type AuthenticatedVideoProps = React.VideoHTMLAttributes<HTMLVideoElement> & {
 
 export const AuthenticatedVideo = forwardRef<HTMLVideoElement, AuthenticatedVideoProps>(
   function AuthenticatedVideo({ clipId, fallbackSrc, ...videoProps }, ref) {
-    const [src, setSrc] = useState<string | null>(null);
+    const [src, setSrc] = useState<string | null>(fallbackSrc || null);
     const [error, setError] = useState(false);
 
     useEffect(() => {
@@ -35,7 +35,7 @@ export const AuthenticatedVideo = forwardRef<HTMLVideoElement, AuthenticatedVide
       };
     }, [clipId, fallbackSrc]);
 
-    if (error) {
+    if (error && !src) {
       return <div className="w-full h-full bg-black/60" />;
     }
 

@@ -38,8 +38,7 @@ export class DownloadUtils {
           downloadedBytes += chunk.length;
           if (downloadedBytes > maxSizeBytes) {
             request.destroy();
-            file.close();
-            // Try to cleanup
+            file.destroy(); // destroy() aborts immediately; close() would flush buffered chunks first
             fs.unlink(destinationPath).catch(() => {});
             reject(new PipelineError(PipelineErrorCode.ResourceLimitExceeded, `File exceeds size limit of ${maxSizeBytes} bytes`));
           } else {
@@ -48,13 +47,15 @@ export class DownloadUtils {
         });
 
         response.on('end', () => {
-          file.end();
-          resolve();
+          // Resolve only after the write stream has fully flushed to disk.
+          // Calling resolve() before 'finish' causes the caller's stat() to race
+          // against an unflushed write buffer and can see a smaller file size.
+          file.end(() => resolve());
         });
       });
 
       request.on('error', (err) => {
-        file.close();
+        file.destroy(); // destroy() prevents any further buffered writes on error
         fs.unlink(destinationPath).catch(() => {});
         reject(new PipelineError(PipelineErrorCode.DownloadFailed, err.message));
       });

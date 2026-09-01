@@ -120,9 +120,18 @@ export class FirebaseDatabaseService {
   }
 
   private getQueueFilePath(): string {
-    const dir = path.join(process.cwd(), 'temp');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    return path.join(dir, 'active_queue.json');
+    const candidates = [
+      path.resolve(__dirname, '../../../temp'),
+      path.resolve(__dirname, '../../../../temp'),
+      path.resolve(process.cwd(), '../../temp'),
+      path.resolve(process.cwd(), 'temp')
+    ];
+    const rootDir = candidates.find(c => fs.existsSync(path.join(c, '../package.json')) && fs.existsSync(c))
+      || candidates.find(c => fs.existsSync(c))
+      || path.resolve(process.cwd(), 'temp');
+
+    if (!fs.existsSync(rootDir)) fs.mkdirSync(rootDir, { recursive: true });
+    return path.join(rootDir, 'active_queue.json');
   }
 
   readQueue(): { jobs: Record<string, any>; clips: Record<string, any>; render_jobs: Record<string, any> } {
@@ -259,6 +268,10 @@ export class FirebaseDatabaseService {
   }
 
   async getClipsForJob(jobId: string): Promise<FirestoreClipRecord[]> {
+    const queue = this.readQueue();
+    const allQueueClips = { ...Object.fromEntries(this.inMemoryClips), ...queue.clips };
+
+    let firestoreClips: FirestoreClipRecord[] = [];
     if (isFirebaseConfiguredWithCredentials()) {
       try {
         const snapshot = await this.db.collection('clips')
@@ -267,15 +280,24 @@ export class FirebaseDatabaseService {
           .get();
 
         if (snapshot && !snapshot.empty) {
-          return snapshot.docs.map(d => d.data() as FirestoreClipRecord);
+          firestoreClips = snapshot.docs.map(d => d.data() as FirestoreClipRecord);
         }
       } catch {}
     }
 
-    const queue = this.readQueue();
-    const allClips = { ...Object.fromEntries(this.inMemoryClips), ...queue.clips };
+    const mergedMap = new Map<string, any>();
+    for (const c of firestoreClips) {
+      mergedMap.set(c.id, c);
+    }
+    for (const [id, c] of Object.entries(allQueueClips)) {
+      const clip: any = c;
+      if (clip.jobId === jobId || clip.job_id === jobId) {
+        const existing = mergedMap.get(id) || {};
+        mergedMap.set(id, { ...existing, ...clip });
+      }
+    }
 
-    const clips = Object.values(allClips)
+    const clips = Array.from(mergedMap.values())
       .filter((c: any) => c.jobId === jobId || c.job_id === jobId)
       .sort((a: any, b: any) => (a.rank || 0) - (b.rank || 0));
 
@@ -283,17 +305,21 @@ export class FirebaseDatabaseService {
   }
 
   async getClip(clipId: string): Promise<FirestoreClipRecord | null> {
+    const queue = this.readQueue();
+    const queueClip = (this.inMemoryClips.get(clipId) || queue.clips[clipId]) as FirestoreClipRecord | undefined;
+
+    let firestoreClip: FirestoreClipRecord | null = null;
     if (isFirebaseConfiguredWithCredentials()) {
       try {
         const doc = await this.db.collection('clips').doc(clipId).get();
-        if (doc.exists) return doc.data() as FirestoreClipRecord;
+        if (doc.exists) firestoreClip = doc.data() as FirestoreClipRecord;
       } catch {}
     }
 
-    const queue = this.readQueue();
-    if (queue.clips[clipId]) return queue.clips[clipId] as FirestoreClipRecord;
-
-    return (this.inMemoryClips.get(clipId) as FirestoreClipRecord) || null;
+    if (queueClip && firestoreClip) {
+      return { ...firestoreClip, ...queueClip };
+    }
+    return queueClip || firestoreClip || null;
   }
 
   async getNextQueuedJob(): Promise<FirestoreJobRecord | null> {
@@ -398,7 +424,7 @@ export class FirebaseDatabaseService {
 
   createRenderJob(renderJobData: any): any {
     const queue = this.readQueue();
-    if (!queue.render_jobs) queue.render_jobs = [];
+    if (!Array.isArray(queue.render_jobs)) queue.render_jobs = [];
     const jobWithTimestamp = {
       ...renderJobData,
       id: renderJobData.id || crypto.randomUUID(),
@@ -413,7 +439,7 @@ export class FirebaseDatabaseService {
 
   claimRenderJob(workerId: string): any | null {
     const queue = this.readQueue();
-    if (!queue.render_jobs || queue.render_jobs.length === 0) return null;
+    if (!Array.isArray(queue.render_jobs) || queue.render_jobs.length === 0) return null;
     const queuedIdx = queue.render_jobs.findIndex((rj: any) => rj.status === 'pending' || rj.status === 'queued');
     if (queuedIdx !== -1) {
       const renderJob = queue.render_jobs[queuedIdx];
@@ -430,7 +456,7 @@ export class FirebaseDatabaseService {
 
   updateRenderJob(id: string, updates: any): void {
     const queue = this.readQueue();
-    if (!queue.render_jobs) return;
+    if (!Array.isArray(queue.render_jobs)) return;
     const idx = queue.render_jobs.findIndex((rj: any) => (id && rj.id === id) || (updates.clip_id && rj.clip_id === updates.clip_id) || (updates.clipId && rj.clip_id === updates.clipId));
     if (idx !== -1) {
       queue.render_jobs[idx] = {
@@ -444,7 +470,8 @@ export class FirebaseDatabaseService {
 
   getRenderJobsForJob(jobId: string): any[] {
     const queue = this.readQueue();
-    return (queue.render_jobs || []).filter((rj: any) => rj.job_id === jobId || rj.jobId === jobId);
+    if (!Array.isArray(queue.render_jobs)) return [];
+    return queue.render_jobs.filter((rj: any) => rj.job_id === jobId || rj.jobId === jobId);
   }
 
   updateClipStatus(clipId: string, status: string): void {

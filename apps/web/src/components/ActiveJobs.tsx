@@ -302,7 +302,7 @@ export const ActiveJobs: React.FC<{ onJobSelect?: (job: any) => void }> = ({ onJ
 
                     {isCompleted && (
                       <div className="mb-3 text-[9px] font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                        <CheckCircle2 size={10} /> {job.payload?.numClips || 3} Clips Generated
+                        <CheckCircle2 size={10} /> {((job as any).clips?.length || (job as any).result?.length || job.payload?.numClips || (job as any).num_clips || (job as any).numClips || 0)} {(((job as any).clips?.length || (job as any).result?.length || job.payload?.numClips || (job as any).num_clips || (job as any).numClips || 0) === 1) ? 'Clip' : 'Clips'} Generated
                       </div>
                     )}
 

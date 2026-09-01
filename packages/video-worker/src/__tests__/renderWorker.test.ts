@@ -46,6 +46,9 @@ describe('Production Render Engine', () => {
     bullMQQueueMock = new Set<string>();
 
     worker = new RenderWorker(logger, diskManager, ffmpegRunner, coordinator, bullMQQueueMock);
+
+    // Initialize coordinator remaining count for test plan
+    coordinator.initialize('job-r1', 10);
   });
 
   afterEach(() => {
@@ -53,7 +56,7 @@ describe('Production Render Engine', () => {
   });
 
   it('1. duplicate render-job ID is rejected, not double-rendered', async () => {
-    const executeSpy = jest.spyOn(ffmpegRunner, 'executeWithTimeout');
+    const executeSpy = jest.spyOn(ffmpegRunner, 'executeWithTimeout').mockResolvedValue(undefined);
     
     // First run
     await worker.processJob(validPlan, 0, {} as any);
@@ -84,6 +87,7 @@ describe('Production Render Engine', () => {
   });
 
   it('3. temp directory is cleaned up after a successful render', async () => {
+    jest.spyOn(ffmpegRunner, 'executeWithTimeout').mockResolvedValue(undefined);
     const cleanupSpy = jest.spyOn(diskManager, 'cleanupTempDir');
     await worker.processJob(validPlan, 2, {} as any);
     

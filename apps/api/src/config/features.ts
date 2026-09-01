@@ -1,20 +1,20 @@
 export const NEXUS_FEATURES = {
   // Signal Modules (Analysis)
-  audio_intelligence: process.env.EXCERPT_NEXUS_AUDIO === 'true' || false,
-  face_tracking: process.env.EXCERPT_NEXUS_FACE === 'true' || false,
-  visual_activity: process.env.EXCERPT_NEXUS_VISUAL === 'true' || false,
+  audio_intelligence: process.env.EXCERPT_NEXUS_AUDIO !== 'false',
+  face_tracking: process.env.EXCERPT_NEXUS_FACE !== 'false',
+  visual_activity: process.env.EXCERPT_NEXUS_VISUAL !== 'false',
   cinematic_cropping: process.env.EXCERPT_CINEMATIC_CROP !== 'false', // ON by default — Stage 5b
   
   // Enhancement Modules (Generative)
-  hook_rewrite: process.env.EXCERPT_NEXUS_HOOK === 'true' || false,
-  metadata_generator: process.env.EXCERPT_NEXUS_METADATA === 'true' || false,
-  thumbnail_generator: process.env.EXCERPT_NEXUS_THUMBNAIL === 'true' || false,
+  hook_rewrite: process.env.EXCERPT_NEXUS_HOOK !== 'false',
+  metadata_generator: process.env.EXCERPT_NEXUS_METADATA !== 'false',
+  thumbnail_generator: process.env.EXCERPT_NEXUS_THUMBNAIL !== 'false',
   
   // Logic & Persistence
   learning_module: process.env.EXCERPT_NEXUS_LEARNING === 'true' || false,
   
   // Scoring Merge Logic
-  scoring_merge_enabled: process.env.EXCERPT_NEXUS_SCORE_MERGE === 'true' || false,
+  scoring_merge_enabled: process.env.EXCERPT_NEXUS_SCORE_MERGE !== 'false',
   
   // Weights (MUST sum to 1.0)
   weights: {

@@ -536,7 +536,7 @@ export default function DashboardPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
             >
-              <RecentClips clips={activeJob?.result} />
+              <RecentClips clips={activeJob?.result && activeJob.result.length > 0 ? activeJob.result : activeJob?.clips && activeJob.clips.length > 0 ? activeJob.clips : undefined} />
             </motion.section>
           </div>
 

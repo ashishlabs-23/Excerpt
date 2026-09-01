@@ -91,10 +91,9 @@ export class StrategyRunner {
       '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
       '--merge-output-format', 'mp4',
       '-o', destinationPath,
-      url
     ];
 
-    // Mock applying strategy-specific yt-dlp args
+    // Apply strategy-specific yt-dlp args BEFORE the URL (positional arg must be last)
     if (strategy === 'android') {
       args.push('--extractor-args', 'youtube:player_client=android');
     } else if (strategy === 'ios') {
@@ -102,27 +101,35 @@ export class StrategyRunner {
     }
     // etc...
 
+    args.push(url); // URL must always be the final positional argument
+
     const cp = spawn('yt-dlp', args);
     let lastSize = 0;
     let inactivityTimer: NodeJS.Timeout | undefined;
+    let sizeViolated = false;
+    let inactivityExceeded = false;
 
-    // Watchdog intervals
+    // Watchdog: polls file size every 2s to enforce the size ceiling.
+    // IMPORTANT: stat errors (file not yet created) are caught separately so
+    // the size-limit PipelineError is never silently swallowed.
     const watchdogs = setInterval(async () => {
+      let stats;
       try {
-        const stats = await stat(destinationPath);
-        
-        if (stats.size > config.maxSizeBytes) {
-          clearInterval(watchdogs);
-          cp.kill('SIGTERM');
-          throw new PipelineError(PipelineErrorCode.ResourceLimitExceeded, `File exceeds size limit of ${config.maxSizeBytes} bytes`);
-        }
-        
-        if (stats.size > lastSize) {
-          lastSize = stats.size;
-          telemetry.bytesDownloaded = lastSize;
-        }
-      } catch (e) {
-        // File might not exist yet
+        stats = await stat(destinationPath);
+      } catch {
+        return; // File might not exist yet — ignore and retry next tick
+      }
+
+      if (stats.size > config.maxSizeBytes) {
+        clearInterval(watchdogs);
+        cp.kill('SIGTERM');
+        sizeViolated = true; // Picked up by close handler — avoids throw-inside-catch
+        return;
+      }
+
+      if (stats.size > lastSize) {
+        lastSize = stats.size;
+        telemetry.bytesDownloaded = lastSize;
       }
     }, 2000);
 
@@ -131,9 +138,8 @@ export class StrategyRunner {
       if (inactivityTimer) clearTimeout(inactivityTimer);
       inactivityTimer = setTimeout(() => {
         clearInterval(watchdogs);
+        inactivityExceeded = true; // Picked up by close handler for structured error
         cp.kill('SIGTERM');
-        // The error will be caught by the close event handler if we reject there,
-        // but it's cleaner to reject here and let the tree-kill clean it up.
       }, inactivityTimeoutMs);
     };
 
@@ -147,9 +153,17 @@ export class StrategyRunner {
         clearInterval(watchdogs);
         clearTimeout(inactivityTimer);
         telemetry.exitCode = code;
-        
-        if (code === 0) resolve();
-        else reject(new Error(`yt-dlp exited with code ${code}`));
+
+        // Check flags set by watchdog/inactivity before falling back to exit code
+        if (sizeViolated) {
+          reject(new PipelineError(PipelineErrorCode.ResourceLimitExceeded, `File exceeds size limit of ${config.maxSizeBytes} bytes`));
+        } else if (inactivityExceeded) {
+          reject(new PipelineError(PipelineErrorCode.Timeout, 'yt-dlp stalled: no output for 15s'));
+        } else if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`yt-dlp exited with code ${code}`));
+        }
       });
       cp.on('error', (err) => {
         clearInterval(watchdogs);
@@ -163,10 +177,8 @@ export class StrategyRunner {
     } catch (err: any) {
       clearInterval(watchdogs);
       clearTimeout(inactivityTimer);
-      if (err.message.includes('timed out')) {
-        throw new PipelineError(PipelineErrorCode.Timeout, 'yt-dlp timed out');
-      }
-      if (err.message.includes('exceeds size limit')) {
+      // Re-throw structured PipelineErrors (Timeout, ResourceLimitExceeded) as-is
+      if (err instanceof PipelineError) {
         throw err;
       }
       throw new PipelineError(PipelineErrorCode.DownloadFailed, err.message);

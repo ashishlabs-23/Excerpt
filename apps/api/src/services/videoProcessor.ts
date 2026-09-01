@@ -109,6 +109,33 @@ export const getBinaryPath = (name: string) => {
 
 const highQualityEncodeArgs = () => {
   const isDraft = process.env.RENDER_MODE === 'draft';
+  const hwAccel = process.env.EXCERPT_HW_ACCEL;
+
+  if (hwAccel === 'nvenc') {
+    return [
+      '-c:v', 'h264_nvenc',
+      '-preset', isDraft ? 'p4' : 'p6',
+      '-cq', isDraft ? '22' : '19',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '320k',
+      '-ar', '48000',
+      '-movflags', '+faststart'
+    ];
+  }
+
+  if (hwAccel === 'videotoolbox') {
+    return [
+      '-c:v', 'h264_videotoolbox',
+      '-b:v', '6M',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '320k',
+      '-ar', '48000',
+      '-movflags', '+faststart'
+    ];
+  }
+
   return [
     '-c:v', 'libx264',
     '-preset', isDraft ? 'fast' : 'medium',
@@ -722,6 +749,7 @@ export class VideoProcessor {
         '-i', inputPath,
         '-vf', `ass='${relativeSubPath}'`,
         ...highQualityEncodeArgs(),
+        '-af', 'loudnorm=I=-14:LRA=7:TP=-1.5,highpass=f=80',
         '-c:a', 'aac',
         '-b:a', '192k',
         '-ar', '48000',
