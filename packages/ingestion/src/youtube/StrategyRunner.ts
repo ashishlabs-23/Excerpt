@@ -88,7 +88,7 @@ export class StrategyRunner {
     telemetry: StrategyTelemetry
   ): Promise<void> {
     const args = [
-      '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+      '-f', 'bestvideo[height<=2160]+bestaudio/bestvideo+bestaudio/best[ext=mp4]/best',
       '--merge-output-format', 'mp4',
       '-o', destinationPath,
     ];
