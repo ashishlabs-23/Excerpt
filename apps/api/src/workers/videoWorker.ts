@@ -20,7 +20,7 @@ if (foundEnv) {
 }
 
 
-import { VideoProcessor } from '../services/videoProcessor';
+import { VideoProcessor, getBinaryPath } from '../services/videoProcessor';
 import { StorageService } from '../services/storageService';
 import { DatabaseService } from '../services/supabaseService';
 import { TranscriptionService, TranscriptionResult, WordInfo } from '../services/transcriptionService';
@@ -254,8 +254,9 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
 
   // FFmpeg Health Check before starting
   try {
+    const ffmpegBin = getBinaryPath('ffmpeg');
     await new Promise<void>((resolve, reject) => {
-      execFile('ffmpeg', ['-version'], (err) => {
+      execFile(ffmpegBin, ['-version'], (err) => {
         if (err) {
           reject(new Error(`FFmpeg health check failed: ${err.message}`));
         } else {
@@ -263,7 +264,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         }
       });
     });
-    console.log(`[Worker]: FFmpeg binary is available and healthy.`);
+    console.log(`[Worker]: FFmpeg binary (${ffmpegBin}) is available and healthy.`);
   } catch (healthErr: any) {
     throw new Error(`CRITICAL STARTUP FAILURE: ${healthErr.message}`);
   }
@@ -272,7 +273,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
   const aiService = new AIService();
   const isAiHealthy = await aiService.healthCheck();
   if (!isAiHealthy) {
-    throw new Error(`AI_HEALTH_CHECK_FAILED: All AI providers exhausted`);
+    console.warn(`[Worker]: AI Health Check ping failed. Pipeline will use heuristic/transcript-energy fallback if needed.`);
   }
 
   const monitor = createPipelineMonitor();

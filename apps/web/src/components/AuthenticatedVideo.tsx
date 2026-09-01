@@ -43,6 +43,22 @@ export const AuthenticatedVideo = forwardRef<HTMLVideoElement, AuthenticatedVide
       return <div className="w-full h-full bg-black/40 animate-pulse" />;
     }
 
-    return <video {...videoProps} ref={ref} src={src} />;
+    return (
+      <video
+        {...videoProps}
+        ref={ref}
+        src={src}
+        onError={(e) => {
+          if (fallbackSrc && src !== fallbackSrc) {
+            setSrc(fallbackSrc);
+          } else {
+            setError(true);
+          }
+          if (videoProps.onError) {
+            videoProps.onError(e);
+          }
+        }}
+      />
+    );
   },
 );
