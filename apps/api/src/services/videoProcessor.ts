@@ -608,32 +608,32 @@ export class VideoProcessor {
           };
         } else {
           // Face-Driven & Smart Composition Mode (Talking Head, Podcast, Gaming, Mixed)
-          if (nexusCropPlan && nexusCropPlan.points && nexusCropPlan.points.length > 0) {
-            try {
-              const smoothedPoints = this.smoothCropPoints(nexusCropPlan.points);
-              const compressedPoints = this.compressCropPoints(smoothedPoints);
-              cropPlan = this.buildCropExpression(compressedPoints, maxOffset, maxVOffset);
-              cropPlan.mode = 'dynamic';
-            } catch (error: any) {
-              // Smart Composition Fallback: Eye-Line (Y=25% margin) + Rule of Thirds (X=35%)
-              cropPlan = {
-                mode: 'center',
-                xExpression: '(in_w-out_w)*0.35',
-                yExpression: '(in_h-out_h)*0.25',
-                debug: 'rule-of-thirds fallback (expression failure)',
-              };
+          let speakerNormX = 0.5; // default center of 16:9 source
+
+          if (nexusCropPlan && Array.isArray(nexusCropPlan.points) && nexusCropPlan.points.length > 0) {
+            const valid = nexusCropPlan.points.filter((p: any) => typeof p.x === 'number' && p.x >= 0 && p.x <= 1);
+            if (valid.length > 0) {
+              speakerNormX = valid.reduce((sum: number, p: any) => sum + p.x, 0) / valid.length;
             }
-          } else {
-            // Smart Composition Fallback: Eye-Line (Y=25% margin) + Rule of Thirds (X=35%)
-            cropPlan = {
-              mode: 'center',
-              xExpression: '(in_w-out_w)*0.35',
-              yExpression: '(in_h-out_h)*0.25',
-              debug: 'rule-of-thirds fallback (analysis fallback)',
-            };
+          } else if (nexusCropPlan && Array.isArray(nexusCropPlan.frames_data) && nexusCropPlan.frames_data.length > 0) {
+            const valid = nexusCropPlan.frames_data.filter((f: any) => typeof f.x === 'number' && f.x >= 0 && f.x <= 1);
+            if (valid.length > 0) {
+              speakerNormX = valid.reduce((sum: number, f: any) => sum + f.x, 0) / valid.length;
+            }
           }
 
-          cropFilter = `scale=${scaledWidth}:${scaledHeight}:flags=lanczos,crop=${cropWidth}:${cropHeight}:'${cropPlan.xExpression}':'${cropPlan.yExpression}',setsar=1`;
+          // Center the 1080px crop window directly around the speaker's detected horizontal position
+          const targetCropX = Math.round(Math.max(0, Math.min(maxOffset, speakerNormX * scaledWidth - cropWidth / 2)));
+          const targetCropY = Math.round(Math.max(0, Math.min(maxVOffset, maxVOffset / 2)));
+
+          cropPlan = {
+            mode: 'center',
+            xExpression: String(targetCropX),
+            yExpression: String(targetCropY),
+            debug: `face-centered speaker crop (xNorm=${speakerNormX.toFixed(2)}, targetX=${targetCropX})`,
+          };
+
+          cropFilter = `scale=${scaledWidth}:${scaledHeight}:flags=lanczos,crop=${cropWidth}:${cropHeight}:${targetCropX}:${targetCropY},setsar=1`;
         }
 
         return new Promise<string>((resolve, reject) => {
@@ -744,10 +744,10 @@ export class VideoProcessor {
   async addCaptions(inputPath: string, outputPath: string, subtitlePath: string): Promise<string> {
     const bin = getBinaryPath('ffmpeg');
     return new Promise((resolve, reject) => {
-      const relativeSubPath = path.relative(process.cwd(), subtitlePath).replace(/\\/g, '/').replace(/'/g, "\\\\'");
+      const safeAssPath = path.resolve(subtitlePath).replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\\\'");
       const args = [
         '-i', inputPath,
-        '-vf', `ass='${relativeSubPath}'`,
+        '-vf', `ass='${safeAssPath}'`,
         ...highQualityEncodeArgs(),
         '-af', 'loudnorm=I=-14:LRA=7:TP=-1.5,highpass=f=80',
         '-c:a', 'aac',

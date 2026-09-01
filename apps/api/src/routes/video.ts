@@ -123,10 +123,13 @@ function resolveLocalClipPath(videoUrl: string, jobId?: string, showCaptions = t
         path.resolve(root, 'temp', 'jobs', jobId, fileName),
         path.resolve(root, 'temp', jobId, fileName),
         path.resolve(root, 'temp', 'jobs', jobId, `clip-${fileName}`),
+        path.resolve(root, 'temp', jobId, `clip-${fileName}`),
+        path.resolve(root, 'temp', jobId, `cut-${fileName}`),
       );
     }
     candidatePaths.push(
       path.resolve(root, 'temp', cleanPath),
+      path.resolve(root, 'temp', 'jobs', cleanPath),
       path.resolve(root, 'temp', 'clips', fileName),
       path.resolve(root, 'temp', fileName),
       path.resolve(root, 'clips', fileName),

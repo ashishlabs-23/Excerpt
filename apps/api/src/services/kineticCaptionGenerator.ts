@@ -37,25 +37,25 @@ export class KineticCaptionGenerator {
         preset: CaptionPreset = 'hormozi'
     ) {
         let highlightColor = '&H002BF500&'; // Hormozi Lime Green
-        let outlineThickness = 7;
+        let outlineThickness = 4;
         let shadowThickness = 0;
-        let fontSize = 96;
+        let fontSize = 60;
 
         if (preset === 'mrbeast') {
             highlightColor = '&H0000D7FF&'; // MrBeast Golden Yellow
-            outlineThickness = 8;
-            shadowThickness = 4;
-            fontSize = 98;
+            outlineThickness = 5;
+            shadowThickness = 2;
+            fontSize = 62;
         } else if (preset === 'neon') {
             highlightColor = '&H00FFFF00&'; // Electric Cyan
-            outlineThickness = 6;
-            shadowThickness = 2;
-            fontSize = 94;
+            outlineThickness = 4;
+            shadowThickness = 1;
+            fontSize = 58;
         } else if (preset === 'minimalist') {
             highlightColor = '&H00FFFFFF&';
-            outlineThickness = 4;
+            outlineThickness = 3;
             shadowThickness = 0;
-            fontSize = 86;
+            fontSize = 52;
         }
 
         let assContent = `[Script Info]
@@ -66,7 +66,7 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial Black,${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${outlineThickness},${shadowThickness},2,10,10,460,1
+Style: Default,Arial,${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${outlineThickness},${shadowThickness},2,40,40,280,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -139,13 +139,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     const formatted = emoji ? `${cleanWord} ${emoji}` : cleanWord;
                     
                     if (idx === activeIdx) {
-                        return `{\\1c${highlightColor}}{\\fscx115\\fscy115}${formatted}{\\fscx100\\fscy100}{\\1c&HFFFFFF&}`;
+                        return `{\\1c${highlightColor}\\fscx108\\fscy108}${formatted}{\\fscx100\\fscy100\\1c&HFFFFFF&}`;
                     }
                     return formatted;
                 }).join(" ");
 
-                // Positioned at 75% height with a dynamic scale transition \t
-                const line = `Dialogue: 0,${startASS},${endASS},Default,,0,0,0,,{\\pos(540,1440)}{\\fscx100\\fscy100\\t(0,100,\\fscx114\\fscy114)\\t(100,200,\\fscx100\\fscy100)}${phraseText}\n`;
+                const line = `Dialogue: 0,${startASS},${endASS},Default,,0,0,0,,${phraseText}\n`;
                 assContent += line;
             });
         });

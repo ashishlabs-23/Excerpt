@@ -154,12 +154,19 @@ async function processRenderJob(renderJob: any) {
 
       if (clipWords && clipWords.length > 0) {
         const assFilePath = path.join(tempDir, `subs-${clipId}.ass`);
-        captionService.generateASS(clipWords, assFilePath);
-        
-        const captionStart = Date.now();
-        console.log(`[RenderWorker]: Adding Viral Captions to clip ${clipId}...`);
-        await processor.addCaptions(intermediatePath, outputPath, assFilePath);
-        captionMs = Date.now() - captionStart;
+        try {
+          captionService.generateASS(clipWords, assFilePath);
+          const captionStart = Date.now();
+          console.log(`[RenderWorker]: Adding Viral Captions to clip ${clipId}...`);
+          await processor.addCaptions(intermediatePath, outputPath, assFilePath);
+          captionMs = Date.now() - captionStart;
+        } catch (capErr: any) {
+          console.warn(`[RenderWorker]: Caption burn-in failed (${capErr.message}), falling back to clean cut video.`);
+          const fs = require('fs');
+          if (fs.existsSync(intermediatePath)) {
+            fs.copyFileSync(intermediatePath, outputPath);
+          }
+        }
       } else {
         const fs = require('fs');
         fs.renameSync(intermediatePath, outputPath);
