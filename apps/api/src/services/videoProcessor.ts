@@ -749,7 +749,7 @@ export class VideoProcessor {
         '-i', inputPath,
         '-vf', `ass='${safeAssPath}'`,
         ...highQualityEncodeArgs(),
-        '-af', 'loudnorm=I=-14:LRA=7:TP=-1.5,highpass=f=80',
+        '-af', 'afftdn=nf=-25,highpass=f=80,loudnorm=I=-14:LRA=7:TP=-1.5',
         '-c:a', 'aac',
         '-b:a', '192k',
         '-ar', '48000',
@@ -763,6 +763,46 @@ export class VideoProcessor {
           return;
         }
         resolve(outputPath);
+      });
+    });
+  }
+
+  /**
+   * Detects silent pauses (> 0.5s) in an audio or video file using FFmpeg silencedetect.
+   * Useful for high-retention jump cutting.
+   */
+  async detectSilenceIntervals(inputPath: string, noiseThresholdDb = -35, minDurationSec = 0.5): Promise<Array<{ start: number; end: number; duration: number }>> {
+    const bin = getBinaryPath('ffmpeg');
+    return new Promise((resolve) => {
+      const args = [
+        '-i', inputPath,
+        '-af', `silencedetect=noise=${noiseThresholdDb}dB:d=${minDurationSec}`,
+        '-f', 'null',
+        '-'
+      ];
+
+      execFile(bin, args, { maxBuffer: 1024 * 1024 * 50 }, (error, stdout, stderr) => {
+        const output = stderr || stdout || '';
+        const silences: Array<{ start: number; end: number; duration: number }> = [];
+        const startRegex = /silence_start:\s*([\d.]+)/g;
+        const endRegex = /silence_end:\s*([\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)/g;
+
+        const starts: number[] = [];
+        let match: RegExpExecArray | null;
+        while ((match = startRegex.exec(output)) !== null) {
+          starts.push(parseFloat(match[1]));
+        }
+
+        let idx = 0;
+        while ((match = endRegex.exec(output)) !== null) {
+          const end = parseFloat(match[1]);
+          const duration = parseFloat(match[2]);
+          const start = starts[idx] !== undefined ? starts[idx] : Math.max(0, end - duration);
+          silences.push({ start, end, duration });
+          idx++;
+        }
+
+        resolve(silences);
       });
     });
   }

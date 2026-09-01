@@ -221,8 +221,12 @@ class SmoothTracker:
         return self._apply_ema_and_deadzone(kx, ky)
 
     def _apply_ema_and_deadzone(self, kx: float, ky: float) -> Tuple[float, float]:
-        self.ema_x = EMA_ALPHA * kx + (1 - EMA_ALPHA) * self.ema_x
-        self.ema_y = EMA_ALPHA * ky + (1 - EMA_ALPHA) * self.ema_y
+        dist = abs(kx - self.last_output_x)
+        # Dynamic cubic pan acceleration when switching between speakers
+        effective_alpha = min(0.45, EMA_ALPHA * (1.0 + 2.5 * (dist ** 2))) if dist > 0.1 else EMA_ALPHA
+
+        self.ema_x = effective_alpha * kx + (1 - effective_alpha) * self.ema_x
+        self.ema_y = effective_alpha * ky + (1 - effective_alpha) * self.ema_y
 
         out_x = self.ema_x
         out_y = self.ema_y

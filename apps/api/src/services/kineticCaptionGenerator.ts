@@ -139,7 +139,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     const formatted = emoji ? `${cleanWord} ${emoji}` : cleanWord;
                     
                     if (idx === activeIdx) {
-                        return `{\\1c${highlightColor}\\fscx108\\fscy108}${formatted}{\\fscx100\\fscy100\\1c&HFFFFFF&}`;
+                        return `{\\1c${highlightColor}\\t(0,70,\\fscx112\\fscy112)\\t(70,140,\\fscx106\\fscy106)}${formatted}{\\fscx100\\fscy100\\1c&HFFFFFF&}`;
                     }
                     return formatted;
                 }).join(" ");
