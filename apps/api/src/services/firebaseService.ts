@@ -308,6 +308,11 @@ export class FirebaseDatabaseService {
     const queue = this.readQueue();
     const queueClip = (this.inMemoryClips.get(clipId) || queue.clips[clipId]) as FirestoreClipRecord | undefined;
 
+    // Fast path: If available locally, return immediately for sub-millisecond response
+    if (queueClip) {
+      return queueClip;
+    }
+
     let firestoreClip: FirestoreClipRecord | null = null;
     if (isFirebaseConfiguredWithCredentials()) {
       try {
@@ -316,10 +321,7 @@ export class FirebaseDatabaseService {
       } catch {}
     }
 
-    if (queueClip && firestoreClip) {
-      return { ...firestoreClip, ...queueClip };
-    }
-    return queueClip || firestoreClip || null;
+    return firestoreClip || null;
   }
 
   async getNextQueuedJob(): Promise<FirestoreJobRecord | null> {
