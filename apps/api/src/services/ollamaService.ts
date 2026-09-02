@@ -45,7 +45,10 @@ function getCacheKey(options: OllamaBaseOptions) {
 }
 
 function stripCodeFences(text: string) {
-  return text.replace(/```json|```/gi, '').trim();
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/```json|```/gi, '')
+    .trim();
 }
 
 export function extractJsonSubstring(

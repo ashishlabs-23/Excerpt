@@ -62,7 +62,6 @@ function SettingsContent() {
         throw new Error(data.error || "Purge failed");
       }
 
-      localStorage.removeItem("lastJobId");
       setPurgeMessage("Workspace cleared successfully.");
       setConfirmation("");
     } catch (error: any) {

@@ -188,8 +188,19 @@ export class DownloadIntelligenceEngine {
     onProgress: (percent: number, speed: string, eta: string) => void
   ): Promise<{ outputPath: string; command: string[], finalSpeedBps?: number }> {
     return new Promise((resolve, reject) => {
+      const cap = strategy.resolutionCap;
+      const formatSelector = [
+        `bestvideo[height<=${cap}][protocol^=m3u8]+bestaudio[protocol^=m3u8]`,
+        `bestvideo[height<=${cap}][protocol^=m3u8]`,
+        `best[height<=${cap}][protocol^=m3u8]`,
+        `bestvideo[height<=${cap}][ext=mp4]+bestaudio[ext=m4a]`,
+        `bestvideo[height<=${cap}]+bestaudio`,
+        `best[height<=${cap}]`,
+        'best'
+      ].join('/');
+
       const args = [
-        '-f', `bestvideo[height<=${strategy.resolutionCap}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${strategy.resolutionCap}]+bestaudio/best[height<=${strategy.resolutionCap}]/best`,
+        '-f', formatSelector,
         '--merge-output-format', 'mp4',
         '-o', outputPath,
         '--no-playlist',

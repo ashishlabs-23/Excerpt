@@ -16,14 +16,24 @@ export const AuthenticatedVideo = forwardRef<HTMLVideoElement, AuthenticatedVide
     useEffect(() => {
       let cancelled = false;
 
+      // If we don't have a clipId, use fallbackSrc directly
+      if (!clipId) {
+        if (fallbackSrc) setSrc(fallbackSrc);
+        return;
+      }
+
       getClipPlayUrl(clipId)
         .then((playUrl) => {
-          if (!cancelled) setSrc(playUrl);
+          if (!cancelled && playUrl) {
+            setSrc(playUrl);
+            setError(false);
+          }
         })
         .catch(() => {
           if (!cancelled) {
             if (fallbackSrc) {
               setSrc(fallbackSrc);
+              setError(false);
             } else {
               setError(true);
             }
@@ -36,7 +46,7 @@ export const AuthenticatedVideo = forwardRef<HTMLVideoElement, AuthenticatedVide
     }, [clipId, fallbackSrc]);
 
     if (error && !src) {
-      return <div className="w-full h-full bg-black/60" />;
+      return <div className="w-full h-full bg-black/60 flex items-center justify-center text-xs text-white/30">Video Unavailable</div>;
     }
 
     if (!src) {
@@ -51,6 +61,7 @@ export const AuthenticatedVideo = forwardRef<HTMLVideoElement, AuthenticatedVide
         onError={(e) => {
           if (fallbackSrc && src !== fallbackSrc) {
             setSrc(fallbackSrc);
+            setError(false);
           } else {
             setError(true);
           }

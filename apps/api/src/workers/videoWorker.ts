@@ -438,7 +438,12 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           const scaledProgress = Math.max(lastReportedProgress, calculatedProgress);
           lastReportedProgress = scaledProgress;
           
-          const updatePayload: any = { progress: scaledProgress };
+          const updatePayload: any = { 
+            progress: scaledProgress,
+            stage_label: percent > 0 
+              ? `Downloading HD source: ${Math.round(percent)}%${speed ? ` (${speed})` : ''}${eta ? ` • ETA ${eta}` : ''}`
+              : 'Connecting to video stream & downloading HD source...'
+          };
           
           if (speed || eta || strategy) {
             updatePayload.debug_data = {
@@ -573,13 +578,16 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       if (!forceDraftMode) {
         try {
           if (fs.existsSync(cachedTranscriptionPath)) {
-          console.log(`[Worker]: ðŸ§  Semantic Cache HIT! Loading existing transcription.`);
-          const cachedData = JSON.parse(fs.readFileSync(cachedTranscriptionPath, 'utf8'));
-          const parsedGraph = typeof cachedData.graph === 'string' ? JSON.parse(cachedData.graph) : cachedData.graph;
-          transcriptionText = cachedData.text || (parsedGraph?.transcript ? parsedGraph.transcript.map((s: any) => s.text).join(' ') : '');
-          segments = cachedData.segments || (parsedGraph?.transcript ? parsedGraph.transcript.map((s: any) => ({ text: s.text, start: s.start, end: s.end, speaker: s.speaker })) : []);
-          words = cachedData.words || [];
-        } else {
+            console.log(`[Worker]: 🧠 Semantic Cache HIT! Loading existing transcription.`);
+            const cachedData = JSON.parse(fs.readFileSync(cachedTranscriptionPath, 'utf8'));
+            const parsedGraph = typeof cachedData.graph === 'string' ? JSON.parse(cachedData.graph) : cachedData.graph;
+            transcriptionText = cachedData.text || (parsedGraph?.transcript ? parsedGraph.transcript.map((s: any) => s.text).join(' ') : '');
+            segments = cachedData.segments || (parsedGraph?.transcript ? parsedGraph.transcript.map((s: any) => ({ text: s.text, start: s.start, end: s.end, speaker: s.speaker })) : []);
+            words = cachedData.words && Array.isArray(cachedData.words) && cachedData.words.length > 0
+              ? cachedData.words
+              : (parsedGraph?.transcript ? parsedGraph.transcript.flatMap((s: any) => s.words || []) : []);
+            console.log(`[Worker]: Restored ${segments.length} segments and ${words.length} word timestamps from semantic cache.`);
+          } else {
           await JobStateMachine.transition(db, jobId, JobStatus.TRANSCRIBING, { progress: 20, stage_label: 'Extracting audio & preparing analysis frames' });
           console.log(`[Worker]: 🌪️ Groq / Neural Decode & Spatial Graph Build START...`);
           const graphBuildStart = Date.now();
@@ -653,6 +661,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           // Serialize and cache the pipeline context for future bypassing
           const cacheData = {
             graph,
+            words,
             eventGraph,
             storyGraph,
             rankedCandidates
@@ -1570,6 +1579,12 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       const summaryText = (clip as any).enhancements?.description || clip.summary || clip.content;
       const clipScore = clip.clip_score || clip.virality_score;
 
+      // Extract words matching this clip's time range
+      const rawClipWords = (clip as any).words || (words || []).filter(
+        (w: any) => typeof w.start === 'number' && typeof w.end === 'number' && w.start >= (renderStart - 0.25) && w.end <= (renderEnd + 0.25)
+      );
+      (clip as any).words = rawClipWords;
+
       // DB.1: Prepare Clip DB record
       const dbClip = {
         id: clipId,
@@ -1594,6 +1609,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           nexus: (clip as any).nexus_metadata,
         }
       };
+      (dbClip as any).words = rawClipWords;
       
       // Check cache immediately to prevent queuing duplicate render jobs
       const cachedRender = await db.getRenderCache(candidateHash);
@@ -1626,7 +1642,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           videoUrl: videoUrl,
           clipStart: renderStart,
           clipEnd: renderEnd,
-          clipWords: (clip as any).words || [],
+          clipWords: rawClipWords,
           cropPlan: cropPlan
         }
       };
@@ -2142,7 +2158,17 @@ export const startWorker = async () => {
     } catch (err: any) {
       console.error('[Worker Sweeper]: Sweeper loop encountered error:', err.message);
     }
+
+    try {
+      // Daily clip cleanup (deletes clips older than 24 hours from Supabase DB and storage)
+      await db.purgeOldClips(24);
+    } catch (purgeErr: any) {
+      console.warn('[Worker Sweeper]: Daily purge warning:', purgeErr.message);
+    }
   }, 5 * 60000);
+
+  // Trigger an initial purge check on worker start
+  db.purgeOldClips(24).catch(() => {});
 
   // Start concurrent polling loops
   const workerPromises = Array.from({ length: MAX_CONCURRENT_WORKERS }, (_, i) => pollForJobs(i + 1));

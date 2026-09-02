@@ -2,11 +2,49 @@ import { DownloadStrategy } from './types';
 
 const DEFAULT_STRATEGIES: DownloadStrategy[] = [
   {
+    id: 'hd-m3u8',
+    resolutionCap: '1080',
+    useCookies: false,
+    maxRetries: 0,
+    rateLimit: '30M'
+  },
+  {
+    id: 'direct-hd',
+    resolutionCap: '1080',
+    useCookies: false,
+    maxRetries: 0,
+    rateLimit: '30M'
+  },
+  {
+    id: 'web',
+    resolutionCap: '1080',
+    extractorArgs: 'youtube:player_client=web',
+    useCookies: false,
+    maxRetries: 0,
+    rateLimit: '30M'
+  },
+  {
+    id: 'web-cookies',
+    resolutionCap: '1080',
+    extractorArgs: 'youtube:player_client=web',
+    useCookies: true,
+    maxRetries: 1,
+    rateLimit: '30M'
+  },
+  {
     id: 'android',
     resolutionCap: '1080',
     extractorArgs: 'youtube:player_client=android',
     useCookies: false, 
     userAgent: 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+    maxRetries: 0,
+    rateLimit: '25M'
+  },
+  {
+    id: 'mweb',
+    resolutionCap: '1080',
+    extractorArgs: 'youtube:player_client=mweb',
+    useCookies: false, 
     maxRetries: 0,
     rateLimit: '25M'
   },
@@ -20,28 +58,12 @@ const DEFAULT_STRATEGIES: DownloadStrategy[] = [
     rateLimit: '25M'
   },
   {
-    id: 'web-cookies',
-    resolutionCap: '1080',
-    extractorArgs: 'youtube:player_client=web',
-    useCookies: true,
-    maxRetries: 1,
-    rateLimit: '30M'
-  },
-  {
     id: 'tv-cookies',
     resolutionCap: '1080',
     extractorArgs: 'youtube:player_client=tv',
     useCookies: true,
     maxRetries: 1,
     rateLimit: '30M'
-  },
-  {
-    id: 'mweb',
-    resolutionCap: '1080',
-    extractorArgs: 'youtube:player_client=mweb',
-    useCookies: false,
-    maxRetries: 0,
-    rateLimit: '25M'
   },
   {
     id: 'tv_embedded',

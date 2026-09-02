@@ -808,4 +808,76 @@ export class DatabaseService {
     if (error && error.code !== 'PGRST116') throw error;
     return data || { id: 'mock-variant-id', ...variantData };
   }
+
+  /**
+   * Automatically purges clips older than retention hours (default: 24h) from Supabase
+   * and cloud storage to enforce daily retention and free up storage.
+   */
+  async purgeOldClips(retentionHours = 24): Promise<{ deletedCount: number; keysRemoved: string[] }> {
+    const cutoffDate = new Date(Date.now() - retentionHours * 60 * 60 * 1000).toISOString();
+    console.log(`[Supabase Purge]: Checking for clips older than ${retentionHours}h (created before ${cutoffDate})...`);
+
+    try {
+      // Find old clips
+      const { data: expiredClips, error: fetchErr } = await this.db
+        .from('clips')
+        .select('id, storage_path, thumbnail_url')
+        .lt('created_at', cutoffDate);
+
+      if (fetchErr) {
+        console.warn(`[Supabase Purge]: Could not fetch expired clips:`, fetchErr.message);
+        return { deletedCount: 0, keysRemoved: [] };
+      }
+
+      if (!expiredClips || expiredClips.length === 0) {
+        return { deletedCount: 0, keysRemoved: [] };
+      }
+
+      const clipIds = expiredClips.map((c: any) => c.id);
+      const keysToRemove: string[] = [];
+      for (const c of expiredClips) {
+        if (c.storage_path) keysToRemove.push(c.storage_path);
+      }
+
+      // Delete files from storage
+      if (keysToRemove.length > 0) {
+        try {
+          const { storageService } = require('./storageService');
+          await storageService.deleteObjects(keysToRemove);
+        } catch (storageErr: any) {
+          console.warn(`[Supabase Purge]: Storage deletion warning:`, storageErr.message);
+        }
+      }
+
+      // Delete rows from Supabase
+      const { error: deleteErr } = await this.db
+        .from('clips')
+        .delete()
+        .in('id', clipIds);
+
+      if (deleteErr) {
+        console.warn(`[Supabase Purge]: Database deletion warning:`, deleteErr.message);
+      }
+
+      // Also clean up local active queue representation
+      try {
+        const queue = firebaseDb.readQueue();
+        let changed = false;
+        for (const id of clipIds) {
+          if (queue.clips && queue.clips[id]) {
+            delete queue.clips[id];
+            changed = true;
+          }
+        }
+        if (changed) firebaseDb.writeQueue(queue);
+      } catch {}
+
+      console.log(`[Supabase Purge]: Purged ${clipIds.length} expired clip(s) older than ${retentionHours}h.`);
+      return { deletedCount: clipIds.length, keysRemoved: keysToRemove };
+    } catch (err: any) {
+      console.error(`[Supabase Purge]: Error during daily clip purge:`, err.message);
+      return { deletedCount: 0, keysRemoved: [] };
+    }
+  }
 }
+

@@ -44,43 +44,29 @@ export default function DashboardPage() {
       setIsLoading(false);
     }, 1000);
 
-    const storedJobId = localStorage.getItem("lastJobId");
-    if (storedJobId) {
-      setLastJobId(storedJobId);
-      const minimized = localStorage.getItem(`minimizeOverlay_${storedJobId}`) === "true";
-      if (!minimized) {
-        setShowProcessingOverlay(true);
-      }
-      clearTimeout(safetyTimer);
-      setIsLoading(false);
-    } else {
-      // Auto-detect any running job even if not started from this browser
-      authFetch('/api/video/jobs')
-        .then(r => r.json())
-        .then((jobs: any[]) => {
-          const now = Date.now();
-          const activeJob = Array.isArray(jobs) ? jobs.find(j => {
-            if (TERMINAL_JOB_STATUSES.has(j.status)) return false;
-            // Ignore orphaned jobs whose heartbeat or creation is older than 10 minutes
-            const lastActiveAt = new Date(j.heartbeat_at || j.updated_at || j.created_at).getTime();
-            return (now - lastActiveAt) < 10 * 60 * 1000;
-          }) : null;
-          if (activeJob) {
-            console.log('[Dashboard]: Auto-detected active job:', activeJob.id);
-            localStorage.setItem('lastJobId', activeJob.id);
-            setLastJobId(activeJob.id);
-            const minimized = localStorage.getItem(`minimizeOverlay_${activeJob.id}`) === "true";
-            if (!minimized) {
-              setShowProcessingOverlay(true);
-            }
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          clearTimeout(safetyTimer);
-          setIsLoading(false);
-        });
-    }
+    // Auto-detect any active running job from API
+    authFetch('/api/video/jobs')
+      .then(r => r.json())
+      .then((jobs: any[]) => {
+        const now = Date.now();
+        const detectedJob = Array.isArray(jobs) ? jobs.find(j => {
+          if (TERMINAL_JOB_STATUSES.has(j.status)) return false;
+          // Ignore orphaned jobs whose heartbeat or creation is older than 10 minutes
+          const lastActiveAt = new Date(j.heartbeat_at || j.updated_at || j.created_at).getTime();
+          return (now - lastActiveAt) < 10 * 60 * 1000;
+        }) : null;
+        if (detectedJob) {
+          console.log('[Dashboard]: Auto-detected active job:', detectedJob.id);
+          setLastJobId(detectedJob.id);
+          setActiveJob(detectedJob);
+          setShowProcessingOverlay(true);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        clearTimeout(safetyTimer);
+        setIsLoading(false);
+      });
 
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
@@ -158,8 +144,6 @@ export default function DashboardPage() {
           }
           setActiveJob(data);
           setLastJobId(null); // Stop polling
-          localStorage.removeItem("lastJobId");
-          localStorage.removeItem(`minimizeOverlay_${lastJobId}`);
           if (!userClickedCompletedJob.current) {
             setTimeout(() => setShowProcessingOverlay(false), 1500);
           }
@@ -168,8 +152,6 @@ export default function DashboardPage() {
           console.error("[Dashboard]: Job execution failed:", data.failedReason);
           setActiveJob(data);
           setLastJobId(null);
-          localStorage.removeItem("lastJobId");
-          localStorage.removeItem(`minimizeOverlay_${lastJobId}`);
         } else {
           setActiveJob(data);
           timeoutId = setTimeout(pollStatus, baseDelay);
@@ -199,8 +181,6 @@ export default function DashboardPage() {
       console.error("[Dashboard]: Final status hydration failed:", error);
     } finally {
       setLastJobId(null);
-      localStorage.removeItem("lastJobId");
-      localStorage.removeItem(`minimizeOverlay_${targetJobId}`);
     }
   };
 
@@ -306,7 +286,6 @@ export default function DashboardPage() {
               animate={{ opacity: 1, y: 0 }}
               className="mb-8 p-4 sm:p-5 glass-card border-primary/30 bg-primary/[0.02] rounded-3xl relative overflow-hidden flex flex-col sm:flex-row items-center justify-between gap-4 cursor-pointer hover:border-primary/50 transition-all shadow-[0_0_30px_rgba(200,119,64,0.1)]"
               onClick={() => {
-                localStorage.removeItem(`minimizeOverlay_${activeJob.id}`);
                 setShowProcessingOverlay(true);
               }}
             >
@@ -328,7 +307,6 @@ export default function DashboardPage() {
                 className="px-5 py-2.5 rounded-xl bg-primary text-white text-[9px] font-black uppercase tracking-widest hover:bg-primary/80 shadow-lg shadow-primary/20 transition-all relative z-10"
                 onClick={(e) => {
                   e.stopPropagation();
-                  localStorage.removeItem(`minimizeOverlay_${activeJob.id}`);
                   setShowProcessingOverlay(true);
                 }}
               >
@@ -347,8 +325,6 @@ export default function DashboardPage() {
             <UploadZone
               initialUrl={importUrl}
               onUploadComplete={(jobId) => {
-                localStorage.setItem("lastJobId", jobId);
-                localStorage.removeItem(`minimizeOverlay_${jobId}`);
                 setLastJobId(jobId);
                 setActiveJob({ status: 'initiating', progress: 0, id: jobId });
                 consecutive404s.current = 0;
@@ -514,8 +490,6 @@ export default function DashboardPage() {
             >
               <ActiveJobs onJobSelect={(job) => {
                 const jobId = job.id;
-                localStorage.setItem("lastJobId", jobId);
-                localStorage.removeItem(`minimizeOverlay_${jobId}`);
                 setLastJobId(jobId);
                 
                 if (job.status === 'completed') {
@@ -582,7 +556,6 @@ export default function DashboardPage() {
               ) : (
                 <button
                   onClick={() => {
-                    localStorage.setItem(`minimizeOverlay_${activeJob.id}`, "true");
                     setShowProcessingOverlay(false);
                   }}
                   className="absolute top-6 right-6 flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/40 hover:text-white text-[10px] font-black uppercase tracking-widest transition-all z-20 cursor-pointer"

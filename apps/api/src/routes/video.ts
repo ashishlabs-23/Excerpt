@@ -111,9 +111,11 @@ function resolveLocalClipPath(videoUrl: string, jobId?: string, showCaptions = t
 
   const rootCandidates = [
     process.cwd(),
+    path.resolve(process.cwd(), 'apps/api'),
+    path.resolve(process.cwd(), '..'),
     path.resolve(process.cwd(), '../..'),
-    path.resolve(__dirname, '../../../..'),
     path.resolve(__dirname, '../../..'),
+    path.resolve(__dirname, '../../../..'),
   ];
 
   const candidatePaths: string[] = [];
@@ -336,6 +338,37 @@ async function streamClipResponse(
   }
 
   let storageKey = showCaptions ? captionedStorageKey : cleanStorageKey;
+  
+  // Try direct storage service stream first (handles local cache, S3/B2, and Firebase with HTTP 206 range support)
+  if (storageKey) {
+    const rangeHeader = req.headers.range as string | undefined;
+    const fileResult = await storageService.getFileStream(storageKey, rangeHeader);
+    if (fileResult) {
+      res.status(fileResult.statusCode || 200);
+      res.setHeader('Content-Type', fileResult.contentType || 'video/mp4');
+      if (fileResult.contentLength) res.setHeader('Content-Length', fileResult.contentLength);
+      if (fileResult.contentRange) res.setHeader('Content-Range', fileResult.contentRange);
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+
+      fileResult.stream.on('error', (err: any) => {
+        console.error(`[VideoRoute]: Direct stream error for ${clipId}:`, err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Stream error' });
+        } else {
+          res.end();
+        }
+      });
+
+      req.on('close', () => {
+        if ((fileResult.stream as any).destroy) (fileResult.stream as any).destroy();
+      });
+
+      fileResult.stream.pipe(res);
+      return;
+    }
+  }
+
   let remoteClipUrl: string | null = null;
   
   if (storageKey) {
@@ -1058,24 +1091,7 @@ router.get('/play/:clipId', async (req: Request, res: Response) => {
 
     const forceDownload = req.query.dl === '1';
     
-    // For HTML5 video playback, check if local clip exists first for instant local streaming; otherwise redirect to signed cloud storage URL
-    if (!forceDownload) {
-      const rawKey = clip.storage_path || clip.video_url;
-      const localPath = resolveLocalClipPath(rawKey, clip.job_id, req.query.captions !== '0');
-      if (!localPath || !fs.existsSync(localPath)) {
-        if (rawKey && !/^https?:\/\//i.test(rawKey)) {
-          try {
-            const signedUrl = await storageService.createSignedUrl(rawKey);
-            return res.redirect(302, signedUrl);
-          } catch (e: any) {
-            console.warn(`[VideoRoute]: Direct signed URL redirect failed for ${clipId}:`, e.message);
-          }
-        } else if (rawKey && /^https?:\/\//i.test(rawKey)) {
-          return res.redirect(302, rawKey);
-        }
-      }
-    }
-
+    // For HTML5 video playback, streamClipResponse seamlessly serves from local disk, S3/B2, or Firebase with HTTP 206 range support
     await streamClipResponse(clipId, clip, req, res, { inline: !forceDownload });
   } catch (error: any) {
     console.error(`[VideoRoute]: Play stream failed for ${clipId}:`, error);
@@ -1112,10 +1128,9 @@ router.get('/download/:clipId', requireUserJWT, async (req: Request, res: Respon
 
 router.get('/test-download/:clipId', async (req: Request, res: Response) => {
   const clipId = String(req.params.clipId);
-  const db = new DatabaseService();
 
   try {
-    const clip = await db.getClip(clipId);
+    const clip = await fetchClipAnywhere(clipId);
     if (!clip) return res.status(404).json({ error: 'Clip not found' });
     console.log(`[VideoRoute]: Initiating TEST proxy download for clip ${clipId}`);
     await streamClipResponse(clipId, clip, req, res);

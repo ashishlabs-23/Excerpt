@@ -36,7 +36,7 @@ export class StorageService {
       this.s3 = null;
     } else {
       try {
-        const region = process.env.B2_REGION || "us-west-004";
+        const region = process.env.B2_REGION || "us-east-005";
         this.s3 = new S3Client({
           endpoint: process.env.B2_ENDPOINT || `https://s3.${region}.backblazeb2.com`,
           credentials: { accessKeyId, secretAccessKey },
@@ -132,18 +132,30 @@ export class StorageService {
   async createSignedUrl(key: string, expiresInSeconds?: number): Promise<string> {
     const ttl = expiresInSeconds || Number(process.env.STORAGE_SIGNED_URL_TTL_SECONDS || 60 * 60);
     
-    // 1. Try Firebase Storage Signed URL
+    // 0. Check local disk first (for development or cached clips)
+    try {
+      const localPath = path.resolve(process.cwd(), 'temp', key);
+      if (fs.existsSync(localPath)) {
+        const port = process.env.PORT === '3000' ? 8010 : (process.env.PORT || 8010);
+        return `http://localhost:${port}/temp/${key}`;
+      }
+    } catch {}
+
+    // 1. Try Firebase Storage Signed URL ONLY IF object actually exists in Firebase
     const firebaseBucket = this.getFirebaseBucket();
     if (firebaseBucket) {
       try {
         const file = firebaseBucket.file(key);
-        const [signedUrl] = await file.getSignedUrl({
-          action: 'read',
-          expires: Date.now() + ttl * 1000,
-        });
-        return signedUrl;
+        const [exists] = await file.exists();
+        if (exists) {
+          const [signedUrl] = await file.getSignedUrl({
+            action: 'read',
+            expires: Date.now() + ttl * 1000,
+          });
+          return signedUrl;
+        }
       } catch (fbErr: any) {
-        // Fallback
+        // Fallback to S3/B2
       }
     }
 
@@ -152,7 +164,10 @@ export class StorageService {
     if (this.s3) {
       try {
         const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
-        const signedUrl = await getSignedUrl(this.s3, command, { expiresIn: ttl });
+        const signedUrl = await getSignedUrl(this.s3, command, {
+          expiresIn: ttl,
+          unhoistableHeaders: new Set(),
+        });
         return signedUrl;
       } catch (err: any) {
         return `https://${this.bucket}.s3.${region}.backblazeb2.com/${key}`;
@@ -161,6 +176,86 @@ export class StorageService {
 
     const port = process.env.PORT === '3000' ? 8010 : (process.env.PORT || 8010);
     return `http://localhost:${port}/temp/${key}`;
+  }
+
+  async getFileStream(key: string, range?: string): Promise<{ stream: NodeJS.ReadableStream; contentLength?: number; contentType?: string; contentRange?: string; statusCode?: number } | null> {
+    // 1. Local filesystem
+    try {
+      const localPath = path.resolve(process.cwd(), 'temp', key);
+      if (fs.existsSync(localPath)) {
+        const stat = fs.statSync(localPath);
+        const totalSize = stat.size;
+        const contentType = this.getContentType(path.extname(localPath));
+
+        if (range) {
+          const parts = range.replace(/bytes=/, '').split('-');
+          const start = parseInt(parts[0], 10);
+          const end = parts[1] ? parseInt(parts[1], 10) : totalSize - 1;
+          const chunkSize = (end - start) + 1;
+          const stream = fs.createReadStream(localPath, { start, end });
+          return {
+            stream,
+            contentLength: chunkSize,
+            contentType,
+            contentRange: `bytes ${start}-${end}/${totalSize}`,
+            statusCode: 206,
+          };
+        }
+
+        return {
+          stream: fs.createReadStream(localPath),
+          contentLength: totalSize,
+          contentType,
+          statusCode: 200,
+        };
+      }
+    } catch {}
+
+    // 2. S3 / Backblaze B2 stream
+    if (this.s3) {
+      try {
+        const command = new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          Range: range,
+        });
+        const res = await this.s3.send(command);
+        if (res.Body) {
+          return {
+            stream: res.Body as any,
+            contentLength: res.ContentLength,
+            contentType: res.ContentType || 'video/mp4',
+            contentRange: res.ContentRange,
+            statusCode: range ? 206 : 200,
+          };
+        }
+      } catch (err: any) {
+        console.warn(`[StorageService]: S3 stream error for ${key}:`, err.message);
+      }
+    }
+
+    // 3. Firebase stream
+    const firebaseBucket = this.getFirebaseBucket();
+    if (firebaseBucket) {
+      try {
+        const file = firebaseBucket.file(key);
+        const [exists] = await file.exists();
+        if (exists) {
+          const [metadata] = await file.getMetadata();
+          const stream = file.createReadStream();
+          return {
+            stream,
+            contentLength: Number(metadata.size),
+            contentType: metadata.contentType || 'video/mp4',
+            statusCode: 200,
+          };
+        }
+      } catch (fbErr: any) {
+        console.warn(`[StorageService]: Firebase stream error for ${key}:`, fbErr.message);
+      }
+    }
+
+    return null;
   }
 
   async checkObjectExists(key: string): Promise<boolean> {

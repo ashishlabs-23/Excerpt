@@ -235,7 +235,10 @@ export class VideoProcessor {
   private getYtDlpOptionalArgs(cookiesPath: string | null): string[] {
     const args: string[] = [];
     const browserProfile = process.env.YTDLP_COOKIES_FROM_BROWSER?.trim();
-    const extractorArgs = process.env.YTDLP_EXTRACTOR_ARGS?.trim() || "youtube:player_client=android";
+    const extractorArgs = process.env.YTDLP_EXTRACTOR_ARGS?.trim();
+    if (extractorArgs) {
+      args.push('--extractor-args', extractorArgs);
+    }
 
     // 1. Explicit Cookies File (Heaviest Weight)
     if (cookiesPath) {
@@ -609,28 +612,63 @@ export class VideoProcessor {
         } else {
           // Face-Driven & Smart Composition Mode (Talking Head, Podcast, Gaming, Mixed)
           let speakerNormX = 0.5; // default center of 16:9 source
+          let speakerNormY = 0.35; // default upper third
 
-          if (nexusCropPlan && Array.isArray(nexusCropPlan.points) && nexusCropPlan.points.length > 0) {
-            const valid = nexusCropPlan.points.filter((p: any) => typeof p.x === 'number' && p.x >= 0 && p.x <= 1);
-            if (valid.length > 0) {
-              speakerNormX = valid.reduce((sum: number, p: any) => sum + p.x, 0) / valid.length;
+          const clipEnd = start + duration;
+          const pointsInWindow: { x: number; y: number; weight: number }[] = [];
+
+          if (nexusCropPlan && Array.isArray(nexusCropPlan.frames_data) && nexusCropPlan.frames_data.length > 0) {
+            // Filter frames strictly within the clip's timestamp window [start, clipEnd]
+            const windowFrames = nexusCropPlan.frames_data.filter((f: any) => {
+              const t = typeof f.time === 'number' ? f.time : 0;
+              return t >= (start - 0.5) && t <= (clipEnd + 0.5);
+            });
+
+            const candidateFrames = windowFrames.length > 0 ? windowFrames : nexusCropPlan.frames_data;
+
+            for (const f of candidateFrames) {
+              // Extract primary active region (from active speaker tracker)
+              if (Array.isArray(f.regions) && f.regions.length > 0) {
+                const r = f.regions[0];
+                if (typeof r.x === 'number' && r.x >= 0 && r.x <= 1) {
+                  const weight = (typeof r.confidence === 'number' && r.confidence > 0) ? r.confidence : 1;
+                  const ry = (typeof r.y === 'number' && r.y >= 0 && r.y <= 1) ? r.y : 0.35;
+                  pointsInWindow.push({ x: r.x, y: ry, weight });
+                }
+              } else if (typeof f.x === 'number' && f.x >= 0 && f.x <= 1) {
+                pointsInWindow.push({ x: f.x, y: typeof f.y === 'number' ? f.y : 0.35, weight: 1 });
+              }
             }
-          } else if (nexusCropPlan && Array.isArray(nexusCropPlan.frames_data) && nexusCropPlan.frames_data.length > 0) {
-            const valid = nexusCropPlan.frames_data.filter((f: any) => typeof f.x === 'number' && f.x >= 0 && f.x <= 1);
-            if (valid.length > 0) {
-              speakerNormX = valid.reduce((sum: number, f: any) => sum + f.x, 0) / valid.length;
+          } else if (nexusCropPlan && Array.isArray(nexusCropPlan.points) && nexusCropPlan.points.length > 0) {
+            const windowPoints = nexusCropPlan.points.filter((p: any) => {
+              const t = typeof p.time === 'number' ? p.time : 0;
+              return t >= (start - 0.5) && t <= (clipEnd + 0.5);
+            });
+            const candPoints = windowPoints.length > 0 ? windowPoints : nexusCropPlan.points;
+            for (const p of candPoints) {
+              if (typeof p.x === 'number' && p.x >= 0 && p.x <= 1) {
+                pointsInWindow.push({ x: p.x, y: typeof p.y === 'number' ? p.y : 0.35, weight: 1 });
+              }
             }
+          }
+
+          if (pointsInWindow.length > 0) {
+            const totalWeight = pointsInWindow.reduce((s, p) => s + p.weight, 0);
+            speakerNormX = pointsInWindow.reduce((s, p) => s + p.x * p.weight, 0) / totalWeight;
+            speakerNormY = pointsInWindow.reduce((s, p) => s + p.y * p.weight, 0) / totalWeight;
           }
 
           // Center the 1080px crop window directly around the speaker's detected horizontal position
           const targetCropX = Math.round(Math.max(0, Math.min(maxOffset, speakerNormX * scaledWidth - cropWidth / 2)));
-          const targetCropY = Math.round(Math.max(0, Math.min(maxVOffset, maxVOffset / 2)));
+          // Position eye-line near the upper 35% of the 1920px frame
+          const idealY = Math.round(speakerNormY * scaledHeight - cropHeight * 0.35);
+          const targetCropY = Math.round(Math.max(0, Math.min(maxVOffset, idealY)));
 
           cropPlan = {
             mode: 'center',
             xExpression: String(targetCropX),
             yExpression: String(targetCropY),
-            debug: `face-centered speaker crop (xNorm=${speakerNormX.toFixed(2)}, targetX=${targetCropX})`,
+            debug: `active-speaker-crop (xNorm=${speakerNormX.toFixed(2)}, yNorm=${speakerNormY.toFixed(2)}, target=[${targetCropX}, ${targetCropY}])`,
           };
 
           cropFilter = `scale=${scaledWidth}:${scaledHeight}:flags=lanczos,crop=${cropWidth}:${cropHeight}:${targetCropX}:${targetCropY},setsar=1`;
@@ -648,6 +686,7 @@ export class VideoProcessor {
             '-t', String(duration),
             '-vf', cropFilter,
             ...highQualityEncodeArgs(),
+            '-af', 'aresample=async=1',
             '-c:a', 'aac',
             '-b:a', '192k',
             '-ar', '48000',
@@ -749,7 +788,7 @@ export class VideoProcessor {
         '-i', inputPath,
         '-vf', `ass='${safeAssPath}'`,
         ...highQualityEncodeArgs(),
-        '-af', 'afftdn=nf=-25,highpass=f=80,loudnorm=I=-14:LRA=7:TP=-1.5',
+        '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
         '-c:a', 'aac',
         '-b:a', '192k',
         '-ar', '48000',

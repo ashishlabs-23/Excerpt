@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import {
   Magnetic,
 } from "@/components/animations";
-import { Sparkles, ArrowRight, Play, Zap, Shield, Target, Upload, Scissors, Wand2, Link as LinkIcon, AlertCircle } from "lucide-react";
+import { Sparkles, ArrowRight, Play, Zap, Shield, Target, Upload, Scissors, Wand2, Link as LinkIcon, AlertCircle, Clock, Download } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -51,12 +51,19 @@ export const Hero: React.FC = () => {
       
       {/* Content */}
       <div className="relative z-10 max-w-6xl mx-auto w-full">
-        {/* Badge */}
-        <div>
-          <div className="inline-flex max-w-full items-center gap-2 px-3 sm:px-4 py-1.5 rounded-full glass-card border-primary/20 mb-8 sm:mb-10 group cursor-default">
+        {/* Retention Notice & Status Badges */}
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-8 sm:mb-10">
+          <div className="inline-flex max-w-full items-center gap-2 px-3.5 py-1.5 rounded-full glass-card border-primary/20 group cursor-default">
             <div className="w-2 h-2 rounded-full bg-primary animate-ping" />
             <span className="text-[10px] sm:text-xs font-bold tracking-[0.22em] sm:tracking-widest uppercase text-primary/80 group-hover:text-primary transition-colors">
               Next-Gen AI Pipeline Active
+            </span>
+          </div>
+
+          <div className="inline-flex max-w-full items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 shadow-[0_0_20px_rgba(245,158,11,0.15)] group cursor-default">
+            <Clock size={13} className="text-amber-400 shrink-0 animate-pulse" />
+            <span className="text-[10px] sm:text-xs font-black tracking-wider uppercase">
+              24-Hour Ephemeral Storage: <span className="font-medium text-amber-200/90 lowercase">Clips auto-delete daily from cloud storage — please download clips you want to keep!</span>
             </span>
           </div>
         </div>

@@ -7,15 +7,22 @@ const supabaseDb = new DatabaseService();
 
 /**
  * Hybrid Queue Service
- * Primary: Firestore (Firebase) — always available with our credentials
- * Fallback: Supabase (when available) then local JSON
+ * Primary Queue Engine: Supabase PostgreSQL (polled directly by videoWorker/renderWorker)
+ * Primary UI/Realtime: Firestore / Firebase (for instant real-time client subscriptions)
  */
 export class QueueService {
   constructor() {
-    console.log('[QueueService]: Hybrid Firestore+Supabase Queue initialized');
+    console.log('[QueueService]: Resilient Firestore+Supabase Queue initialized');
   }
 
-  async addJob(data: { videoUrl: string; numClips?: number; intent?: string; avoidSimilarClips?: string; userId: string; generationMode?: 'draft' | 'quality' }) {
+  async addJob(data: { 
+    videoUrl: string; 
+    numClips?: number; 
+    intent?: string; 
+    avoidSimilarClips?: string; 
+    userId: string; 
+    generationMode?: 'draft' | 'quality' 
+  }) {
     if (!data.userId) {
       throw new Error('user_id is required to create a job.');
     }
@@ -47,15 +54,18 @@ export class QueueService {
       updated_at: now,
     };
 
-    // 1. Write to Firestore (primary — always available)
+    let firestoreCreated = false;
+
+    // 1. Write to Firestore (UI subscription & client document state)
     try {
       await firebaseDb.createJob(jobRecord);
+      firestoreCreated = true;
       console.log(`[QueueService]: Job ${jobId} written to Firestore`);
     } catch (fbErr: any) {
-      console.warn(`[QueueService]: Firestore write failed: ${fbErr.message}`);
+      console.warn(`[QueueService]: Firestore write non-fatal warning: ${fbErr.message}`);
     }
 
-    // 2. Mirror to Supabase (secondary — may be unreachable)
+    // 2. Queue in Supabase (worker execution queue polled by videoWorker, with graceful local fallback)
     try {
       await supabaseDb.createJob({
         id: jobId,
@@ -74,17 +84,23 @@ export class QueueService {
         created_at: now,
         updated_at: now,
       });
-      console.log(`[QueueService]: Job ${jobId} mirrored to Supabase`);
+      console.log(`[QueueService]: Job ${jobId} queued in Supabase worker queue`);
     } catch (sbErr: any) {
-      // Supabase unavailable — Firestore is source of truth
-      console.warn(`[QueueService]: Supabase mirror failed (non-fatal): ${sbErr.message}`);
+      console.warn(`[QueueService]: Supabase queue insertion failed (non-fatal, local/Firestore queue active): ${sbErr.message}`);
+      
+      // If neither Firestore nor Supabase succeeded, then fail
+      if (!firestoreCreated) {
+        throw new Error(`Failed to queue job in processing engine: ${sbErr.message}`);
+      }
     }
 
     return jobId;
   }
 
   async updateJobStatus(jobId: string, statusUpdate: any) {
-    // Update Firestore first
+    const errors: string[] = [];
+
+    // Update Firestore
     try {
       await firebaseDb.updateJob(jobId, {
         ...statusUpdate,
@@ -95,18 +111,32 @@ export class QueueService {
       });
     } catch (fbErr: any) {
       console.warn(`[QueueService]: Firestore update failed: ${fbErr.message}`);
+      errors.push(`Firestore: ${fbErr.message}`);
     }
 
     // Mirror to Supabase
     try {
       await supabaseDb.updateJob(jobId, statusUpdate);
-    } catch {
-      // Non-fatal
+    } catch (sbErr: any) {
+      console.warn(`[QueueService]: Supabase update failed: ${sbErr.message}`);
+      errors.push(`Supabase: ${sbErr.message}`);
+    }
+
+    if (errors.length === 2) {
+      console.error(`[QueueService]: Critical: both Firestore and Supabase failed to update job ${jobId}`);
     }
   }
 
   async getJobStatus(jobId: string) {
-    // Try Firestore first
+    // 1. Try Supabase first (source of truth for active worker progress & clip records)
+    try {
+      const dbJob = await supabaseDb.getJobWithClips(jobId);
+      if (dbJob) return hydrateJobStatusFromDb(dbJob);
+    } catch (sbErr: any) {
+      console.warn(`[QueueService]: Supabase getJobWithClips failed: ${sbErr.message}`);
+    }
+
+    // 2. Fall back to Firestore
     try {
       const firestoreJob = await firebaseDb.getJob(jobId);
       if (firestoreJob) {
@@ -114,14 +144,6 @@ export class QueueService {
       }
     } catch (fbErr: any) {
       console.warn(`[QueueService]: Firestore getJob failed: ${fbErr.message}`);
-    }
-
-    // Fall back to Supabase
-    try {
-      const dbJob = await supabaseDb.getJobWithClips(jobId);
-      if (dbJob) return hydrateJobStatusFromDb(dbJob);
-    } catch {
-      // Ignore
     }
 
     return null;

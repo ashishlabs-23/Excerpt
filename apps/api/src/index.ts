@@ -78,14 +78,9 @@ function spawnWorker(scriptPath: string, label: string): void {
 
     console.log(`[WorkerManager]: ▶ Starting [${label}]`);
 
-    const isTs = scriptPath.endsWith('.ts');
-    const cmd = process.platform === 'win32' ? (isTs ? 'npx.cmd' : 'node') : (isTs ? 'npx' : 'node');
-    const args = isTs ? ['tsx', scriptPath] : [scriptPath];
-
-    const child = spawn(cmd, args, {
+    const child = spawn(process.execPath, [scriptPath], {
       env: process.env,
       stdio: 'inherit',
-      shell: process.platform === 'win32',
     });
 
     state.child    = child;
@@ -311,17 +306,19 @@ async function bootstrap() {
     // Register graceful shutdown handler (propagates SIGTERM to all children)
     setupGracefulShutdown();
 
-    // Render Free plan doesn't support background worker services,
-    // so we run them here. Each is fully isolated — a worker crash cannot
-    // take down Express or sibling workers.
-    if (process.env.NODE_ENV === 'production' || process.env.SPAWN_WORKERS !== 'false') {
-      const distDir = __dirname;
-      const ext = process.env.NODE_ENV === 'production' ? 'js' : 'ts';
-      spawnWorker(path.join(distDir, 'workers', `videoWorker.${ext}`),     'VideoWorker');
-      spawnWorker(path.join(distDir, 'workers', `renderWorker.${ext}`),    'RenderWorker');
-      spawnWorker(path.join(distDir, 'workers', `voiceoverWorker.${ext}`), 'VoiceoverWorker');
+    // Control worker lifecycle: supports dedicated worker vs API-only topologies.
+    // If SPAWN_WORKERS is explicitly provided, respect it; otherwise default to true.
+    const shouldSpawnWorkers = process.env.SPAWN_WORKERS !== undefined
+      ? (process.env.SPAWN_WORKERS === 'true' || process.env.SPAWN_WORKERS === '1')
+      : true;
+
+    if (shouldSpawnWorkers) {
+      const distDir = path.resolve(process.cwd(), 'dist');
+      spawnWorker(path.join(distDir, 'workers', 'videoWorker.js'),     'VideoWorker');
+      spawnWorker(path.join(distDir, 'workers', 'renderWorker.js'),    'RenderWorker');
+      spawnWorker(path.join(distDir, 'workers', 'voiceoverWorker.js'), 'VoiceoverWorker');
     } else {
-      console.log('[WorkerManager]: Skipping internal worker spawn in development.');
+      console.log('[WorkerManager]: Internal worker spawn disabled (running in API-only mode).');
     }
   });
 }

@@ -26,8 +26,10 @@ export class GraphBuilderService {
     console.log(`[GraphBuilder]: [BUILD_START] videoPath=${path.basename(videoPath)} duration=${durationSeconds}s ts=${new Date().toISOString()}`);
     const graph = new VideoIntelligenceGraph(path.basename(videoPath), durationSeconds);
     
-    // Create a temporary analysis directory for visual processing
-    const analysisDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vig_frames_'));
+    // Create a temporary analysis directory inside temp for visual processing
+    const tempBase = path.resolve(process.cwd(), 'temp');
+    if (!fs.existsSync(tempBase)) fs.mkdirSync(tempBase, { recursive: true });
+    const analysisDir = fs.mkdtempSync(path.join(tempBase, 'vig_frames_'));
 
     try {
       // 1. Run Core Modality Extraction (Concurrent)

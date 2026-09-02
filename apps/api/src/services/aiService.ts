@@ -216,11 +216,19 @@ export class AIService {
   }
 
   private extractJsonArray(text: string): any[] {
-    const parsed = parseJsonWithRepair<any[]>(text, 'array');
+    const parsed = parseJsonWithRepair<any>(text, 'array');
     if (Array.isArray(parsed)) {
       return parsed;
     }
-    console.log(`[AIService]: JSON array extraction failed after repair.`);
+    // Also try object shape in case the model wrapped it in { clips: [...] } or { result: [...] }
+    const parsedObj = parseJsonWithRepair<any>(text, 'object');
+    if (parsedObj && typeof parsedObj === 'object') {
+      const candidates = parsedObj.clips || parsedObj.result || parsedObj.data || parsedObj.candidates;
+      if (Array.isArray(candidates)) {
+        return candidates;
+      }
+    }
+    console.log(`[AIService]: JSON array extraction failed. Raw text preview: ${text.substring(0, 300)}...`);
     return [];
   }
 
@@ -549,7 +557,8 @@ Return only JSON.`;
       retryDelayMs: 1000,
       execute: async () => {
         try {
-          const model = this.genAI.getGenerativeModel({ model: "gemini-3.6-flash" });
+          const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+          const model = this.genAI.getGenerativeModel({ model: modelName });
           const result = await model.generateContent(`${systemPrompt}\n\n${userPrompt}`);
           const response = await result.response;
           return response.text();
@@ -557,7 +566,8 @@ Return only JSON.`;
           if (err.message && /429|quota exceeded|resource exhausted/i.test(err.message)) {
             if (this.rotateGeminiKey()) {
               // Retry with new rotated key immediately
-              const model = this.genAI.getGenerativeModel({ model: "gemini-3.6-flash" });
+              const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+              const model = this.genAI.getGenerativeModel({ model: modelName });
               const result = await model.generateContent(`${systemPrompt}\n\n${userPrompt}`);
               const response = await result.response;
               return response.text();
@@ -585,7 +595,7 @@ Return only JSON.`;
       stage: 'ai_inference_groq',
       component: 'AIService',
       provider: 'Groq',
-      timeoutMs: 30000,
+      timeoutMs: 60000,
       timeoutType: 'api_timeout',
       maxRetries: 2,
       retryDelayMs: 1000,
@@ -596,7 +606,7 @@ Return only JSON.`;
             const completion = await this.groq.chat.completions.create({
               model,
               temperature: 0,
-              max_tokens: 1600,
+              max_tokens: 4096,
               messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt },
@@ -795,6 +805,11 @@ Return only JSON.`;
             await this.sleep(delay);
           }
         }
+      }
+      // If a burst failed all retries but we already found clips from earlier bursts, proceed!
+      if (!burstSuccess && allDetectedClips.length > 0) {
+        console.warn(`[AIService]: Burst ${b + 1} timed out, but proceeding with ${allDetectedClips.length} already-detected moments.`);
+        break;
       }
     }
 

@@ -154,6 +154,11 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
   };
 
   React.useEffect(() => {
+    // Always fetch library clips from database on mount or when mode changes
+    fetchClips();
+  }, [mode]);
+
+  React.useEffect(() => {
     if (clips && clips.length > 0) {
       // Merge new clips with existing ones, avoiding duplicates
       setAllClips(prevClips => {
@@ -161,9 +166,6 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
         const newUniqueClips = clips.filter(c => !existingIds.has(c.id));
         return [...newUniqueClips, ...prevClips];
       });
-    } else if (clips === undefined) {
-      // No prop clips - load persisted clips from the database
-      fetchClips();
     }
   }, [clips]);
 
