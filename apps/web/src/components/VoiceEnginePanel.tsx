@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Settings2, Volume2, FastForward, Mic, Upload, Plus, Check, Loader2, VolumeX, Sparkles } from 'lucide-react';
+import { Settings2, Volume2, FastForward, Mic, Upload, Plus, Check, Loader2, VolumeX, Sparkles, Play, Square } from 'lucide-react';
 import { LocalVoiceConfig } from '@/app/voiceover/page';
 import { VoiceRecorder } from './VoiceRecorder';
 import { apiUrl, authFetch, authHeaders } from '@/lib/api';
@@ -33,6 +33,62 @@ export const VoiceEnginePanel: React.FC<Props> = ({ voiceConfig, onChange }) => 
   const [newVoiceName, setNewVoiceName] = useState('');
   const [cloningStatus, setCloningStatus] = useState<'idle' | 'cloning' | 'success' | 'failed'>('idle');
   const [cloningError, setCloningError] = useState<string | null>(null);
+
+  const [isPlayingPreview, setIsPlayingPreview] = useState(false);
+  const [previewAudio, setPreviewAudio] = useState<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (previewAudio) {
+        previewAudio.pause();
+      }
+    };
+  }, [previewAudio]);
+
+  const handlePlayPreview = async () => {
+    if (!voiceConfig.voiceId) return;
+
+    if (isPlayingPreview && previewAudio) {
+      previewAudio.pause();
+      setIsPlayingPreview(false);
+      return;
+    }
+
+    setIsPlayingPreview(true);
+    try {
+      const res = await authFetch('/api/voiceover/voice/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: voiceConfig.provider || 'google',
+          voiceId: voiceConfig.voiceId,
+          voiceConfig: {
+            speakingRate: voiceConfig.speakingRate,
+            pitch: voiceConfig.pitch,
+            volumeGainDb: voiceConfig.volumeGainDb,
+            excitement: voiceConfig.excitement,
+            energy: voiceConfig.energy,
+            drama: voiceConfig.drama,
+          }
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error('Failed to generate preview');
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      setPreviewAudio(audio);
+      audio.onended = () => setIsPlayingPreview(false);
+      audio.onerror = () => setIsPlayingPreview(false);
+      await audio.play();
+    } catch (err: any) {
+      console.error('Preview voice error:', err);
+      setIsPlayingPreview(false);
+    }
+  };
 
   const updateConfig = (updates: Partial<any>) => {
     onChange({ ...voiceConfig, ...updates });
@@ -255,17 +311,35 @@ export const VoiceEnginePanel: React.FC<Props> = ({ voiceConfig, onChange }) => 
               <Loader2 size={14} className="animate-spin mr-2" /> Synapses aligning...
             </div>
           ) : (
-            <select
-              value={voiceConfig.voiceId || ''}
-              onChange={(e) => updateConfig({ voiceId: e.target.value })}
-              className="w-full h-11 bg-black/40 border border-white/10 rounded-xl px-4 text-xs text-white focus:border-indigo-500/50 focus:outline-none cursor-pointer"
-            >
-              {voices.map(voice => (
-                <option key={voice.id} value={voice.id} className="bg-[#030712] text-white py-2">
-                  {voice.name} ({voice.gender === 'MALE' ? 'Male' : voice.gender === 'FEMALE' ? 'Female' : 'Neutral'}) {voice.description ? `— ${voice.description}` : ''}
-                </option>
-              ))}
-            </select>
+            <div className="flex gap-2">
+              <select
+                value={voiceConfig.voiceId || ''}
+                onChange={(e) => updateConfig({ voiceId: e.target.value })}
+                className="flex-1 h-11 bg-black/40 border border-white/10 rounded-xl px-4 text-xs text-white focus:border-indigo-500/50 focus:outline-none cursor-pointer"
+              >
+                {voices.map(voice => (
+                  <option key={voice.id} value={voice.id} className="bg-[#030712] text-white py-2">
+                    {voice.name} ({voice.gender === 'MALE' ? 'Male' : voice.gender === 'FEMALE' ? 'Female' : 'Neutral'}) {voice.description ? `— ${voice.description}` : ''}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={handlePlayPreview}
+                disabled={!voiceConfig.voiceId}
+                className={`h-11 px-3.5 rounded-xl border flex items-center gap-1.5 text-xs font-bold transition-all ${
+                  isPlayingPreview
+                    ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300 animate-pulse'
+                    : 'bg-white/5 border-white/10 text-white/80 hover:bg-white/10 hover:text-white'
+                }`}
+                title="Audition voice with current emotion settings"
+              >
+                {isPlayingPreview ? <Square size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
+                <span className="text-[10px] uppercase tracking-wider">
+                  {isPlayingPreview ? 'Stop' : 'Audition'}
+                </span>
+              </button>
+            </div>
           )}
         </div>
 

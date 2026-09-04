@@ -68,6 +68,7 @@ async function processVoiceoverClip(vc: any) {
     const config: VoiceConfig = {
       provider: vc.provider as any,
       voiceId: vc.voice,
+      ...(vc.metadata?.voiceConfig || {}),
     };
     
     await voiceoverService.synthesize(vc.narration_text, config, tempDir, vcId);

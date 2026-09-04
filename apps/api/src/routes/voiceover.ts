@@ -283,7 +283,8 @@ router.post('/clip/:clipId', requireUserJWT, async (req: Request, res: Response)
       script_mode: scriptMode || 'custom',
       metadata: {
         style: req.body.style,
-        language: req.body.language
+        language: req.body.language,
+        voiceConfig: req.body.voiceConfig || null,
       }
     };
 
@@ -291,6 +292,67 @@ router.post('/clip/:clipId', requireUserJWT, async (req: Request, res: Response)
     res.status(201).json(voiceoverClip);
   } catch (error: any) {
     console.error('[Voiceover API]: Error creating voiceover clip:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/voiceover/detail/:id
+router.get('/detail/:id', requireUserJWT, async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { data, error } = await db.getSupabase()
+      .from('voiceover_clips')
+      .select('*, clips(*)')
+      .eq('id', id)
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({ error: 'Voiceover clip not found' });
+    }
+
+    if (!denyUnlessOwner(data.user_id, userId, res, 'voiceover clip')) {
+      return;
+    }
+
+    res.json(data);
+  } catch (error: any) {
+    console.error('[Voiceover API]: Error fetching voiceover detail:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/voiceover/voice/preview
+router.post('/voice/preview', requireUserJWT, async (req: Request, res: Response) => {
+  try {
+    const { provider, voiceId, voiceConfig, text } = req.body;
+    if (!provider || !voiceId) {
+      return res.status(400).json({ error: 'provider and voiceId are required' });
+    }
+
+    const { VoiceoverService } = await import('../services/VoiceoverService');
+    const service = VoiceoverService.getInstance();
+    
+    const previewText = text || "Welcome to Excerpt Neural Voiceover Studio.";
+    const tempDir = path.join(process.cwd(), 'temp', 'previews');
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+    
+    const previewId = crypto.randomUUID();
+    const result = await service.synthesize(previewText, {
+      provider: provider as any,
+      voiceId,
+      ...(voiceConfig || {})
+    }, tempDir, previewId);
+    
+    const audioBuffer = fs.readFileSync(result.audioPath);
+    try { fs.unlinkSync(result.audioPath); } catch {}
+    
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.send(audioBuffer);
+  } catch (error: any) {
+    console.error('[Voiceover API]: Error generating voice preview:', error.message);
     res.status(500).json({ error: error.message });
   }
 });

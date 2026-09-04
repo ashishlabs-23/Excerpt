@@ -21,6 +21,9 @@ export interface VoiceConfig {
   pitch?: number;         // -20 to +20 semitones (Google)
   volumeGainDb?: number;  // -96 to +16 dB (Google)
   sampleRateHz?: number;  // 8000 – 48000
+  excitement?: number;    // 0.0 - 1.0 (emotion control)
+  energy?: number;        // 0.0 - 1.0 (emotion control)
+  drama?: number;         // 0.0 - 1.0 (emotion control)
 }
 
 export interface SynthesisResult {
@@ -149,7 +152,7 @@ async function synthesizeWithGoogle(
         audioConfig: {
           audioEncoding: 'MP3' as AudioEncoding,
           speakingRate: config.speakingRate ?? 1.0,
-          pitch: config.pitch ?? 0,
+          pitch: config.pitch ?? (config.excitement !== undefined ? (config.excitement - 0.5) * 8.0 : 0),
           volumeGainDb: config.volumeGainDb ?? 0,
           sampleRateHertz: config.sampleRateHz ?? 44100,
           effectsProfileId: ['headphone-class-device'],
@@ -259,6 +262,18 @@ async function synthesizeWithElevenLabs(
 
   const voiceId = config.voiceId || 'pNInz6obpgDQGcFmaJgB'; // Adam — standard voice, works on free tier
 
+  const excitement = config.excitement ?? 0.5;
+  const energy = config.energy ?? 0.5;
+  const drama = config.drama ?? 0.0;
+
+  // Modulate ElevenLabs voice settings:
+  // stability: lower = more expressive/varied performance; higher = consistent/monotone
+  const stability = Math.max(0.1, Math.min(1.0, 1.0 - excitement * 0.45));
+  // similarity_boost: clarity & punch
+  const similarityBoost = Math.max(0.2, Math.min(1.0, 0.5 + energy * 0.4));
+  // style: expressive exaggeration/drama (0.0 - 1.0)
+  const style = Math.max(0.0, Math.min(1.0, drama));
+
   const response = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
     {
@@ -272,9 +287,9 @@ async function synthesizeWithElevenLabs(
         text,
         model_id: 'eleven_turbo_v2_5',
         voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.75,
-          style: 0.0,
+          stability,
+          similarity_boost: similarityBoost,
+          style,
           use_speaker_boost: true,
         },
       }),

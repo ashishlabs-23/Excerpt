@@ -542,10 +542,10 @@ export class VideoProcessor {
   }
 
   /**
-   * Cuts a video segment and applies 9:16 cropping.
+   * Cuts a video segment and applies 9:16 cropping, with optional single-pass subtitle burn-in.
    */
-  async processClip(inputPath: string, outputPath: string, start: number, duration: number, nexusCropPlan?: any): Promise<string> {
-    return StageExecutor.run({ inputPath, outputPath, start, duration }, {
+  async processClip(inputPath: string, outputPath: string, start: number, duration: number, nexusCropPlan?: any, subtitlePath?: string): Promise<string> {
+    return StageExecutor.run({ inputPath, outputPath, start, duration, subtitlePath }, {
       stage: 'video_clipping',
       component: 'VideoProcessor',
       provider: 'FFmpeg',
@@ -674,44 +674,61 @@ export class VideoProcessor {
           cropFilter = `scale=${scaledWidth}:${scaledHeight}:flags=lanczos,crop=${cropWidth}:${cropHeight}:${targetCropX}:${targetCropY},setsar=1`;
         }
 
-        return new Promise<string>((resolve, reject) => {
-          console.log(`[VideoProcessor]: Cutting clip with ${bin} at ${start}s -> ${outputPath}`);
-          const preSeek = Math.max(0, start - 3);
-          const fineSeek = Number((start - preSeek).toFixed(3));
+        // Check if single-pass subtitle burn-in is requested
+        let finalVideoFilter = cropFilter;
+        if (subtitlePath && fs.existsSync(subtitlePath)) {
+          const safeAssPath = path.resolve(subtitlePath).replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\\\'");
+          finalVideoFilter = `${cropFilter},ass='${safeAssPath}'`;
+          console.log(`[VideoProcessor]: Fusing ASS caption filter into single-pass crop graph for ${outputPath}`);
+        }
 
-          const args = [
-            ...(preSeek > 0 ? ['-ss', String(preSeek)] : []),
-            '-i', inputPath,
-            ...(fineSeek > 0 ? ['-ss', String(fineSeek)] : []),
-            '-t', String(duration),
-            '-vf', cropFilter,
-            ...highQualityEncodeArgs(),
-            '-af', 'aresample=async=1',
-            '-c:a', 'aac',
-            '-b:a', '192k',
-            '-ar', '48000',
-            '-y',
-            outputPath
-          ];
+        const runFfmpeg = (vf: string): Promise<string> => {
+          return new Promise<string>((resolve, reject) => {
+            console.log(`[VideoProcessor]: Cutting clip with ${bin} at ${start}s -> ${outputPath}`);
+            const preSeek = Math.max(0, start - 3);
+            const fineSeek = Number((start - preSeek).toFixed(3));
 
-          execFile(bin, args, { maxBuffer: 1024 * 1024 * 500 }, (error, stdout, stderr) => {
-            if (error) {
-              console.error('[VideoProcessor]: ffmpeg clip error:', stderr);
-              reject(new PipelineError({
-                message: `ffmpeg clip failed: ${error.message}`,
-                category: ErrorCategory.FFMPEG,
-                stage: 'video_clipping',
-                component: 'VideoProcessor',
-                provider: 'FFmpeg',
-                exitCode: error.code ? Number(error.code) : undefined,
-                rootCause: stderr || error.message,
-              }));
-              return;
-            }
-            console.log('[VideoProcessor]: Clip processing complete');
-            resolve(outputPath);
+            const args = [
+              ...(preSeek > 0 ? ['-ss', String(preSeek)] : []),
+              '-i', inputPath,
+              ...(fineSeek > 0 ? ['-ss', String(fineSeek)] : []),
+              '-t', String(duration),
+              '-vf', vf,
+              ...highQualityEncodeArgs(),
+              '-af', 'aresample=async=1,loudnorm=I=-16:TP=-1.5:LRA=11',
+              '-y',
+              outputPath
+            ];
+
+            execFile(bin, args, { maxBuffer: 1024 * 1024 * 500 }, (error, stdout, stderr) => {
+              if (error) {
+                console.error('[VideoProcessor]: ffmpeg clip error:', stderr);
+                reject(new PipelineError({
+                  message: `ffmpeg clip failed: ${error.message}`,
+                  category: ErrorCategory.FFMPEG,
+                  stage: 'video_clipping',
+                  component: 'VideoProcessor',
+                  provider: 'FFmpeg',
+                  exitCode: error.code ? Number(error.code) : undefined,
+                  rootCause: stderr || error.message,
+                }));
+                return;
+              }
+              console.log('[VideoProcessor]: Clip processing complete');
+              resolve(outputPath);
+            });
           });
-        });
+        };
+
+        try {
+          return await runFfmpeg(finalVideoFilter);
+        } catch (filterErr: any) {
+          if (finalVideoFilter !== cropFilter) {
+            console.warn(`[VideoProcessor]: Subtitle filter failed (${filterErr.message}). Retrying with base crop filter...`);
+            return await runFfmpeg(cropFilter);
+          }
+          throw filterErr;
+        }
       },
       validateOutput: (outPath) => fs.existsSync(outPath) && fs.statSync(outPath).size > 0,
     });

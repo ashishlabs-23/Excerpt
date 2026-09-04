@@ -63,6 +63,7 @@ import { validateClip } from '../services/clipValidator';
 import { broadcastGraphicsDetector } from '../services/intelligence/BroadcastGraphicsDetector';
 import { visualDebugger } from '../services/intelligence/VisualDebugger';
 import { narrativeIntelligenceEngine } from '../services/intelligence/NarrativeIntelligenceEngine';
+import { AcousticBoundarySnapper } from '@excerpt/clipping-core';
 import { curiosityGapEngine } from '../services/intelligence/CuriosityGapEngine';
 import { payoffDetectionEngine } from '../services/intelligence/PayoffDetectionEngine';
 import { emotionIntelligenceEngine } from '../services/intelligence/EmotionIntelligenceEngine';
@@ -1007,8 +1008,24 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       }
     }
 
-    // NEW: Snap all detected clips to transcript segment boundaries for clean cuts
-    if (segments.length > 0) {
+    // Snap all detected clips to natural speech boundaries for clean cuts (Zero-Truncation Guard)
+    if (words && words.length > 0) {
+      console.log(`[Worker]: Aligning ${clips.length} clips with AcousticBoundarySnapper (word-level Zero-Truncation Guard)...`);
+      clips = clips.map(clip => {
+        const snapped = AcousticBoundarySnapper.snap(
+          clip.start_time,
+          clip.end_time,
+          words,
+          [],
+          { minDurationSec: 15, maxDurationSec: 60, preRollMs: 180, postRollMs: 300 }
+        );
+        return {
+          ...clip,
+          start_time: Number(snapped.startSec.toFixed(2)),
+          end_time: Number(snapped.endSec.toFixed(2))
+        };
+      });
+    } else if (segments.length > 0) {
       console.log(`[Worker]: Aligning ${clips.length} clips with transcript boundaries...`);
       clips = clips.map(clip => {
         const snapped = snapToSegmentBoundary(
@@ -1664,15 +1681,6 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       new Promise((_, reject) => setTimeout(() => reject(new Error('PERSISTENCE_TIMEOUT')), 30000))
     ]);
 
-    // Create Render Jobs AFTER clips are saved
-    const pendingRenders = (dbClips as any)._pendingRenderJobs || [];
-    for (const renderJobData of pendingRenders) {
-      console.log(`[Worker]: Attempting to create render job for clip_id ${renderJobData.clip_id}`);
-      await db.createRenderJob(renderJobData);
-    }
-
-    console.log(`[Worker]: ${dbClips.length} clips enqueued to render_jobs successfully.`);
-
     recordStage(monitor, 'stage_11_persistence', stage11StartedAt, 'success');
 
     const totalExecutionTimeMs = Date.now() - monitor.startedAt;
@@ -1737,27 +1745,21 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         quality: rj.quality,
       };
 
-      try {
-        firebaseDb.createRenderJob({
-          id: rj.id,
-          job_id: jobId,
-          clip_id: rj.clipId,
-          status: 'queued',
-          payload: renderPayload,
-        });
-      } catch (err: any) {
-        console.warn(`[Worker]: Failed to queue render job in firebaseDb: ${err.message}`);
-      }
+      const renderJobData = {
+        id: rj.id,
+        job_id: jobId,
+        clip_id: rj.clipId,
+        status: 'pending',
+        environment: (process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development')),
+        payload: renderPayload,
+      };
 
       try {
-        await db.getSupabase().from('render_jobs').insert({
-          id: rj.id,
-          job_id: jobId,
-          clip_id: rj.clipId,
-          status: 'pending',
-          payload: renderPayload,
-        });
-      } catch {}
+        await db.createRenderJob(renderJobData);
+        console.log(`[Worker]: Render job ${rj.id} enqueued for clip ${rj.clipId}`);
+      } catch (err: any) {
+        console.warn(`[Worker]: Failed to queue render job ${rj.id}: ${err.message}`);
+      }
     }
 
     try { await JobStateMachine.transition(db, jobId, JobStatus.RENDERING, { progress: 85 }); } catch (err: any) { console.warn(`Failed to set rendering status: ${err.message}`) }
@@ -2287,12 +2289,32 @@ export async function awaitRenderJobsAndFinalize(
   };
   console.log(`[Worker]: Delivery Summary for ${jobId}:`, deliverySummary);
 
-  // ─── Step 4.5: Synchronization Invariant ──────────────────────────
+  // ─── Step 4.5: Synchronization Invariant with Resilient Reconciliation ──────────────────
   const completedRenderJobs = finalRenderJobs?.filter((rj: any) => rj.status === 'completed') || [];
-  const outOfSync = completedRenderJobs.some((rj: any) => {
+  let outOfSync = completedRenderJobs.some((rj: any) => {
     const clip = finalClipsCheck?.find((c: any) => c.id === rj.clip_id);
     return !clip || (clip.status !== 'uploaded' && clip.status !== 'completed') || (!clip.storage_path && !clip.video_url);
   });
+
+  if (outOfSync) {
+    console.warn(`[Worker]: Potential outOfSync detected for ${jobId}. Attempting brief state reconciliation...`);
+    await sleep(1500);
+    try {
+      const { data: reconciledClips } = await db.getSupabase().from('clips').select('id, status, storage_path, video_url').in('id', dbClips.map((c: any) => c.id));
+      if (reconciledClips && reconciledClips.length > 0) {
+        finalClipsCheck = reconciledClips;
+        outOfSync = completedRenderJobs.some((rj: any) => {
+          const clip = finalClipsCheck?.find((c: any) => c.id === rj.clip_id);
+          return !clip || (clip.status !== 'uploaded' && clip.status !== 'completed') || (!clip.storage_path && !clip.video_url);
+        });
+        if (!outOfSync) {
+          console.log(`[Worker]: Clip state successfully reconciled for ${jobId}.`);
+        }
+      }
+    } catch (reconcileErr: any) {
+      console.warn(`[Worker]: Reconciliation check error:`, reconcileErr.message);
+    }
+  }
 
   // ─── Step 4.6: Configurable Delivery Policy ───────────────────────
   type DeliveryPolicy = 'at_least_one' | 'all' | 'threshold';

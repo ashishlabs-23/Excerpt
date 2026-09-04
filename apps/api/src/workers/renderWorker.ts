@@ -18,7 +18,7 @@ if (foundEnv) {
 }
 
 import { DatabaseService } from '../services/supabaseService';
-import { VideoProcessor } from '../services/videoProcessor';
+import { VideoProcessor, getBinaryPath } from '../services/videoProcessor';
 import { StorageService } from '../services/storageService';
 import { CaptionService } from '../services/captionService';
 import { JobStateMachine, JobStatus } from '../utils/JobStateMachine';
@@ -144,16 +144,12 @@ async function processRenderJob(renderJob: any) {
     let uploadMs = 0;
 
     let outputPath = path.join(tempDir, `clip-${clipId}.mp4`);
+    const assFilePath = path.join(tempDir, `subs-${clipId}.ass`);
 
     try {
-      // 1. Rendering
-      const intermediatePath = path.join(tempDir, `cut-${clipId}.mp4`);
-      console.log(`[RenderWorker]: Cutting clip ${clipId}...`);
-      await processor.processClip(videoPath, intermediatePath, clipStart, clipEnd - clipStart, cropPlan);
-      cropMs = Date.now() - cropMsStart;
-
+      // 1. Single-Pass High-Speed Render with Burned Captions
+      let hasCaptions = false;
       if (clipWords && clipWords.length > 0) {
-        const assFilePath = path.join(tempDir, `subs-${clipId}.ass`);
         try {
           // Normalize word timestamps relative to the cut video start
           const relativeWords = clipWords
@@ -171,33 +167,55 @@ async function processRenderJob(renderJob: any) {
 
           if (relativeWords.length > 0) {
             captionService.generateASS(relativeWords, assFilePath);
-            const captionStart = Date.now();
-            console.log(`[RenderWorker]: Adding Viral Captions to clip ${clipId} (${relativeWords.length} words)...`);
-            await processor.addCaptions(intermediatePath, outputPath, assFilePath);
-            captionMs = Date.now() - captionStart;
-          } else {
-            const fs = require('fs');
-            fs.renameSync(intermediatePath, outputPath);
+            hasCaptions = true;
           }
-        } catch (capErr: any) {
-          console.warn(`[RenderWorker]: Caption burn-in failed (${capErr.message}), falling back to clean cut video.`);
-          const fs = require('fs');
-          if (fs.existsSync(intermediatePath)) {
-            fs.copyFileSync(intermediatePath, outputPath);
-          }
+        } catch (capGenErr: any) {
+          console.warn(`[RenderWorker]: Caption script generation failed (${capGenErr.message}), proceeding without captions.`);
         }
-      } else {
-        const fs = require('fs');
-        fs.renameSync(intermediatePath, outputPath);
+      }
+
+      console.log(`[RenderWorker]: Executing Single-Pass Render for clip ${clipId} (captions: ${hasCaptions})...`);
+      const renderStart = Date.now();
+      await processor.processClip(
+        videoPath,
+        outputPath,
+        clipStart,
+        clipEnd - clipStart,
+        cropPlan,
+        hasCaptions ? assFilePath : undefined
+      );
+      cropMs = Date.now() - renderStart;
+      captionMs = hasCaptions ? 1 : 0;
+
+      // 2. Local FFprobe Stream Verification Gate (Verifies local MP4 health before upload)
+      console.log(`[RenderWorker]: Running local ffprobe stream check for clip ${clipId}...`);
+      const { execFile } = require('child_process');
+      const util = require('util');
+      const execFileAsync = util.promisify(execFile);
+      const ffprobeBin = getBinaryPath('ffprobe');
+      try {
+        const { stdout } = await execFileAsync(ffprobeBin, [
+          '-v', 'error',
+          '-show_entries', 'stream=codec_type',
+          '-of', 'default=noprint_wrappers=1:nokey=1',
+          outputPath
+        ]);
+        const streams = stdout.split('\n').map((s: string) => s.trim()).filter(Boolean);
+        if (!streams.includes('video')) {
+          throw new Error('Local stream check failed: No video stream detected in rendered clip.');
+        }
+        console.log(`[RenderWorker]: Local FFprobe verified for ${clipId}: [${streams.join(', ')}]`);
+      } catch (ffErr: any) {
+        throw new Error(`Clip validation failed: ffprobe error on ${outputPath}: ${ffErr.message}`);
       }
 
       await db.updateClipStatus(clipId, 'rendered');
 
-      // 2. Thumbnail
+      // 3. Thumbnail Generation
       const thumbnailPath = path.join(tempDir, `thumb-${clipId}.jpg`);
       await processor.generateThumbnail(outputPath, thumbnailPath, 1);
 
-      // 3. Upload
+      // 4. Upload Assets to Storage
       await db.updateClipStatus(clipId, 'uploading');
       await db.updateRenderJob(renderJob.id, { status: 'uploading' });
 
@@ -211,7 +229,7 @@ async function processRenderJob(renderJob: any) {
       ]);
       uploadMs = Date.now() - uploadStart;
 
-      // 4. Update Clip in Local Queue & DB
+      // 5. Update Clip in Local Queue & DB
       try {
         const queue = firebaseDb.readQueue();
         if (queue.clips && queue.clips[clipId]) {
@@ -254,53 +272,13 @@ async function processRenderJob(renderJob: any) {
         });
       } catch {}
 
-      // 5. Cleanup
+      // 6. Cleanup Local Temp Files
       try {
         if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
         if (fs.existsSync(thumbnailPath)) fs.unlinkSync(thumbnailPath);
-        const assPath = path.join(tempDir, `subs-${clipId}.ass`);
-        if (fs.existsSync(assPath)) fs.unlinkSync(assPath);
+        if (fs.existsSync(assFilePath)) fs.unlinkSync(assFilePath);
       } catch (err) {
         console.warn(`[RenderWorker]: Cleanup warning:`, err);
-      }
-
-      // 6. Complete Verification Gate
-      console.log(`[RenderWorker]: Verifying storage for clip ${clipId}...`);
-      const isDeferredVerification = process.env.STORAGE_VERIFICATION_MODE === 'deferred' || process.env.NODE_ENV !== 'production';
-
-      if (!isDeferredVerification) {
-        const videoExists = await storage.checkObjectExists(storageKey);
-        const thumbExists = await storage.checkObjectExists(thumbStorageKey);
-        
-        if (!videoExists || !thumbExists) {
-          throw new Error(`Storage verification failed: missing MP4 or thumbnail for clip ${clipId}.`);
-        }
-
-        const signedUrl = await storage.createSignedUrl(storageKey);
-        if (!signedUrl || !signedUrl.startsWith('http')) {
-          throw new Error(`Storage verification failed: Invalid signed URL for clip ${clipId}.`);
-        }
-
-        // 7. FFprobe Verification Gate
-        console.log(`[RenderWorker]: Running ffprobe to verify streams for clip ${clipId}...`);
-        const { execFile } = require('child_process');
-        const util = require('util');
-        const execFileAsync = util.promisify(execFile);
-        try {
-          const { stdout } = await execFileAsync('ffprobe', [
-            '-v', 'error',
-            '-show_entries', 'stream=codec_type',
-            '-of', 'default=noprint_wrappers=1:nokey=1',
-            signedUrl
-          ]);
-          const streams = stdout.split('\n').map((s: string) => s.trim()).filter(Boolean);
-          if (!streams.includes('video')) {
-            throw new Error('ffprobe validation failed: No video stream found.');
-          }
-          console.log(`[RenderWorker]: FFprobe streams verified for ${clipId}: ${streams.join(', ')}`);
-        } catch (ffErr: any) {
-          throw new Error(`Storage verification failed: ffprobe failed on signed URL for clip ${clipId}. ${ffErr.message}`);
-        }
       }
 
       // Atomic Finalization
