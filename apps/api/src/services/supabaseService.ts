@@ -637,23 +637,33 @@ export class DatabaseService {
   }
 
   async getVoiceoverClipsBySource(sourceClipId: string) {
-    const { data, error } = await this.db
-      .from('voiceover_clips')
-      .select('*')
-      .eq('source_clip_id', sourceClipId)
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    return data;
+    try {
+      const { data, error } = await this.db
+        .from('voiceover_clips')
+        .select('*')
+        .eq('source_clip_id', sourceClipId)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data || [];
+    } catch (err: any) {
+      console.warn(`[SupabaseService]: getVoiceoverClipsBySource failed (${sourceClipId}):`, err.message);
+      return [];
+    }
   }
 
   async getAllVoiceoverClipsByUser(userId: string) {
-    const { data, error } = await this.db
-      .from('voiceover_clips')
-      .select('*, clips(*)')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    return data;
+    try {
+      const { data, error } = await this.db
+        .from('voiceover_clips')
+        .select('*, clips(*)')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data || [];
+    } catch (err: any) {
+      console.warn(`[SupabaseService]: getAllVoiceoverClipsByUser failed (${userId}):`, err.message);
+      return [];
+    }
   }
 
   // ==========================================

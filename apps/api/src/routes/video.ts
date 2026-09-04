@@ -8,6 +8,7 @@ import { Readable } from 'stream';
 import { DatabaseService, supabase } from '../services/supabaseService';
 import { firebaseDb } from '../services/firebaseService';
 import { VideoProcessor } from '../services/videoProcessor';
+import { CaptionService } from '../services/captionService';
 import { StorageService } from '../services/storageService';
 import { assertSafeRemoteVideoUrl, fetchSecurely } from '../services/urlSafety';
 import {
@@ -27,6 +28,8 @@ const purgeEnabled =
   process.env.ENABLE_PURGE_API === 'true' || process.env.NODE_ENV !== 'production';
 const localClipsDir = path.join(process.cwd(), 'temp', 'clips');
 const storageService = StorageService.getInstance();
+const videoProcessor = new VideoProcessor();
+const captionService = new CaptionService();
 
 // Configure Multer for local uploads
 const storage = multer.diskStorage({
@@ -1102,6 +1105,144 @@ router.get('/play/:clipId', async (req: Request, res: Response) => {
   }
 });
 
+async function handleCustomClipExport(
+  clipId: string,
+  clip: any,
+  params: {
+    trimIn?: number;
+    trimOut?: number;
+    cuts?: Array<{ start: number; end: number }>;
+    cropOffset?: number;
+    aspectRatio?: '9:16' | '1:1' | '16:9';
+    quality?: 'high' | 'medium';
+    captionStyle?: string;
+    captions?: boolean;
+    words?: any[];
+  },
+  req: Request,
+  res: Response,
+) {
+  const fileName = getDownloadFileName(clipId, clip);
+  console.log(`[VideoRoute]: Initiating dynamic custom export for clip ${clipId}:`, {
+    trimIn: params.trimIn,
+    trimOut: params.trimOut,
+    cutsCount: params.cuts?.length ?? 0,
+    cropOffset: params.cropOffset,
+    aspectRatio: params.aspectRatio,
+    captionStyle: params.captionStyle,
+    hasCustomWords: Boolean(params.words?.length),
+  });
+
+  const videoUrl = clip.storage_path || clip.video_url || '';
+  let localVideo = resolveLocalClipPath(videoUrl, clip.job_id, false);
+  if (!localVideo || !fs.existsSync(localVideo)) {
+    localVideo = resolveLocalClipPath(videoUrl, clip.job_id, true);
+  }
+
+  const exportDir = path.join(process.cwd(), 'temp', 'exports');
+  if (!fs.existsSync(exportDir)) fs.mkdirSync(exportDir, { recursive: true });
+
+  let cleanupDownloadedFile: string | null = null;
+  if (!localVideo || !fs.existsSync(localVideo)) {
+    let storageKey = clip.storage_path || clip?.metadata?.video_storage_key || extractStorageKey(videoUrl) || '';
+    if (storageKey.startsWith('clips/')) storageKey = storageKey.slice('clips/'.length);
+    if (storageKey) {
+      const tempDownloadPath = path.join(exportDir, `base-${clipId}-${Date.now()}.mp4`);
+      const fileStreamResult = await storageService.getFileStream(storageKey);
+      if (fileStreamResult) {
+        await new Promise<void>((resolve, reject) => {
+          const ws = fs.createWriteStream(tempDownloadPath);
+          fileStreamResult.stream.pipe(ws);
+          ws.on('finish', resolve);
+          ws.on('error', reject);
+        });
+        localVideo = tempDownloadPath;
+        cleanupDownloadedFile = tempDownloadPath;
+      }
+    }
+  }
+
+  if (!localVideo || !fs.existsSync(localVideo)) {
+    console.warn(`[VideoRoute]: Base clip not found locally for custom export, falling back to standard stream.`);
+    await streamClipResponse(clipId, clip, req, res);
+    return;
+  }
+
+  const clipStart = typeof clip.start_time === 'number' ? clip.start_time : (clip.startTime || 0);
+  const clipEnd = typeof clip.end_time === 'number' ? clip.end_time : (clip.endTime || 60);
+
+  const absTrimIn = params.trimIn !== undefined ? params.trimIn : clipStart;
+  const absTrimOut = params.trimOut !== undefined ? params.trimOut : clipEnd;
+  const relStart = Math.max(0, absTrimIn - clipStart);
+  const relEnd = Math.max(relStart + 0.5, absTrimOut - clipStart);
+
+  const exportId = `${clipId}-${Date.now()}`;
+  const outPath = path.join(exportDir, `export-${exportId}.mp4`);
+  const assPath = path.join(exportDir, `subs-${exportId}.ass`);
+
+  let subtitlePath: string | undefined = undefined;
+  if (params.captions !== false) {
+    const rawWords = (params.words && params.words.length > 0) ? params.words : (clip.metadata?.words || []);
+    if (rawWords.length > 0) {
+      const relativeWords = rawWords
+        .map((w: any) => {
+          const wStart = typeof w.start === 'number' ? w.start : 0;
+          const wEnd = typeof w.end === 'number' ? w.end : (wStart + 0.3);
+          return {
+            ...w,
+            start: Math.max(0, Number((wStart - absTrimIn).toFixed(3))),
+            end: Math.max(0.05, Number((wEnd - absTrimIn).toFixed(3))),
+          };
+        })
+        .filter((w: any) => w.end > 0 && w.start < (absTrimOut - absTrimIn + 0.5));
+
+      if (relativeWords.length > 0) {
+        captionService.generateASS(relativeWords, assPath, params.captionStyle || 'hormozi');
+        subtitlePath = assPath;
+      }
+    }
+  }
+
+  const relativeCuts = (params.cuts || []).map(cut => ({
+    start: Math.max(0, cut.start - absTrimIn),
+    end: Math.max(0, cut.end - absTrimIn),
+  })).filter(c => c.end > c.start);
+
+  try {
+    await videoProcessor.exportCustomClip(localVideo, outPath, {
+      startSec: relStart,
+      endSec: relEnd,
+      cropOffsetPercent: params.cropOffset,
+      aspectRatio: params.aspectRatio,
+      quality: params.quality,
+      excludedIntervals: relativeCuts,
+      subtitlePath,
+    });
+
+    const stat = fs.statSync(outPath);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Length', stat.size.toString());
+
+    const readStream = fs.createReadStream(outPath);
+    const cleanup = () => {
+      try { if (fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch {}
+      try { if (subtitlePath && fs.existsSync(subtitlePath)) fs.unlinkSync(subtitlePath); } catch {}
+      try { if (cleanupDownloadedFile && fs.existsSync(cleanupDownloadedFile)) fs.unlinkSync(cleanupDownloadedFile); } catch {}
+    };
+    readStream.on('close', cleanup);
+    readStream.on('error', cleanup);
+    readStream.pipe(res);
+  } catch (err) {
+    console.error(`[VideoRoute]: Custom clip export failed for ${clipId}:`, err);
+    if (!res.headersSent) {
+      await streamClipResponse(clipId, clip, req, res);
+    } else {
+      res.end();
+    }
+  }
+}
+
 router.get('/download/:clipId', requireUserJWT, async (req: Request, res: Response) => {
   const clipId = String(req.params.clipId);
 
@@ -1115,12 +1256,103 @@ router.get('/download/:clipId', requireUserJWT, async (req: Request, res: Respon
       return;
     }
 
-    console.log(`[VideoRoute]: Initiating proxy download for clip ${clipId}`);
+    const clipStart = typeof clip.start_time === 'number' ? clip.start_time : (clip.startTime || 0);
+    const clipEnd = typeof clip.end_time === 'number' ? clip.end_time : (clip.endTime || 60);
+
+    const hasCustomTrim = req.query.trim_in !== undefined && req.query.trim_out !== undefined && (
+      Math.abs(Number(req.query.trim_in) - clipStart) > 0.2 ||
+      Math.abs(Number(req.query.trim_out) - clipEnd) > 0.2
+    );
+
+    let parsedCuts: Array<{ start: number; end: number }> = [];
+    if (typeof req.query.cuts === 'string') {
+      try { parsedCuts = JSON.parse(req.query.cuts); } catch {}
+    }
+    const hasCuts = parsedCuts.length > 0;
+
+    const cropOffset = req.query.crop_offset ? Number(req.query.crop_offset) : 0;
+    const hasCropOffset = cropOffset !== 0;
+
+    const aspectRatio = (req.query.aspect_ratio as '9:16' | '1:1' | '16:9') || '9:16';
+    const hasCustomAspect = aspectRatio !== '9:16';
+
+    const captionStyle = (req.query.caption_style as string) || 'Submagic';
+    const hasCaptionStyle = captionStyle !== 'Submagic';
+
+    let parsedWords: any[] | undefined = undefined;
+    if (typeof req.query.words === 'string') {
+      try { parsedWords = JSON.parse(req.query.words); } catch {}
+    }
+    const hasCustomWords = Array.isArray(parsedWords) && parsedWords.length > 0;
+
+    const isCustomExport = hasCustomTrim || hasCuts || hasCropOffset || hasCustomAspect || hasCaptionStyle || hasCustomWords;
+
+    if (isCustomExport) {
+      await handleCustomClipExport(clipId, clip, {
+        trimIn: req.query.trim_in !== undefined ? Number(req.query.trim_in) : undefined,
+        trimOut: req.query.trim_out !== undefined ? Number(req.query.trim_out) : undefined,
+        cuts: parsedCuts,
+        cropOffset,
+        aspectRatio,
+        quality: (req.query.quality as 'high' | 'medium') || 'high',
+        captionStyle,
+        captions: req.query.captions !== '0',
+        words: parsedWords,
+      }, req, res);
+      return;
+    }
+
+    console.log(`[VideoRoute]: Initiating standard proxy download for clip ${clipId}`);
     await streamClipResponse(clipId, clip, req, res);
   } catch (error: any) {
     console.error(`[VideoRoute]: Download proxy failed for ${clipId}:`, error);
     if (!res.headersSent) {
       return res.status(500).json({ error: 'Failed to stream video' });
+    }
+    res.end();
+  }
+});
+
+router.post('/export-clip/:clipId', requireUserJWT, async (req: Request, res: Response) => {
+  const clipId = String(req.params.clipId);
+
+  try {
+    const clip = await fetchClipAnywhere(clipId);
+    if (!clip) {
+      return res.status(404).json({ error: 'Clip not found' });
+    }
+
+    if (!denyUnlessOwner(getClipOwnerId(clip), req.user.id, res, 'clip')) {
+      return;
+    }
+
+    const {
+      trimIn,
+      trimOut,
+      cuts,
+      cropOffset,
+      aspectRatio,
+      quality,
+      captionStyle,
+      captions,
+      words,
+    } = req.body;
+
+    await handleCustomClipExport(clipId, clip, {
+      trimIn: typeof trimIn === 'number' ? trimIn : undefined,
+      trimOut: typeof trimOut === 'number' ? trimOut : undefined,
+      cuts: Array.isArray(cuts) ? cuts : undefined,
+      cropOffset: typeof cropOffset === 'number' ? cropOffset : 0,
+      aspectRatio: aspectRatio || '9:16',
+      quality: quality || 'high',
+      captionStyle: captionStyle || 'Submagic',
+      captions: captions !== false,
+      words: Array.isArray(words) ? words : undefined,
+    }, req, res);
+  } catch (error: any) {
+    console.error(`[VideoRoute]: POST export-clip failed for ${clipId}:`, error);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'Failed to export video' });
     }
     res.end();
   }

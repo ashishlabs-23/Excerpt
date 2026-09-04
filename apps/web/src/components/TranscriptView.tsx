@@ -17,6 +17,7 @@ interface TranscriptViewProps {
   onWordEdit?: (index: number, newWord: string) => void;
   excludedWordIndices?: Set<number>;
   onToggleExcludeWord?: (index: number) => void;
+  onSetExcludedWords?: (indices: Set<number>) => void;
 }
 
 const EditableWord: React.FC<{
@@ -121,10 +122,51 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
   onWordEdit,
   excludedWordIndices = new Set(),
   onToggleExcludeWord,
+  onSetExcludedWords,
 }) => {
   const [search, setSearch] = useState('');
   const [matchIdx, setMatchIdx] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Compute filler words (um, uh, ah, like, er, actually, basically, literally)
+  const fillerIndices = React.useMemo(() => {
+    const fillerSet = new Set(['um', 'uh', 'ah', 'like', 'er', 'mm', 'hmm', 'literally', 'actually', 'basically']);
+    const indices: number[] = [];
+    words.forEach((w, i) => {
+      const clean = w.word.toLowerCase().replace(/[^a-z]/g, '');
+      if (fillerSet.has(clean)) indices.push(i);
+    });
+    return indices;
+  }, [words]);
+
+  // Total cut time calculation
+  const cutDuration = React.useMemo(() => {
+    let dur = 0;
+    words.forEach((w, i) => {
+      if (excludedWordIndices.has(i)) {
+        dur += Math.max(0, w.end - w.start);
+      }
+    });
+    return dur;
+  }, [words, excludedWordIndices]);
+
+  const handleCutAllFillers = useCallback(() => {
+    if (!onSetExcludedWords) {
+      fillerIndices.forEach(idx => onToggleExcludeWord && onToggleExcludeWord(idx));
+      return;
+    }
+    const next = new Set(excludedWordIndices);
+    fillerIndices.forEach(idx => next.add(idx));
+    onSetExcludedWords(next);
+  }, [fillerIndices, excludedWordIndices, onSetExcludedWords, onToggleExcludeWord]);
+
+  const handleRestoreAll = useCallback(() => {
+    if (onSetExcludedWords) {
+      onSetExcludedWords(new Set());
+    } else {
+      excludedWordIndices.forEach(idx => onToggleExcludeWord && onToggleExcludeWord(idx));
+    }
+  }, [excludedWordIndices, onSetExcludedWords, onToggleExcludeWord]);
 
   // Indices of words that match the search query
   const matchIndices = React.useMemo(() => {
@@ -181,9 +223,41 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
             <Zap size={13} className="text-primary" />
             <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white">Neural Transcript</span>
           </div>
-          <span className="text-[10px] font-bold text-white/25 uppercase tracking-widest">
-            {words.length - excludedWordIndices.size} / {words.length} words
-          </span>
+          <div className="flex items-center gap-2">
+            {cutDuration > 0 && (
+              <span className="px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[9px] font-bold">
+                ✂️ {cutDuration.toFixed(1)}s cut
+              </span>
+            )}
+            <span className="text-[10px] font-bold text-white/25 uppercase tracking-widest">
+              {words.length - excludedWordIndices.size} / {words.length} words
+            </span>
+          </div>
+        </div>
+
+        {/* Quick Batch Tools */}
+        <div className="flex items-center gap-2">
+          {fillerIndices.length > 0 && (
+            <button
+              onClick={handleCutAllFillers}
+              className="flex-1 py-1 px-2.5 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/30 text-primary text-[10px] font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm"
+              title="Automatically remove detected filler words (um, uh, like, etc.)"
+            >
+              <span>⚡ Cut Fillers</span>
+              <span className="px-1.5 py-0.2 rounded-full bg-primary text-black text-[8px] font-black">
+                {fillerIndices.length}
+              </span>
+            </button>
+          )}
+
+          {excludedWordIndices.size > 0 && (
+            <button
+              onClick={handleRestoreAll}
+              className="py-1 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white/60 hover:text-white text-[10px] font-bold transition-all"
+            >
+              Restore All
+            </button>
+          )}
         </div>
 
         {/* Search */}

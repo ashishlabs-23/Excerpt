@@ -43,12 +43,14 @@ function EditorContent() {
   const [exportSuccess, setExportSuccess] = useState(false);
 
   // Studio Redesign states
+  const [aspectRatio, setAspectRatio] = useState<'9:16' | '1:1' | '16:9'>('9:16');
   const [excludedWordIndices, setExcludedWordIndices] = useState<Set<number>>(new Set());
   const [captionStyle, setCaptionStyle] = useState<string>('Submagic');
   const [cropOffset, setCropOffset] = useState<number>(0);
   const [thumbnailTime, setThumbnailTime] = useState<number | null>(null);
   const [thumbnailTitle, setThumbnailTitle] = useState<string>('');
   const [socialPreviewMode, setSocialPreviewMode] = useState<'tiktok' | 'youtube' | 'instagram' | 'none'>('none');
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
 
   // Trim points (absolute seconds, matching the clip's startTime/endTime)
   const [trimIn, setTrimIn] = useState(0);
@@ -143,6 +145,15 @@ function EditorContent() {
         ? `${videoData.title.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.mp4`
         : `excerpt-clip-${videoData.id}.mp4`;
 
+      const cuts: Array<{ start: number; end: number }> = [];
+      if (videoData.words && excludedWordIndices.size > 0) {
+        videoData.words.forEach((w: any, idx: number) => {
+          if (excludedWordIndices.has(idx)) {
+            cuts.push({ start: w.start, end: w.end });
+          }
+        });
+      }
+
       await downloadAuthenticatedClip(videoData.id, fileName, {
         t: Date.now().toString(),
         face_centering: faceCenteringEnabled ? '1' : '0',
@@ -152,6 +163,8 @@ function EditorContent() {
         quality: opts.quality,
         trim_in: String(trimIn),
         trim_out: String(trimOut),
+        cuts: cuts.length > 0 ? JSON.stringify(cuts) : '',
+        words: videoData.words?.length ? JSON.stringify(videoData.words) : '',
         caption_style: captionStyle,
         crop_offset: String(cropOffset),
         thumbnail_time: thumbnailTime !== null ? String(thumbnailTime) : '',
@@ -166,7 +179,7 @@ function EditorContent() {
     } finally {
       setIsExporting(false);
     }
-  }, [videoData, faceCenteringEnabled, bRollEnabled, captionsEnabled, trimIn, trimOut, captionStyle, cropOffset, thumbnailTime, thumbnailTitle]);
+  }, [videoData, faceCenteringEnabled, bRollEnabled, captionsEnabled, trimIn, trimOut, excludedWordIndices, captionStyle, cropOffset, thumbnailTime, thumbnailTitle]);
 
   const clipDuration = videoData ? videoData.endTime - videoData.startTime : 0;
 
@@ -204,9 +217,28 @@ function EditorContent() {
                 <Scissors className="text-white" size={16} />
               </div>
               <div>
-                <h1 className="text-sm font-bold tracking-tight truncate max-w-[200px] sm:max-w-xs">
-                  {videoData?.title || 'Clip Editor'}
-                </h1>
+                {isEditingTitle ? (
+                  <input
+                    autoFocus
+                    value={videoData?.title || ''}
+                    onChange={e => {
+                      const newTitle = e.target.value;
+                      setVideoData(prev => prev ? { ...prev, title: newTitle } : null);
+                    }}
+                    onBlur={() => setIsEditingTitle(false)}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setIsEditingTitle(false); }}
+                    className="text-sm font-bold tracking-tight bg-white/10 text-white rounded px-2 py-0.5 border border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary max-w-[200px] sm:max-w-xs"
+                  />
+                ) : (
+                  <h1
+                    onClick={() => setIsEditingTitle(true)}
+                    className="text-sm font-bold tracking-tight truncate max-w-[200px] sm:max-w-xs cursor-pointer hover:text-primary transition-colors flex items-center gap-1.5"
+                    title="Click to rename clip"
+                  >
+                    <span>{videoData?.title || 'Clip Editor'}</span>
+                    <span className="text-[10px] text-white/30 hover:text-white">✎</span>
+                  </h1>
+                )}
                 <div className="flex items-center gap-1.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
                   <span className="text-[9px] text-[#4b5563] font-black uppercase tracking-widest">Studio Mode</span>
@@ -263,6 +295,7 @@ function EditorContent() {
                   captionStyle={captionStyle}
                   cropOffset={cropOffset}
                   socialPreviewMode={socialPreviewMode}
+                  aspectRatio={aspectRatio}
                 />
               ) : (
                 <div className="text-center opacity-30 space-y-3">
@@ -289,6 +322,8 @@ function EditorContent() {
               <Timeline
                 duration={clipDuration}
                 currentTime={currentTime - (videoData?.startTime || 0)}
+                words={videoData?.words || []}
+                excludedWordIndices={excludedWordIndices}
                 onSeek={t => {
                   const abs = (videoData?.startTime || 0) + t;
                   setManualSeek(abs);
@@ -311,6 +346,7 @@ function EditorContent() {
               onWordEdit={handleWordEdit}
               excludedWordIndices={excludedWordIndices}
               onToggleExcludeWord={handleToggleExcludeWord}
+              onSetExcludedWords={setExcludedWordIndices}
             />
           </div>
 
@@ -342,6 +378,8 @@ function EditorContent() {
               readinessScore={readinessScore}
               socialPreviewMode={socialPreviewMode === 'none' ? 'tiktok' : socialPreviewMode}
               onChangeSocialPreviewMode={(mode) => setSocialPreviewMode(prev => prev === mode ? 'none' : mode)}
+              aspectRatio={aspectRatio}
+              onChangeAspectRatio={setAspectRatio}
             />
           </div>
         </div>

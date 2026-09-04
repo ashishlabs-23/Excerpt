@@ -190,9 +190,13 @@ export class DownloadIntelligenceEngine {
     return new Promise((resolve, reject) => {
       const cap = strategy.resolutionCap || '1080';
       const formatSelector = [
-        `bestvideo[height<=${cap}]+bestaudio`,
+        `bestvideo[ext=mp4][height<=${cap}][height>=720]+bestaudio[ext=m4a]`,
+        `bestvideo[height<=${cap}][height>=720]+bestaudio`,
         `bestvideo[height<=${cap}][ext=mp4]+bestaudio[ext=m4a]`,
+        `bestvideo[height<=${cap}]+bestaudio`,
         `bestvideo[height<=${cap}][protocol^=m3u8]+bestaudio[protocol^=m3u8]`,
+        `best[ext=mp4][height<=${cap}][height>=720]`,
+        `best[height<=${cap}][height>=720]`,
         `best[height<=${cap}]`,
         'best'
       ].join('/');

@@ -17,6 +17,7 @@ interface VideoPlayerProps {
   captionStyle?: string;
   cropOffset?: number;
   socialPreviewMode?: 'tiktok' | 'youtube' | 'instagram' | 'none';
+  aspectRatio?: '9:16' | '1:1' | '16:9';
 }
 
 const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
@@ -36,6 +37,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   captionStyle = 'Submagic',
   cropOffset = 0,
   socialPreviewMode = 'none',
+  aspectRatio = '9:16',
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
@@ -148,6 +150,33 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       document.removeEventListener('fullscreenchange', onFullscreenChange);
     };
   }, [startTime, endTime, onLoadedMetadata, excludedIntervals]);
+
+  // High-precision (60fps) jump-cutting monitor to eliminate audio stutter on excluded words
+  useEffect(() => {
+    if (!isPlaying) return;
+    let animId: number;
+
+    const checkJumpCut = () => {
+      const video = videoRef.current;
+      if (video && !video.paused) {
+        const time = video.currentTime;
+        // Check if current time falls within any excluded interval
+        const activeExclude = excludedIntervals.find(interval => time >= interval.start && time < interval.end);
+        if (activeExclude) {
+          video.currentTime = activeExclude.end + 0.01;
+        } else if (time >= endTime) {
+          video.currentTime = startTime;
+          video.pause();
+          setIsPlaying(false);
+          return;
+        }
+      }
+      animId = requestAnimationFrame(checkJumpCut);
+    };
+
+    animId = requestAnimationFrame(checkJumpCut);
+    return () => cancelAnimationFrame(animId);
+  }, [isPlaying, startTime, endTime, excludedIntervals]);
 
   // Propagate time to parent
   useEffect(() => {
@@ -295,10 +324,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const VolumeIcon = isMuted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
 
+  const aspectClass = aspectRatio === '1:1'
+    ? 'aspect-square max-w-[540px] rounded-3xl'
+    : aspectRatio === '16:9'
+    ? 'aspect-video max-w-[800px] rounded-3xl'
+    : 'aspect-[9/16] max-w-[390px] rounded-[2.5rem]';
+
+  const captionBottomClass = aspectRatio === '1:1'
+    ? 'bottom-[14%]'
+    : aspectRatio === '16:9'
+    ? 'bottom-[12%]'
+    : 'bottom-[22%]';
+
   return (
     <div
       ref={containerRef}
-      className="relative h-full w-auto aspect-[9/16] mx-auto bg-black rounded-[2.5rem] overflow-hidden border-[10px] border-[#111827] shadow-[0_40px_120px_rgba(0,0,0,0.9)] group select-none"
+      className={`relative h-full w-auto ${aspectClass} mx-auto bg-black overflow-hidden border-[10px] border-[#111827] shadow-[0_40px_120px_rgba(0,0,0,0.9)] group select-none transition-all duration-300`}
       onMouseMove={resetHideTimer}
       onMouseLeave={() => { if (isPlaying) setShowControls(false); }}
     >
@@ -314,7 +355,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* ── Captions Overlay ── */}
       {showCaptions && activePhrase && activeWord && (
-        <div className="absolute bottom-[22%] left-0 right-0 flex justify-center pointer-events-none z-20 px-3">
+        <div className={`absolute ${captionBottomClass} left-0 right-0 flex justify-center pointer-events-none z-20 px-3`}>
           <div className="px-4 py-2 bg-black/70 backdrop-blur-md rounded-2xl shadow-2xl flex flex-wrap justify-center gap-x-2 gap-y-0.5 max-w-full">
             {activePhrase.words.map((w, idx) => {
               const isActive = w.start === activeWord.start;

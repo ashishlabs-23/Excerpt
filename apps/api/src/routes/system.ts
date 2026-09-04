@@ -182,8 +182,8 @@ router.get('/metrics/history', requireUserJWT, async (req: Request, res: Respons
     }
     res.json({ data: data || [] });
   } catch (error: any) {
-    console.error('[SystemRoute]: Metrics history query failed:', error.message);
-    res.status(500).json({ error: error.message });
+    console.warn('[SystemRoute]: Metrics history query failed, falling back to empty list:', error.message);
+    res.json({ data: [] });
   }
 });
 

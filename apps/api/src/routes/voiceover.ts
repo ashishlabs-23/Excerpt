@@ -17,14 +17,18 @@ router.get('/project/:id', requireUserJWT, async (req: Request, res: Response) =
     const projectId = req.params.id as string;
     const project = await db.getVoiceoverProject(projectId);
     
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
     if (!denyUnlessOwner(project.user_id, req.user.id, res, 'voiceover project')) {
       return;
     }
     
     res.json(project);
   } catch (error: any) {
-    console.error('[Voiceover API]: Error fetching project:', error.message);
-    res.status(500).json({ error: error.message });
+    console.warn('[Voiceover API]: Error fetching project:', error.message);
+    res.status(404).json({ error: 'Project not found' });
   }
 });
 
@@ -35,10 +39,10 @@ router.get('/projects', requireUserJWT, async (req: Request, res: Response) => {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const projects = await db.getVoiceoverProjectsByUser(userId);
-    res.json(projects);
+    res.json(projects || []);
   } catch (error: any) {
-    console.error('[Voiceover API]: Error fetching projects:', error.message);
-    res.status(500).json({ error: error.message });
+    console.warn('[Voiceover API]: Error fetching projects, falling back to empty list:', error.message);
+    res.json([]);
   }
 });
 
@@ -383,10 +387,10 @@ router.get('/clip/:clipId', requireUserJWT, async (req: Request, res: Response) 
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const voiceovers = await db.getVoiceoverClipsBySource(clipId);
-    res.json(voiceovers);
+    res.json(voiceovers || []);
   } catch (error: any) {
-    console.error('[Voiceover API]: Error fetching voiceovers:', error.message);
-    res.status(500).json({ error: error.message });
+    console.warn('[Voiceover API]: Error fetching voiceovers for clip, returning empty list:', error.message);
+    res.json([]);
   }
 });
 
@@ -397,10 +401,10 @@ router.get('/all', requireUserJWT, async (req: Request, res: Response) => {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const voiceovers = await db.getAllVoiceoverClipsByUser(userId);
-    res.json(voiceovers);
+    res.json(voiceovers || []);
   } catch (error: any) {
-    console.error('[Voiceover API]: Error fetching all voiceovers:', error.message);
-    res.status(500).json({ error: error.message });
+    console.warn('[Voiceover API]: Error fetching all voiceovers, returning empty list:', error.message);
+    res.json([]);
   }
 });
 

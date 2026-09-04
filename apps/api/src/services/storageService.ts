@@ -97,9 +97,10 @@ export class StorageService {
           ContentLength: fileBuffer.length,
         }));
 
+        // Generous timeout for high bitrate 1080p clips (120s)
         await Promise.race([
           uploadPromise,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('B2_UPLOAD_TIMEOUT')), 8000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('B2_UPLOAD_TIMEOUT')), 120000))
         ]);
 
         const region = process.env.B2_REGION || "us-west-004";

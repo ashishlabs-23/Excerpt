@@ -1,6 +1,6 @@
 import fs from 'fs';
 
-export type CaptionPreset = 'hormozi' | 'mrbeast' | 'neon' | 'minimalist';
+export type CaptionPreset = 'hormozi' | 'mrbeast' | 'neon' | 'minimalist' | 'submagic' | 'tiktok' | 'minimal';
 
 export class KineticCaptionGenerator {
     private emojiMap: Record<string, string> = {
@@ -34,28 +34,39 @@ export class KineticCaptionGenerator {
     generateASS(
         words: {start: number; end: number; word: string}[],
         outputPath: string,
-        preset: CaptionPreset = 'hormozi'
+        preset: CaptionPreset | string = 'hormozi'
     ) {
-        let highlightColor = '&H002BF500&'; // Hormozi Lime Green
+        const normalizedPreset = (preset || 'hormozi').toLowerCase();
+        let highlightColor = '&H002BF500&'; // Hormozi Lime Green (BGR)
         let outlineThickness = 4;
         let shadowThickness = 0;
         let fontSize = 60;
 
-        if (preset === 'mrbeast') {
+        if (normalizedPreset === 'submagic') {
+            highlightColor = '&H009948EC&'; // Submagic Vibrant Pink
+            outlineThickness = 4;
+            shadowThickness = 2;
+            fontSize = 62;
+        } else if (normalizedPreset === 'tiktok') {
+            highlightColor = '&H0015CCFA&'; // TikTok High-Contrast Yellow
+            outlineThickness = 5;
+            shadowThickness = 1;
+            fontSize = 64;
+        } else if (normalizedPreset === 'mrbeast') {
             highlightColor = '&H0000D7FF&'; // MrBeast Golden Yellow
             outlineThickness = 5;
             shadowThickness = 2;
             fontSize = 62;
-        } else if (preset === 'neon') {
+        } else if (normalizedPreset === 'neon') {
             highlightColor = '&H00FFFF00&'; // Electric Cyan
             outlineThickness = 4;
             shadowThickness = 1;
             fontSize = 58;
-        } else if (preset === 'minimalist') {
+        } else if (normalizedPreset === 'minimalist' || normalizedPreset === 'minimal') {
             highlightColor = '&H00FFFFFF&';
-            outlineThickness = 3;
+            outlineThickness = 2;
             shadowThickness = 0;
-            fontSize = 52;
+            fontSize = 50;
         }
 
         let assContent = `[Script Info]

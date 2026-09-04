@@ -95,7 +95,7 @@ export class StrategyRunner {
 
     // Apply strategy-specific yt-dlp args BEFORE the URL (positional arg must be last)
     if (strategy === 'android') {
-      args.push('--extractor-args', 'youtube:player_client=android');
+      args.push('--extractor-args', 'youtube:player_client=android_vr,tv');
     } else if (strategy === 'ios') {
       args.push('--extractor-args', 'youtube:player_client=ios');
     }

@@ -735,6 +735,185 @@ export class VideoProcessor {
   }
 
   /**
+   * Studio Dynamic Exporter:
+   * Applies trims, cuts excluded intervals (jump-cuts), adjusts horizontal crop offset,
+   * converts aspect ratios (9:16, 1:1, 16:9), and burns custom styled captions in a single pass.
+   */
+  async exportCustomClip(
+    inputPath: string,
+    outputPath: string,
+    options: {
+      startSec?: number;
+      endSec?: number;
+      cropOffsetPercent?: number;
+      aspectRatio?: '9:16' | '1:1' | '16:9';
+      quality?: 'high' | 'medium';
+      excludedIntervals?: Array<{ start: number; end: number }>;
+      subtitlePath?: string;
+    }
+  ): Promise<string> {
+    return StageExecutor.run({ inputPath, outputPath, options }, {
+      stage: 'video_export',
+      component: 'VideoProcessor',
+      provider: 'FFmpeg',
+      timeoutMs: 1000 * 60 * 5,
+      timeoutType: 'process_timeout',
+      validateInput: ({ inputPath }) => fs.existsSync(inputPath),
+      execute: async ({ inputPath, outputPath, options }) => {
+        const bin = getBinaryPath('ffmpeg');
+        const start = Math.max(0, options.startSec ?? 0);
+        const end = options.endSec;
+        const duration = end !== undefined && end > start ? end - start : undefined;
+        const targetAspect = options.aspectRatio || '9:16';
+        const isMediumQuality = options.quality === 'medium';
+        const cropOffset = options.cropOffsetPercent ?? 0;
+
+        let inputWidth = 1080;
+        let inputHeight = 1920;
+        try {
+          const dims = await this.getVideoDimensions(inputPath);
+          inputWidth = dims.width;
+          inputHeight = dims.height;
+        } catch {}
+
+        const isInputVertical = inputHeight > inputWidth;
+
+        let baseFilters: string[] = [];
+
+        // Aspect ratio handling
+        if (targetAspect === '9:16') {
+          const targetW = isMediumQuality ? 720 : 1080;
+          const targetH = isMediumQuality ? 1280 : 1920;
+          if (isInputVertical) {
+            if (cropOffset !== 0) {
+              const maxShift = Math.round(targetW * 0.2);
+              const shift = Math.round((cropOffset / 50) * maxShift);
+              baseFilters.push(`scale=${targetW + Math.abs(shift) * 2}:${targetH}:flags=lanczos,crop=${targetW}:${targetH}:${Math.max(0, shift)}:0`);
+            } else {
+              baseFilters.push(`scale=${targetW}:${targetH}:flags=lanczos`);
+            }
+          } else {
+            // Source is horizontal (16:9), crop to 9:16 vertical
+            const scaledH = targetH;
+            const scaledW = roundEven((inputWidth * scaledH) / inputHeight);
+            const maxShift = Math.max(0, scaledW - targetW);
+            const baseCropX = Math.round(maxShift / 2);
+            const shiftX = Math.round((cropOffset / 50) * (maxShift / 2));
+            const finalCropX = clamp(baseCropX + shiftX, 0, maxShift);
+            baseFilters.push(`scale=${scaledW}:${scaledH}:flags=lanczos,crop=${targetW}:${targetH}:${finalCropX}:0`);
+          }
+        } else if (targetAspect === '1:1') {
+          const targetDim = isMediumQuality ? 720 : 1080;
+          if (isInputVertical) {
+            // Crop square from vertical
+            const cropY = Math.round((inputHeight - inputWidth) * 0.35); // Focus upper third
+            baseFilters.push(`crop=in_w:in_w:0:${clamp(cropY, 0, inputHeight - inputWidth)},scale=${targetDim}:${targetDim}:flags=lanczos`);
+          } else {
+            // Crop square from horizontal
+            const maxShift = Math.max(0, inputWidth - inputHeight);
+            const baseCropX = Math.round(maxShift / 2);
+            const shiftX = Math.round((cropOffset / 50) * (maxShift / 2));
+            const finalCropX = clamp(baseCropX + shiftX, 0, maxShift);
+            baseFilters.push(`crop=in_h:in_h:${finalCropX}:0,scale=${targetDim}:${targetDim}:flags=lanczos`);
+          }
+        } else {
+          // targetAspect === '16:9'
+          const targetW = isMediumQuality ? 1280 : 1920;
+          const targetH = isMediumQuality ? 720 : 1080;
+          if (isInputVertical) {
+            // Vertical inside horizontal with ambient blurred backdrop
+            baseFilters.push(`split[bg][fg];[bg]scale=${targetW}:${targetH}:flags=bicubic,boxblur=25:5[blurred];[fg]scale=-2:${targetH}:flags=lanczos[sharp];[blurred][sharp]overlay=(W-w)/2:0`);
+          } else {
+            baseFilters.push(`scale=${targetW}:${targetH}:flags=lanczos`);
+          }
+        }
+
+        // Excluded intervals / jump-cut filter
+        let audioFilters: string[] = [];
+        if (options.excludedIntervals && options.excludedIntervals.length > 0 && duration && duration > 0) {
+          const sortedCuts = [...options.excludedIntervals]
+            .map(c => ({
+              start: Math.max(0, c.start - start),
+              end: Math.min(duration, c.end - start)
+            }))
+            .filter(c => c.end > c.start)
+            .sort((a, b) => a.start - b.start);
+
+          const keepIntervals: Array<{ start: number; end: number }> = [];
+          let cur = 0;
+          for (const cut of sortedCuts) {
+            if (cut.start > cur) {
+              keepIntervals.push({ start: cur, end: cut.start });
+            }
+            cur = Math.max(cur, cut.end);
+          }
+          if (cur < duration) {
+            keepIntervals.push({ start: cur, end: duration });
+          }
+
+          if (keepIntervals.length > 0) {
+            const selectCond = keepIntervals
+              .map(k => `between(t,${k.start.toFixed(3)},${k.end.toFixed(3)})`)
+              .join('+');
+            baseFilters.push(`select='${selectCond}',setpts=N/FRAME_RATE/TB`);
+            audioFilters.push(`aselect='${selectCond}',asetpts=N/SR/TB`);
+          }
+        }
+
+        // ASS Subtitle Burn-In
+        if (options.subtitlePath && fs.existsSync(options.subtitlePath)) {
+          const safeAssPath = path.resolve(options.subtitlePath).replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\\\'");
+          baseFilters.push(`ass='${safeAssPath}'`);
+        }
+
+        baseFilters.push('setsar=1');
+
+        audioFilters.push('aresample=async=1', 'loudnorm=I=-16:TP=-1.5:LRA=11');
+
+        const videoFilterGraph = baseFilters.join(',');
+        const audioFilterGraph = audioFilters.join(',');
+
+        const preSeek = Math.max(0, start - 2);
+        const fineSeek = Number((start - preSeek).toFixed(3));
+
+        const args = [
+          ...(preSeek > 0 ? ['-ss', String(preSeek)] : []),
+          '-i', inputPath,
+          ...(fineSeek > 0 ? ['-ss', String(fineSeek)] : []),
+          ...(duration ? ['-t', String(duration)] : []),
+          '-vf', videoFilterGraph,
+          '-af', audioFilterGraph,
+          ...highQualityEncodeArgs(),
+          '-y',
+          outputPath
+        ];
+
+        console.log(`[VideoProcessor]: Exporting custom clip with args: ${args.join(' ')}`);
+        return new Promise<string>((resolve, reject) => {
+          execFile(bin, args, { maxBuffer: 1024 * 1024 * 500 }, (error, stdout, stderr) => {
+            if (error) {
+              console.error('[VideoProcessor]: ffmpeg custom export error:', stderr);
+              reject(new PipelineError({
+                message: `ffmpeg custom export failed: ${error.message}`,
+                category: ErrorCategory.FFMPEG,
+                stage: 'video_export',
+                component: 'VideoProcessor',
+                provider: 'FFmpeg',
+                exitCode: error.code ? Number(error.code) : undefined,
+                rootCause: stderr || error.message,
+              }));
+              return;
+            }
+            console.log(`[VideoProcessor]: Custom clip export successful -> ${outputPath}`);
+            resolve(outputPath);
+          });
+        });
+      },
+      validateOutput: (outPath) => fs.existsSync(outPath) && fs.statSync(outPath).size > 0,
+    });
+  }
+
+  /**
    * Gets metadata (title and channel) for a remote video using yt-dlp.
    */
   async getVideoMetadata(url: string): Promise<{ title?: string; channel?: string }> {

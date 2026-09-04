@@ -4,7 +4,7 @@ import { KineticCaptionGenerator, CaptionPreset } from './kineticCaptionGenerato
 export class CaptionService {
     private kineticGenerator = new KineticCaptionGenerator();
 
-    generateASS(words: {start: number; end: number; word: string}[], outputPath: string, preset: CaptionPreset = 'hormozi') {
+    generateASS(words: {start: number; end: number; word: string}[], outputPath: string, preset: CaptionPreset | string = 'hormozi') {
         this.kineticGenerator.generateASS(words, outputPath, preset);
     }
 }

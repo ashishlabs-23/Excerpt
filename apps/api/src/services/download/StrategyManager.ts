@@ -2,6 +2,30 @@ import { DownloadStrategy } from './types';
 
 const DEFAULT_STRATEGIES: DownloadStrategy[] = [
   {
+    id: 'web_embedded',
+    resolutionCap: '1080',
+    extractorArgs: 'youtube:player_client=web_embedded',
+    useCookies: false,
+    maxRetries: 0,
+    rateLimit: '35M'
+  },
+  {
+    id: 'android_vr',
+    resolutionCap: '1080',
+    extractorArgs: 'youtube:player_client=android_vr,tv',
+    useCookies: false,
+    maxRetries: 0,
+    rateLimit: '35M'
+  },
+  {
+    id: 'tv',
+    resolutionCap: '1080',
+    extractorArgs: 'youtube:player_client=tv',
+    useCookies: false,
+    maxRetries: 0,
+    rateLimit: '35M'
+  },
+  {
     id: 'hd-m3u8',
     resolutionCap: '1080',
     useCookies: false,
@@ -34,9 +58,8 @@ const DEFAULT_STRATEGIES: DownloadStrategy[] = [
   {
     id: 'android',
     resolutionCap: '1080',
-    extractorArgs: 'youtube:player_client=android',
+    extractorArgs: 'youtube:player_client=android_vr,tv',
     useCookies: false, 
-    userAgent: 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
     maxRetries: 0,
     rateLimit: '25M'
   },

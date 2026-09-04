@@ -179,7 +179,9 @@ export const ProcessingState: React.FC<ProcessingStateProps> = ({ status, progre
                     displayError ? "text-red-500" : "text-primary"
                   )}
                   strokeDasharray="465"
-                  animate={{ strokeDashoffset: 465 - (465 * progress) / 100 }}
+                  initial={{ strokeDashoffset: 465 }}
+                  style={{ strokeDashoffset: 465 }}
+                  animate={{ strokeDashoffset: 465 - (465 * (progress ?? 0)) / 100 }}
                   transition={{ ease: "easeOut", duration: 0.8 }}
                 />
               </svg>

@@ -48,16 +48,23 @@ export function useRealtimeSync(
     }
 
     let isMounted = true;
-    let reconnectTimeout: NodeJS.Timeout;
+    let isIntentionallyClosing = false;
+    let reconnectTimeout: NodeJS.Timeout | null = null;
+    const MAX_RECONNECT_ATTEMPTS = 5;
 
     const connectChannel = () => {
-      if (!isMounted) return;
+      if (!isMounted || isIntentionallyClosing) return;
 
       console.log(`[RealtimeSync]: Connecting to job-progress channel for ${jobId}...`);
       
-      // Cleanup previous channel if any
+      // Cleanup previous channel if any without triggering reconnect
       if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
+        isIntentionallyClosing = true;
+        try {
+          supabase.removeChannel(channelRef.current);
+        } catch {}
+        channelRef.current = null;
+        isIntentionallyClosing = false;
       }
 
       const channel = supabase
@@ -82,14 +89,14 @@ export function useRealtimeSync(
       channelRef.current = channel;
 
       channel.subscribe((status, err) => {
-        if (!isMounted) return;
+        if (!isMounted || isIntentionallyClosing) return;
 
         if (status === 'SUBSCRIBED') {
           console.log(`[RealtimeSync]: Successfully subscribed to channel for ${jobId}`);
           setConnectionStatus('connected');
           reconnectAttemptRef.current = 0; // reset retry counter
         } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-          console.warn(`[RealtimeSync]: Subscription error/closed for ${jobId}:`, err);
+          if (isIntentionallyClosing) return;
           setConnectionStatus('disconnected');
           triggerReconnect();
         }
@@ -97,25 +104,38 @@ export function useRealtimeSync(
     };
 
     const triggerReconnect = () => {
-      if (!isMounted) return;
+      if (!isMounted || isIntentionallyClosing) return;
 
+      if (reconnectAttemptRef.current >= MAX_RECONNECT_ATTEMPTS) {
+        console.warn(`[RealtimeSync]: Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached for ${jobId}. Falling back to standard polling.`);
+        setConnectionStatus('disconnected');
+        return;
+      }
+
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+      }
+
+      reconnectAttemptRef.current++;
       const delay = Math.min(
         maxReconnectDelay,
-        baseReconnectDelay * Math.pow(2, reconnectAttemptRef.current) + Math.random() * 1000
+        baseReconnectDelay * Math.pow(2, reconnectAttemptRef.current) + Math.random() * 500
       );
       
-      reconnectAttemptRef.current++;
       setConnectionStatus('reconnecting');
-      console.log(`[RealtimeSync]: Retrying connection in ${Math.round(delay)}ms (Attempt ${reconnectAttemptRef.current})`);
+      console.log(`[RealtimeSync]: Retrying connection in ${Math.round(delay)}ms (Attempt ${reconnectAttemptRef.current}/${MAX_RECONNECT_ATTEMPTS})`);
 
       reconnectTimeout = setTimeout(() => {
-        connectChannel();
+        if (isMounted) {
+          connectChannel();
+        }
       }, delay);
     };
 
     connectChannel();
 
-    // Heartbeat to periodically check connection health (every 15 seconds)
+    // Heartbeat to periodically check connection health (every 30 seconds)
     const heartbeatInterval = setInterval(() => {
       if (channelRef.current && connectionStatus === 'connected') {
         const state = (channelRef.current as any).state;
@@ -124,15 +144,21 @@ export function useRealtimeSync(
           triggerReconnect();
         }
       }
-    }, 15000);
+    }, 30000);
 
     return () => {
       isMounted = false;
-      clearTimeout(reconnectTimeout);
+      isIntentionallyClosing = true;
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+      }
       clearInterval(heartbeatInterval);
       if (channelRef.current) {
         console.log(`[RealtimeSync]: Cleaning up subscription channel for ${jobId}`);
-        supabase.removeChannel(channelRef.current);
+        try {
+          supabase.removeChannel(channelRef.current);
+        } catch {}
         channelRef.current = null;
       }
     };

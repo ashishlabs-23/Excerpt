@@ -43,6 +43,8 @@ interface EditorSidebarProps {
   readinessScore: number;
   socialPreviewMode: 'tiktok' | 'youtube' | 'instagram';
   onChangeSocialPreviewMode: (mode: 'tiktok' | 'youtube' | 'instagram') => void;
+  aspectRatio?: ExportOptions['aspectRatio'];
+  onChangeAspectRatio?: (aspect: ExportOptions['aspectRatio']) => void;
 }
 
 const ASPECT_RATIOS: { label: string; value: ExportOptions['aspectRatio']; desc: string; icon: string }[] = [
@@ -80,10 +82,18 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
   readinessScore,
   socialPreviewMode,
   onChangeSocialPreviewMode,
+  aspectRatio: controlledAspect = '9:16',
+  onChangeAspectRatio,
 }) => {
   const [activeTab, setActiveTab] = useState<'ai' | 'captions' | 'crop' | 'publish'>('ai');
-  const [aspectRatio, setAspectRatio] = useState<ExportOptions['aspectRatio']>('9:16');
+  const [internalAspect, setInternalAspect] = useState<ExportOptions['aspectRatio']>('9:16');
   const [quality, setQuality] = useState<ExportOptions['quality']>('high');
+
+  const aspectRatio = controlledAspect || internalAspect;
+  const setAspectRatio = (val: ExportOptions['aspectRatio']) => {
+    setInternalAspect(val);
+    if (onChangeAspectRatio) onChangeAspectRatio(val);
+  };
 
   const handleExport = () => onExport({ aspectRatio, quality, format: 'mp4' });
 
@@ -98,9 +108,9 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
       <div className="px-6 py-4 border-b border-[#1a2235] bg-[#0d1425]/80 shrink-0">
         <div className="flex items-center gap-2 mb-1">
           <Sparkles size={14} className="text-primary" />
-          <h2 className="text-sm font-black text-[#e0e5f6] uppercase tracking-widest">Studio Studio</h2>
+          <h2 className="text-sm font-black text-[#e0e5f6] uppercase tracking-widest">Clip Studio</h2>
         </div>
-        <p className="text-[9px] text-[#374151] uppercase tracking-widest">Production-Grade Editor</p>
+        <p className="text-[9px] text-[#4b5563] uppercase tracking-widest">Production-Grade Video Suite</p>
       </div>
 
       {/* Tab Selectors */}
