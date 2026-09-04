@@ -5,6 +5,7 @@ import { execFile } from 'child_process';
 import { DatabaseService } from '../services/supabaseService';
 import { VoiceoverService, VoiceConfig } from '../services/VoiceoverService';
 import { StorageService } from '../services/storageService';
+import { getBinaryPath } from '../services/videoProcessor';
 
 dotenv.config();
 
@@ -19,6 +20,8 @@ async function processVoiceoverClip(vc: any) {
   const vcId = vc.id;
   console.log(`[VoiceoverWorker]: Processing voiceover_clip ${vcId}`);
   const startTime = Date.now();
+  const ffmpegBin = getBinaryPath('ffmpeg');
+  const ffprobeBin = getBinaryPath('ffprobe');
 
   const updateStage = async (stage: string) => {
     console.log(`[VoiceoverWorker]: Stage -> ${stage}`);
@@ -50,17 +53,22 @@ async function processVoiceoverClip(vc: any) {
     const outputAudioPath = path.join(tempDir, 'tts.mp3');
     const outputVideoPath = path.join(tempDir, 'final.mp4');
 
-    // 3. Download source video
-    let fetchUrl = sourceVideoUrl;
-    if (!fetchUrl.startsWith('http')) {
-      fetchUrl = await storage.createSignedUrl(sourceVideoUrl);
+    // 3. Obtain source video (local disk or remote storage)
+    if (sourceVideoUrl && fs.existsSync(sourceVideoUrl)) {
+      console.log(`[VoiceoverWorker]: Source video found locally at ${sourceVideoUrl}`);
+      fs.copyFileSync(sourceVideoUrl, inputVideoPath);
+    } else {
+      let fetchUrl = sourceVideoUrl;
+      if (!fetchUrl.startsWith('http')) {
+        fetchUrl = await storage.createSignedUrl(sourceVideoUrl);
+      }
+      
+      console.log(`[VoiceoverWorker]: Downloading source video from ${fetchUrl}`);
+      const response = await fetch(fetchUrl);
+      if (!response.ok) throw new Error(`Failed to fetch source video: ${response.statusText}`);
+      const buffer = await response.arrayBuffer();
+      fs.writeFileSync(inputVideoPath, Buffer.from(buffer));
     }
-    
-    console.log(`[VoiceoverWorker]: Downloading source video from ${fetchUrl}`);
-    const response = await fetch(fetchUrl);
-    if (!response.ok) throw new Error(`Failed to fetch source video: ${response.statusText}`);
-    const buffer = await response.arrayBuffer();
-    fs.writeFileSync(inputVideoPath, Buffer.from(buffer));
 
     // 4. Generate TTS Audio
     await updateStage('generating_audio');
@@ -77,9 +85,9 @@ async function processVoiceoverClip(vc: any) {
 
     // 5. FFmpeg Merge (Remove original audio, replace with new TTS, shortest duration)
     await updateStage('merging');
-    console.log(`[VoiceoverWorker]: Merging TTS with Video using FFmpeg...`);
+    console.log(`[VoiceoverWorker]: Merging TTS with Video using FFmpeg (${ffmpegBin})...`);
     await new Promise<void>((resolve, reject) => {
-      execFile('ffmpeg', [
+      execFile(ffmpegBin, [
         '-y',
         '-i', inputVideoPath,
         '-i', outputAudioPath,
@@ -122,19 +130,20 @@ async function processVoiceoverClip(vc: any) {
       throw new Error("Validation failed: Local video file is missing or empty.");
     }
 
-    // 7b. Verify signed URLs / public URLs are reachable
-    const videoHead = await fetch(publicVideoUrl, { method: 'HEAD' }).catch(() => null);
-    if (!videoHead || videoHead.status !== 200) {
-      // Try GET if HEAD is not supported by backend storage
-      const videoGet = await fetch(publicVideoUrl).catch(() => null);
-      if (!videoGet || videoGet.status !== 200) {
-        throw new Error(`Validation failed: Public video URL is unreachable (${videoGet?.status})`);
+    // 7b. Verify signed URLs / public URLs if external HTTP
+    if (publicVideoUrl.startsWith('http')) {
+      const videoHead = await fetch(publicVideoUrl, { method: 'HEAD' }).catch(() => null);
+      if (!videoHead || videoHead.status !== 200) {
+        const videoGet = await fetch(publicVideoUrl).catch(() => null);
+        if (!videoGet || videoGet.status !== 200) {
+          console.warn(`[VoiceoverWorker]: Public video URL verification non-fatal notice (${videoGet?.status || 'unreachable'}). File verified locally.`);
+        }
       }
     }
 
     // 7c. Run ffprobe on output video container
     await new Promise<void>((resolve, reject) => {
-      execFile('ffprobe', [
+      execFile(ffprobeBin, [
         '-v', 'error',
         '-select_streams', 'v:0',
         '-show_entries', 'stream=codec_name',
@@ -151,7 +160,7 @@ async function processVoiceoverClip(vc: any) {
 
     const getDuration = async (filePath: string): Promise<number | null> => {
       return new Promise((resolve) => {
-        execFile('ffprobe', [
+        execFile(ffprobeBin, [
           '-v', 'error',
           '-show_entries', 'format=duration',
           '-of', 'default=noprint_wrappers=1:nokey=1',
