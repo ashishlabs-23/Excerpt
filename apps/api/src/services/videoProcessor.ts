@@ -138,8 +138,8 @@ const highQualityEncodeArgs = () => {
 
   return [
     '-c:v', 'libx264',
-    '-preset', isDraft ? 'fast' : 'medium',
-    '-crf', isDraft ? '19' : '17',
+    '-preset', isDraft ? 'veryfast' : 'fast',
+    '-crf', isDraft ? '20' : '18',
     '-maxrate', '12M',
     '-bufsize', '16M',
     '-profile:v', 'high',
@@ -549,7 +549,7 @@ export class VideoProcessor {
       stage: 'video_clipping',
       component: 'VideoProcessor',
       provider: 'FFmpeg',
-      timeoutMs: 1000 * 60 * 5, // 5 minute hard timeout
+      timeoutMs: 1000 * 60 * 10, // 10 minute timeout
       timeoutType: 'process_timeout',
       validateInput: ({ inputPath }) => fs.existsSync(inputPath),
       execute: async ({ inputPath, outputPath, start, duration }) => {
@@ -671,7 +671,34 @@ export class VideoProcessor {
             debug: `active-speaker-crop (xNorm=${speakerNormX.toFixed(2)}, yNorm=${speakerNormY.toFixed(2)}, target=[${targetCropX}, ${targetCropY}])`,
           };
 
-          cropFilter = `scale=${scaledWidth}:${scaledHeight}:flags=lanczos,crop=${cropWidth}:${cropHeight}:${targetCropX}:${targetCropY},setsar=1`;
+          cropFilter = `scale=${scaledWidth}:${scaledHeight}:flags=bicubic,crop=${cropWidth}:${cropHeight}:${targetCropX}:${targetCropY},setsar=1`;
+
+          // Pattern Interrupts (Deferred to Phase C Contextual DirectorPlan; disabled by default to avoid metronomic over-editing)
+          const enablePatternInterrupts = process.env.EXCERPT_PATTERN_INTERRUPTS === 'true' && duration >= 8.0;
+          if (enablePatternInterrupts) {
+            try {
+              const { PatternInterruptDirector } = require('./intelligence/PatternInterruptDirector');
+              const interruptDirector = new PatternInterruptDirector();
+              const rawWords = Array.isArray(nexusCropPlan?.words) ? nexusCropPlan.words : [];
+              const interruptPlan = interruptDirector.planInterrupts(duration, rawWords, {
+                scaledWidth,
+                scaledHeight,
+                cropWidth,
+                cropHeight,
+                targetCropX,
+                targetCropY,
+                speakerNormX,
+                speakerNormY,
+                enabled: true,
+              });
+              if (interruptPlan.enabled) {
+                cropFilter = interruptPlan.filtergraph;
+                console.log(`[VideoProcessor]: Applied Dynamic Pattern Interrupts with ${interruptPlan.windows.length} punch-in windows for ${duration.toFixed(1)}s clip.`);
+              }
+            } catch (pErr: any) {
+              console.warn(`[VideoProcessor]: PatternInterruptDirector skipped: ${pErr.message}`);
+            }
+          }
         }
 
         // Check if single-pass subtitle burn-in is requested

@@ -50,32 +50,44 @@ export class SceneCutSnapper {
   }
 
   /**
-   * Snaps speech boundary timestamps to the nearest visual scene cut if within maxDeltaSec
+   * Snaps speech boundary timestamps to the nearest visual scene cut if within maxDeltaSec.
+   * If words are provided, guarantees zero speech truncation by only snapping startSec
+   * before or at the first spoken word, and endSec after or at the last spoken word.
    */
   public snapBoundariesToSceneCut(
     startSec: number,
     endSec: number,
     sceneCuts: SceneCutPoint[],
-    maxDeltaSec = 0.45
+    maxDeltaSec = 0.45,
+    options?: { words?: Array<{ start: number; end: number }> }
   ): { snappedStartSec: number; snappedEndSec: number; startSnapped: boolean; endSnapped: boolean } {
     let snappedStartSec = startSec;
     let snappedEndSec = endSec;
     let startSnapped = false;
     let endSnapped = false;
 
+    const firstWord = options?.words?.find((w) => w.end > startSec);
+    const lastWord = options?.words ? [...options.words].reverse().find((w) => w.start < endSec) : undefined;
+
     for (const cut of sceneCuts) {
-      // Check start cut
+      // Check start cut: must not cut into speech of first word
       const deltaStart = Math.abs(cut.timestampSec - startSec);
       if (deltaStart <= maxDeltaSec) {
-        snappedStartSec = cut.timestampSec;
-        startSnapped = true;
+        const wouldTruncateStart = firstWord && cut.timestampSec > firstWord.start;
+        if (!wouldTruncateStart) {
+          snappedStartSec = cut.timestampSec;
+          startSnapped = true;
+        }
       }
 
-      // Check end cut
+      // Check end cut: must not cut off last spoken word
       const deltaEnd = Math.abs(cut.timestampSec - endSec);
       if (deltaEnd <= maxDeltaSec) {
-        snappedEndSec = cut.timestampSec;
-        endSnapped = true;
+        const wouldTruncateEnd = lastWord && cut.timestampSec < lastWord.end;
+        if (!wouldTruncateEnd) {
+          snappedEndSec = cut.timestampSec;
+          endSnapped = true;
+        }
       }
     }
 

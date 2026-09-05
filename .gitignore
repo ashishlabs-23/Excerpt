@@ -38,6 +38,7 @@ error.log
 # Temp runtime state (never commit — cross-process queue lives here)
 temp/
 apps/api/temp/
+scratch/
 
 # One-off test/debug scripts in root & apps/api/scripts
 test_*.mjs

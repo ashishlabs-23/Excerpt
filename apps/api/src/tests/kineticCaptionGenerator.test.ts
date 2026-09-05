@@ -73,4 +73,28 @@ describe('KineticCaptionGenerator', () => {
             expect(timeIntervals[i].end).toBe(timeIntervals[i+1].start);
         }
     });
+
+    it('enforces safe wrapping and prevents horizontal overflow on multi-word phrases', () => {
+        const words = [
+            { start: 0.5, end: 0.8, word: 'OFF' },
+            { start: 0.8, end: 1.4, word: 'MASSIVE' },
+            { start: 1.4, end: 2.0, word: 'CLIFFS' }
+        ];
+
+        generator.generateASS(words, tempOutputFile, 'tiktok');
+        const content = fs.readFileSync(tempOutputFile, 'utf-8');
+
+        // Check header safety attributes
+        expect(content).toContain('WrapStyle: 0');
+        expect(content).toContain('ScaledBorderAndShadow: yes');
+        expect(content).toContain('80,80,360');
+
+        // Verify that long phrases are chunked safely rather than cramming all 3 into one line
+        const dialogueLines = content.split('\n').filter(l => l.startsWith('Dialogue:'));
+        expect(dialogueLines.length).toBe(3);
+
+        // First event should only contain at most 2 words, preventing "OFF MASSIVE CLIFFS" horizontal overflow
+        const firstLine = dialogueLines[0];
+        expect(firstLine).not.toContain('CLIFFS');
+    });
 });

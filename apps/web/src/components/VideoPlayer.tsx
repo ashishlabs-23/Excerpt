@@ -22,6 +22,34 @@ interface VideoPlayerProps {
 
 const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
+const EMOJI_MAP: Record<string, string> = {
+  fire: '🔥',
+  great: '🙌',
+  good: '👍',
+  best: '🏆',
+  game: '🎮',
+  show: '📺',
+  moment: '⏰',
+  viral: '⚡',
+  love: '❤️',
+  cool: '😎',
+  mind: '🧠',
+  money: '💰',
+  work: '💼',
+  life: '🌱',
+  power: '🔋',
+  win: '🎯',
+  secret: '🤫',
+  crazy: '🤯',
+  stop: '🛑',
+  fast: '🚀',
+};
+
+const getEmojiForWord = (word: string): string => {
+  const clean = word.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, '');
+  return EMOJI_MAP[clean] || '';
+};
+
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   src,
   title,
@@ -83,7 +111,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return intervals;
   }, [words, excludedWordIndices]);
 
-  // -- Caption logic --
+  // -- Caption logic matching pipeline kinetic caption generator --
   const phrases = React.useMemo(() => {
     const activeWords = words.filter((_, idx) => !excludedWordIndices.has(idx));
     if (activeWords.length === 0) return [];
@@ -92,10 +120,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     for (let i = 0; i < activeWords.length; i++) {
       const w = activeWords[i];
       group.push(w);
-      const hasPunct = /[.,!?;:]/.test(w.word);
+      const hasPunct = /[.,\/#!$%\^&\*;:{}=\-_`~()?]/g.test(w.word);
       const nextW = activeWords[i + 1];
-      const isGap = nextW ? nextW.start - w.end > 0.45 : false;
-      if (isGap || group.length >= 4 || hasPunct || !nextW) {
+      const isGap = nextW ? nextW.start - w.end > 0.35 : false;
+
+      const currentChars = group.reduce((acc, item) => acc + item.word.length, 0);
+      const nextWordChars = nextW ? nextW.word.length : 0;
+
+      const isFull = group.length >= 2
+        || currentChars >= 10
+        || (currentChars + nextWordChars > 12);
+
+      if (isGap || isFull || hasPunct || !nextW) {
         result.push({ words: group, start: group[0].start, end: group[group.length - 1].end });
         group = [];
       }
@@ -277,47 +313,56 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   };
 
-  const getWordStyle = (isActive: boolean) => {
-    switch (captionStyle) {
-      case 'TikTok':
+  const getWordStyle = (isActive: boolean): React.CSSProperties => {
+    const styleKey = (captionStyle || 'Submagic').toLowerCase();
+
+    // Base properties strictly matching pipeline ASS styles (Arial Black, heavy stroke, punchy scale)
+    const base: React.CSSProperties = {
+      fontFamily: '"Arial Black", Impact, sans-serif',
+      fontWeight: 900,
+      textTransform: 'uppercase',
+      display: 'inline-block',
+      WebkitTextStroke: styleKey === 'minimal' ? 'none' : '2.5px black',
+      paintOrder: 'stroke fill',
+      textShadow: styleKey === 'minimal'
+        ? '0 2px 8px rgba(0,0,0,0.8)'
+        : '0 4px 14px rgba(0,0,0,0.9), 2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000',
+      transition: 'transform 100ms cubic-bezier(0.34, 1.56, 0.64, 1), color 100ms ease-out',
+    };
+
+    switch (styleKey) {
+      case 'tiktok':
         return {
+          ...base,
           color: isActive ? '#facc15' : '#ffffff',
-          transform: isActive ? 'scale(1.2)' : 'scale(1)',
-          fontFamily: 'Impact, sans-serif',
-          textShadow: '2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000',
+          transform: isActive ? 'scale(1.08)' : 'scale(1)',
         };
-      case 'Hormozi':
+      case 'hormozi':
         return {
+          ...base,
+          fontStyle: 'italic',
           color: isActive ? '#eab308' : '#ffffff',
-          transform: isActive ? 'scale(1.15) rotate(-3deg)' : 'scale(1)',
-          fontFamily: 'sans-serif',
-          fontWeight: 900,
-          textShadow: '2px 2px 0px #000, -2px -2px 0px #000',
+          transform: isActive ? 'scale(1.08) rotate(-2.5deg)' : 'rotate(-2.5deg)',
         };
-      case 'MrBeast':
+      case 'mrbeast':
         return {
-          color: isActive ? '#22c55e' : '#facc15',
-          transform: isActive ? 'scale(1.25) rotate(4deg)' : 'scale(1)',
-          fontFamily: 'Impact, sans-serif',
-          fontWeight: 950,
-          textShadow: '3px 3px 0px #000',
+          ...base,
+          color: isActive ? '#22c55e' : '#ffffff',
+          transform: isActive ? 'scale(1.08)' : 'scale(1)',
         };
-      case 'Minimal':
+      case 'minimal':
         return {
-          color: isActive ? '#ffffff' : 'rgba(255,255,255,0.4)',
+          ...base,
+          fontWeight: 700,
+          color: isActive ? '#ffffff' : 'rgba(255,255,255,0.45)',
           transform: 'none',
-          fontFamily: 'sans-serif',
-          fontWeight: 500,
-          textShadow: 'none',
         };
-      case 'Submagic':
+      case 'submagic':
       default:
         return {
+          ...base,
           color: isActive ? '#ec4899' : '#ffffff',
-          transform: isActive ? 'scale(1.12)' : 'scale(1)',
-          fontFamily: 'sans-serif',
-          fontWeight: 800,
-          textShadow: '0 2px 10px rgba(0,0,0,0.8)',
+          transform: isActive ? 'scale(1.08)' : 'scale(1)',
         };
     }
   };
@@ -334,7 +379,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     ? 'bottom-[14%]'
     : aspectRatio === '16:9'
     ? 'bottom-[12%]'
-    : 'bottom-[22%]';
+    : 'bottom-[20%]';
 
   return (
     <div
@@ -353,22 +398,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         onClick={togglePlay}
       />
 
-      {/* ── Captions Overlay ── */}
+      {/* ── Captions Overlay (Matches burned ASS pipeline layout) ── */}
       {showCaptions && activePhrase && activeWord && (
-        <div className={`absolute ${captionBottomClass} left-0 right-0 flex justify-center pointer-events-none z-20 px-3`}>
-          <div className="px-4 py-2 bg-black/70 backdrop-blur-md rounded-2xl shadow-2xl flex flex-wrap justify-center gap-x-2 gap-y-0.5 max-w-full">
+        <div className={`absolute ${captionBottomClass} left-0 right-0 flex justify-center pointer-events-none z-20 px-4`}>
+          <div className="flex flex-wrap justify-center items-center gap-x-2.5 max-w-[88%] text-center select-none">
             {activePhrase.words.map((w, idx) => {
               const isActive = w.start === activeWord.start;
+              const emoji = getEmojiForWord(w.word);
+              const cleanWord = w.word.toUpperCase();
+              const formatted = emoji ? `${cleanWord} ${emoji}` : cleanWord;
               return (
                 <span
                   key={idx}
-                  className="text-xl sm:text-2xl uppercase tracking-tight transition-all duration-100"
-                  style={{
-                    display: 'inline-block',
-                    ...getWordStyle(isActive),
-                  }}
+                  className="text-2xl sm:text-3xl font-black uppercase tracking-tight py-1"
+                  style={getWordStyle(isActive)}
                 >
-                  {w.word.toUpperCase()}
+                  {formatted}
                 </span>
               );
             })}

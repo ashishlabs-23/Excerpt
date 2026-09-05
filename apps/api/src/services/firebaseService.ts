@@ -343,6 +343,7 @@ export class FirebaseDatabaseService {
     }
 
     const queue = this.readQueue();
+    // 1. Pick up actively queued job
     for (const [id, job] of Object.entries(queue.jobs)) {
       if (job.status === 'queued') {
         const updated = { ...job, id, status: 'processing', updatedAt: new Date().toISOString() };
@@ -353,7 +354,46 @@ export class FirebaseDatabaseService {
       }
     }
 
+    // 2. Auto-reclaim orphaned in-progress jobs that were interrupted by a server restart/crash
+    const nonTerminalStatuses = ['processing', 'cutting', 'captioning', 'transcribing', 'detecting_clips', 'recovering'];
+    const now = Date.now();
+    for (const [id, job] of Object.entries(queue.jobs)) {
+      if (nonTerminalStatuses.includes(job.status)) {
+        const lastUpdated = new Date(job.heartbeat_at || job.updatedAt || job.createdAt || 0).getTime();
+        // If inactive for > 60 seconds, reclaim it back into the worker
+        if (now - lastUpdated > 60000) {
+          console.log(`[LocalQueue]: Reclaiming orphaned job ${id} (last state was ${job.status}, updated ${Math.round((now - lastUpdated)/1000)}s ago)`);
+          const updated = { ...job, id, status: 'processing', updatedAt: new Date().toISOString() };
+          queue.jobs[id] = updated;
+          this.writeQueue(queue);
+          this.inMemoryJobs.set(id, updated);
+          return updated as FirestoreJobRecord;
+        }
+      }
+    }
+
     return null;
+  }
+
+  reclaimOrphanedJobs(staleThresholdMs = 60000): string[] {
+    const queue = this.readQueue();
+    const staleTime = Date.now() - staleThresholdMs;
+    const nonTerminalStatuses = ['processing', 'cutting', 'captioning', 'transcribing', 'detecting_clips', 'recovering'];
+    const reclaimed: string[] = [];
+
+    for (const [id, job] of Object.entries(queue.jobs)) {
+      const updatedAt = new Date(job.heartbeat_at || job.updatedAt || job.createdAt || 0).getTime();
+      if (nonTerminalStatuses.includes(job.status) && updatedAt < staleTime) {
+        job.status = 'queued';
+        job.updatedAt = new Date().toISOString();
+        reclaimed.push(id);
+      }
+    }
+
+    if (reclaimed.length > 0) {
+      this.writeQueue(queue);
+    }
+    return reclaimed;
   }
 
   clearAllJobs(): void {
@@ -442,7 +482,15 @@ export class FirebaseDatabaseService {
   claimRenderJob(workerId: string): any | null {
     const queue = this.readQueue();
     if (!Array.isArray(queue.render_jobs) || queue.render_jobs.length === 0) return null;
-    const queuedIdx = queue.render_jobs.findIndex((rj: any) => rj.status === 'pending' || rj.status === 'queued');
+    const now = Date.now();
+    const queuedIdx = queue.render_jobs.findIndex((rj: any) => {
+      if (rj.status === 'pending' || rj.status === 'queued' || rj.status === 'retrying') return true;
+      if (rj.status === 'rendering' || rj.status === 'uploading') {
+        const lockedAt = new Date(rj.locked_at || rj.updated_at || 0).getTime();
+        return (now - lockedAt) > 180000; // 3 minute lock expiry
+      }
+      return false;
+    });
     if (queuedIdx !== -1) {
       const renderJob = queue.render_jobs[queuedIdx];
       if (!renderJob.id) renderJob.id = crypto.randomUUID();

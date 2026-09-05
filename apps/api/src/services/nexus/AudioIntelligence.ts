@@ -10,18 +10,27 @@ export class AudioIntelligence {
    * Analyzes audio levels using ffmpeg volumedetect.
    * Higher mean volume indicates more "active" segments.
    */
-  public async getSignal(videoPath: string): Promise<NexusSignal> {
+  public async getSignal(videoPath: string, startTime?: number, duration?: number): Promise<NexusSignal> {
     try {
       if (process.env.EXCERPT_FORCE_AUDIO_FAIL === 'true') {
         throw new Error('Forced audio module failure');
       }
 
       const nullSink = process.platform === 'win32' ? 'NUL' : '/dev/null';
+      const args: string[] = [];
+      if (typeof startTime === 'number' && Number.isFinite(startTime) && startTime >= 0) {
+        args.push('-ss', startTime.toFixed(3));
+      }
+      if (typeof duration === 'number' && Number.isFinite(duration) && duration > 0) {
+        args.push('-t', duration.toFixed(3));
+      }
+      args.push('-i', videoPath, '-af', 'volumedetect', '-f', 'null', nullSink);
+
       // Use volumedetect filter to get audio statistics
       // We pipe to null because we only care about the stderr output
       const { stderr } = await execFileAsync(
         getBinaryPath('ffmpeg'),
-        ['-i', videoPath, '-af', 'volumedetect', '-f', 'null', nullSink],
+        args,
         {
           timeout: Number(process.env.EXCERPT_NEXUS_AUDIO_TIMEOUT_MS || 30000),
           maxBuffer: 1024 * 1024,

@@ -41,6 +41,8 @@ interface AnalysisContext {
   runId?: string;
   clipId?: string;
   isDraftMode?: boolean;
+  startTime?: number;
+  endTime?: number;
 }
 
 export class NexusRegistry {
@@ -109,7 +111,8 @@ export class NexusRegistry {
     segments: any[],
     context: AnalysisContext = {},
     analysisDir?: string,
-    clipDuration?: number
+    clipDuration?: number,
+    clipStartTime?: number
   ): Promise<NexusResult> {
     const signals: Record<string, NexusSignal> = {};
     const metadata: Record<string, any> = {
@@ -119,16 +122,25 @@ export class NexusRegistry {
     };
     const tracker = this.createTracker();
 
+    const effectiveStartTime = typeof clipStartTime === 'number'
+      ? clipStartTime
+      : typeof context.startTime === 'number'
+        ? context.startTime
+        : (segments[0]?.start ?? 0);
+    const effectiveDuration = typeof clipDuration === 'number' && clipDuration > 0
+      ? clipDuration
+      : (context.endTime && typeof effectiveStartTime === 'number' ? context.endTime - effectiveStartTime : undefined);
+
     // ── Stage: Parallel Analysis ─────────────────────────────
     const parallelStages: Promise<void>[] = [];
 
-    // Audio Intelligence
+    // Audio Intelligence (Windowed to candidate clip)
     if (NEXUS_FEATURES.audio_intelligence && !context.isDraftMode) {
       parallelStages.push(
         this.runStage(
           tracker,
           'stage_4_audio_analysis',
-          () => this.audio.getSignal(videoPath),
+          () => this.audio.getSignal(videoPath, effectiveStartTime, effectiveDuration),
           {
             score: 0.5,
             weight: 0,
@@ -162,13 +174,13 @@ export class NexusRegistry {
       tracker.skipped.push('stage_face_tracking');
     }
 
-    // Visual Activity
+    // Visual Activity (Windowed to candidate clip)
     if (NEXUS_FEATURES.visual_activity && !context.isDraftMode) {
       parallelStages.push(
         this.runStage(
           tracker,
           'stage_5_visual_analysis',
-          () => this.visual.getSignal(videoPath),
+          () => this.visual.getSignal(videoPath, effectiveStartTime, effectiveDuration),
           {
             score: 0.5,
             weight: 0,
@@ -182,12 +194,12 @@ export class NexusRegistry {
       tracker.skipped.push('stage_5_visual_analysis');
     }
 
-    // Hook Intelligence
+    // Hook Intelligence (Evaluated relative to clip start)
     parallelStages.push(
       this.runStage(
         tracker,
         'stage_2_hook_intelligence',
-        () => this.hook.getSignal(videoPath, transcript, segments),
+        () => this.hook.getSignal(videoPath, transcript, segments, effectiveStartTime),
         {
           score: 0.5,
           weight: 0,

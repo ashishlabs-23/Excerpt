@@ -110,9 +110,13 @@ export class AcousticBoundarySnapper {
         );
 
         if (candidateEndWords.length > 0) {
-          const closestWord = candidateEndWords.reduce((prev, curr) =>
-            Math.abs(curr.end - rawEndSec) < Math.abs(prev.end - rawEndSec) ? curr : prev
-          );
+          const closestWord = candidateEndWords.reduce((prev, curr) => {
+            const isPrevPunct = /[.?!]$/.test(prev.word.trim());
+            const isCurrPunct = /[.?!]$/.test(curr.word.trim());
+            const prevDist = Math.abs(prev.end - rawEndSec) - (isPrevPunct ? 0.4 : 0);
+            const currDist = Math.abs(curr.end - rawEndSec) - (isCurrPunct ? 0.4 : 0);
+            return currDist < prevDist ? curr : prev;
+          });
           finalEnd = closestWord.end + postRollSec;
           endSnappedTo = 'word_end';
         }
@@ -128,12 +132,31 @@ export class AcousticBoundarySnapper {
       }
     }
 
-    // 3. DURATION INTEGRITY CLAMPING
+    // 3. DURATION INTEGRITY CLAMPING WITH WORD PROTECTION
     const computedDuration = finalEnd - finalStart;
     if (computedDuration < minDur) {
       finalEnd = finalStart + minDur;
+      // Prevent duration clamping from cutting inside an active word
+      if (words.length > 0) {
+        const intersectingClampedWord = words.find(
+          (w) => finalEnd > w.start && finalEnd < w.end
+        );
+        if (intersectingClampedWord) {
+          finalEnd = intersectingClampedWord.end + postRollSec;
+          truncatedWordAvoided = true;
+        }
+      }
     } else if (computedDuration > maxDur) {
       finalEnd = finalStart + maxDur;
+      if (words.length > 0) {
+        const intersectingClampedWord = words.find(
+          (w) => finalEnd > w.start && finalEnd < w.end
+        );
+        if (intersectingClampedWord) {
+          finalEnd = Math.max(finalStart + minDur, intersectingClampedWord.start - 0.05);
+          truncatedWordAvoided = true;
+        }
+      }
     }
 
     return {

@@ -128,22 +128,29 @@ export class QueueService {
   }
 
   async getJobStatus(jobId: string) {
-    // 1. Try Supabase first (source of truth for active worker progress & clip records)
-    try {
-      const dbJob = await supabaseDb.getJobWithClips(jobId);
-      if (dbJob) return hydrateJobStatusFromDb(dbJob);
-    } catch (sbErr: any) {
-      console.warn(`[QueueService]: Supabase getJobWithClips failed: ${sbErr.message}`);
-    }
-
-    // 2. Fall back to Firestore
+    // 1. Check local queue / Firestore first (instant <1ms response for real-time progress updates)
     try {
       const firestoreJob = await firebaseDb.getJob(jobId);
       if (firestoreJob) {
-        return hydrateJobStatusFromDb(firestoreJob as any);
+        const clips = await firebaseDb.getClipsForJob(jobId);
+        return hydrateJobStatusFromDb({
+          ...firestoreJob,
+          clips: clips || (firestoreJob as any).clips || [],
+        } as any);
       }
     } catch (fbErr: any) {
       console.warn(`[QueueService]: Firestore getJob failed: ${fbErr.message}`);
+    }
+
+    // 2. Fall back to Supabase with short timeout so client polling never hangs
+    try {
+      const dbJob = await Promise.race([
+        supabaseDb.getJobWithClips(jobId),
+        new Promise<null>((_, reject) => setTimeout(() => reject(new Error('SUPABASE_TIMEOUT')), 1200))
+      ]);
+      if (dbJob) return hydrateJobStatusFromDb(dbJob);
+    } catch (sbErr: any) {
+      console.warn(`[QueueService]: Supabase getJobWithClips failed: ${sbErr.message}`);
     }
 
     return null;

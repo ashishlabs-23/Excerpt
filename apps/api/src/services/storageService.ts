@@ -54,8 +54,9 @@ export class StorageService {
 
   private getFirebaseBucket() {
     try {
+      const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
+      if (!bucketName) return null;
       const admin = initFirebaseAdmin();
-      const bucketName = process.env.FIREBASE_STORAGE_BUCKET || 'excerpt-d0ab8.appspot.com';
       return admin.storage().bucket(bucketName);
     } catch (err: any) {
       return null;
@@ -66,16 +67,20 @@ export class StorageService {
     const fileExtension = path.extname(filePath);
     const contentType = this.getContentType(fileExtension);
 
-    // 1. Try Firebase Storage First
+    // 1. Try Firebase Storage First (only if explicitly configured)
     const firebaseBucket = this.getFirebaseBucket();
     if (firebaseBucket) {
       try {
         console.log(`[StorageService]: Attempting Firebase Storage upload for ${key}...`);
-        await firebaseBucket.upload(filePath, {
+        const fbPromise = firebaseBucket.upload(filePath, {
           destination: key,
           metadata: { contentType },
           resumable: false,
         });
+        await Promise.race([
+          fbPromise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('FIREBASE_UPLOAD_TIMEOUT')), 15000))
+        ]);
         const signedUrl = await this.createSignedUrl(key);
         console.log(`[StorageService]: Firebase Storage Upload Success -> ${key}`);
         return signedUrl;

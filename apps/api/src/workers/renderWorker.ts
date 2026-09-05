@@ -149,14 +149,28 @@ async function processRenderJob(renderJob: any) {
     try {
       // 1. Single-Pass High-Speed Render with Burned Captions
       let hasCaptions = false;
-      if (clipWords && clipWords.length > 0) {
+      const jumpPlan = renderJob.payload?.jumpCutPlan;
+      const hasRetimedWords = Boolean(
+        jumpPlan &&
+        ((jumpPlan.timeSavedSec && jumpPlan.timeSavedSec > 0) || (jumpPlan.time_saved_sec && jumpPlan.time_saved_sec > 0)) &&
+        ((jumpPlan.retimedWords && jumpPlan.retimedWords.length > 0) || (jumpPlan.retimed_words && jumpPlan.retimed_words.length > 0))
+      );
+      const wordsToCaption = hasRetimedWords
+        ? (jumpPlan.retimedWords || jumpPlan.retimed_words)
+        : clipWords;
+
+      if (wordsToCaption && wordsToCaption.length > 0) {
         try {
           // Normalize word timestamps relative to the cut video start
-          const relativeWords = clipWords
+          const relativeWords = wordsToCaption
             .map((w: any) => {
-              const startOffset = Math.max(0, Number(((w.start ?? 0) - clipStart).toFixed(3)));
-              const rawEnd = typeof w.end === 'number' ? w.end : (w.start + 0.3);
-              const endOffset = Math.max(startOffset + 0.05, Number((rawEnd - clipStart).toFixed(3)));
+              const startOffset = hasRetimedWords
+                ? Math.max(0, Number((w.start ?? 0).toFixed(3)))
+                : Math.max(0, Number(((w.start ?? 0) - clipStart).toFixed(3)));
+              const rawEnd = typeof w.end === 'number' ? w.end : ((w.start ?? 0) + 0.3);
+              const endOffset = hasRetimedWords
+                ? Math.max(startOffset + 0.05, Number(rawEnd.toFixed(3)))
+                : Math.max(startOffset + 0.05, Number((rawEnd - clipStart).toFixed(3)));
               return {
                 ...w,
                 start: startOffset,
@@ -166,7 +180,10 @@ async function processRenderJob(renderJob: any) {
             .filter((w: any) => w.end > 0 && w.start < (clipEnd - clipStart + 0.5));
 
           if (relativeWords.length > 0) {
-            captionService.generateASS(relativeWords, assFilePath);
+            const requestedStyle = (renderJob.payload as any)?.caption_style
+              || (renderJob.payload as any)?.caption_preset
+              || 'submagic';
+            captionService.generateASS(relativeWords, assFilePath, requestedStyle);
             hasCaptions = true;
           }
         } catch (capGenErr: any) {

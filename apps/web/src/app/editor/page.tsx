@@ -85,18 +85,31 @@ function EditorContent() {
         const clips = await clipsResponse.json();
         const clip = clips.find((item: any) => item.id === id);
 
+        const rawWords: any[] = clip?.metadata?.words || clip?.words || [];
+        const clipStart = typeof clip?.start_time === 'number' ? clip.start_time : start;
+        const clipEnd = typeof clip?.end_time === 'number' ? clip.end_time : end;
+        const totalClipDuration = Math.max(1, clipEnd - clipStart);
+
+        // If rawWords have timestamps offset by source video time, normalize relative to 0
+        const isOffset = rawWords.length > 0 && rawWords[0].start >= Math.max(0.8, clipStart - 0.5);
+        const normalizedWords = rawWords.map((w: any) => ({
+          ...w,
+          start: isOffset ? Math.max(0, Number((w.start - clipStart).toFixed(3))) : Number(w.start.toFixed(3)),
+          end: isOffset ? Math.max(0, Number((w.end - clipStart).toFixed(3))) : Number(w.end.toFixed(3)),
+        }));
+
         setVideoData({
           id,
           url: playUrl,
           title: clip?.metadata?.title || title,
-          startTime: start,
-          endTime: end,
-          words: clip?.metadata?.words || [],
+          startTime: 0,
+          endTime: totalClipDuration,
+          words: normalizedWords,
           viralityScore: clip?.metadata?.virality_score,
           intent: clip?.metadata?.generation_intent || clip?.metadata?.intent,
         });
-        setTrimIn(start);
-        setTrimOut(end);
+        setTrimIn(0);
+        setTrimOut(totalClipDuration);
       } catch (err) {
         console.error('Failed to fetch clip metadata:', err);
         if (!cancelled) {

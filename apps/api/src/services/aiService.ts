@@ -557,7 +557,7 @@ Return only JSON.`;
       retryDelayMs: 1000,
       execute: async () => {
         try {
-          const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+          const modelName = process.env.GEMINI_MODEL || "gemini-3.6-flash";
           const model = this.genAI.getGenerativeModel({ model: modelName });
           const result = await model.generateContent(`${systemPrompt}\n\n${userPrompt}`);
           const response = await result.response;
@@ -566,7 +566,7 @@ Return only JSON.`;
           if (err.message && /429|quota exceeded|resource exhausted/i.test(err.message)) {
             if (this.rotateGeminiKey()) {
               // Retry with new rotated key immediately
-              const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+              const modelName = process.env.GEMINI_MODEL || "gemini-3.6-flash";
               const model = this.genAI.getGenerativeModel({ model: modelName });
               const result = await model.generateContent(`${systemPrompt}\n\n${userPrompt}`);
               const response = await result.response;

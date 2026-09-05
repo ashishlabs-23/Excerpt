@@ -577,6 +577,11 @@ export class DatabaseService {
    * without a heartbeat update are considered abandoned.
    */
   async reclaimOrphanedJobs(staleThresholdMs = 15 * 60000): Promise<string[]> {
+    const localReclaimed: string[] = [];
+    try {
+      localReclaimed.push(...firebaseDb.reclaimOrphanedJobs(staleThresholdMs));
+    } catch {}
+
     const staleTimestamp = new Date(Date.now() - staleThresholdMs).toISOString();
     const reclaimQuery = (updates: Record<string, any>) => this.db
       .from('jobs')
@@ -585,21 +590,26 @@ export class DatabaseService {
       .lt('heartbeat_at', staleTimestamp)
       .select('id');
 
-    let { data, error } = await reclaimQuery({
-      status: 'queued',
-      locked_by: null,
-      updated_at: new Date().toISOString(),
-    });
-
-    if (error && this.isMissingColumnError(error, 'locked_by')) {
-      ({ data, error } = await reclaimQuery({
+    try {
+      let { data, error } = await reclaimQuery({
         status: 'queued',
+        locked_by: null,
         updated_at: new Date().toISOString(),
-      }));
-    }
+      });
 
-    if (error) throw error;
-    return (data || []).map((j: any) => j.id);
+      if (error && this.isMissingColumnError(error, 'locked_by')) {
+        ({ data, error } = await reclaimQuery({
+          status: 'queued',
+          updated_at: new Date().toISOString(),
+        }));
+      }
+
+      if (!error && data) {
+        return [...localReclaimed, ...data.map((j: any) => j.id)];
+      }
+    } catch {}
+
+    return localReclaimed;
   }
 
   async reclaimOrphanedRenderJobs(staleThresholdMs = 10 * 60000): Promise<string[]> {

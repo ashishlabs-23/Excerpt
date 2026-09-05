@@ -64,6 +64,10 @@ import { broadcastGraphicsDetector } from '../services/intelligence/BroadcastGra
 import { visualDebugger } from '../services/intelligence/VisualDebugger';
 import { narrativeIntelligenceEngine } from '../services/intelligence/NarrativeIntelligenceEngine';
 import { AcousticBoundarySnapper } from '@excerpt/clipping-core';
+import { ContextCoherenceGuard } from '../services/intelligence/ContextCoherenceGuard';
+import { SceneCutSnapper } from '../services/intelligence/SceneCutSnapper';
+import { MultiScaleStoryEngine } from '../services/intelligence/MultiScaleStoryEngine';
+import { MicroJumpCutter } from '../services/intelligence/MicroJumpCutter';
 import { curiosityGapEngine } from '../services/intelligence/CuriosityGapEngine';
 import { payoffDetectionEngine } from '../services/intelligence/PayoffDetectionEngine';
 import { emotionIntelligenceEngine } from '../services/intelligence/EmotionIntelligenceEngine';
@@ -73,6 +77,7 @@ import { clipCompletenessEngine } from '../services/intelligence/ClipCompletenes
 import { viewerSatisfactionEngine } from '../services/intelligence/ViewerSatisfactionEngine';
 import { universalWowMomentEngineV2 } from '../services/intelligence/UniversalWowMomentEngineV2';
 import { learningSubsystem } from '../services/intelligence/LearningSubsystem';
+import { editorialPlanEvaluator } from '../services/intelligence/EditorialPlanEvaluator';
 import { IntelligenceOrchestrator, OrchestrationContext } from '../services/nexus/IntelligenceOrchestrator';
 import { classifyPipelineError } from '../utils/errorClassifier';
 import { createRenderPlan, DeliveryValidator, DEFAULT_PIPELINE_CONFIG } from '@excerpt/clipping-core';
@@ -104,6 +109,10 @@ const replayDetector = new ReplayDetector();
 const wowMomentEngine = new WowMomentEngine();
 const smartBoundaryEngine = new SmartBoundaryEngine();
 const emotionThumbnailEngine = new EmotionThumbnailEngine();
+const coherenceGuard = new ContextCoherenceGuard();
+const sceneSnapper = new SceneCutSnapper();
+const storyEngine = new MultiScaleStoryEngine();
+const jumpCutter = new MicroJumpCutter(0.35, 0.25);
 
 function envNumber(name: string, fallback: number, min: number) {
   const parsed = Number(process.env[name]);
@@ -1008,23 +1017,101 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       }
     }
 
-    // Snap all detected clips to natural speech boundaries for clean cuts (Zero-Truncation Guard)
+    // Evaluate Multi-Scale Narrative Story Arcs (30s / 60s / 90s)
+    const multiScaleArcs = (words && words.length > 0)
+      ? storyEngine.evaluateMultiScaleArcs(words as any, sourceDuration)
+      : [];
+    if (multiScaleArcs.length > 0) {
+      console.log(`[Worker]: Evaluated ${multiScaleArcs.length} Multi-Scale Candidate Arcs:`);
+      multiScaleArcs.forEach((c, idx) => {
+        console.log(`   [Arc #${idx + 1}] ${c.scaleType} (${c.durationSec}s) -> ${c.recommendedPlatform} (Score: ${c.narrativeScore}%)`);
+      });
+    }
+
+    // Coherence Guard & Whisper Hallucination Scrubbing
     if (words && words.length > 0) {
-      console.log(`[Worker]: Aligning ${clips.length} clips with AcousticBoundarySnapper (word-level Zero-Truncation Guard)...`);
-      clips = clips.map(clip => {
-        const snapped = AcousticBoundarySnapper.snap(
+      const prevWordCount = words.length;
+      words = coherenceGuard.scrubHallucinations(words as any) as any;
+      if (words.length !== prevWordCount) {
+        console.log(`[Worker]: ContextCoherenceGuard scrubbed ${prevWordCount - words.length} hallucinated word repetitions.`);
+      }
+    }
+
+    // Align all detected clips to natural speech & visual scene boundaries (Zero-Truncation Guard)
+    if (words && words.length > 0) {
+      console.log(`[Worker]: Evaluating ${clips.length} clips with EditorialPlanEvaluator, AcousticBoundarySnapper & SceneCutSnapper...`);
+      const evaluatedClips = await Promise.all(clips.map(async (clip) => {
+        // 1. Phase A: Counterfactual Editorial Evaluation (in-memory, candidate-dependent)
+        // Evaluates raw, hook-adjusted, and payoff-extended variants.
+        // Invariant: No camera, caption, or crop is allowed to rescue an editorially bad candidate.
+        const editorialPlan = editorialPlanEvaluator.evaluateCandidate(
+          clip.id,
           clip.start_time,
           clip.end_time,
+          words as any
+        );
+
+        if (!editorialPlan.accepted) {
+          console.warn(`[Worker]: Candidate ${clip.id} rejected by EditorialPlan: ${editorialPlan.rejectionReason}`);
+          return null;
+        }
+
+        const winning = editorialPlan.winningVariant;
+        let startCandidate = winning.startSec;
+        let endCandidate = winning.endSec;
+
+        // 2. Acoustic Zero-Truncation Boundary Snapper
+        const snapped = AcousticBoundarySnapper.snap(
+          startCandidate,
+          endCandidate,
           words,
           [],
           { minDurationSec: 15, maxDurationSec: 60, preRollMs: 180, postRollMs: 300 }
         );
+
+        let finalStart = Number(snapped.startSec.toFixed(2));
+        let finalEnd = Number(snapped.endSec.toFixed(2));
+        let sceneCutResult: any = null;
+
+        // 3. Visual Scene-Cut Shot Boundary Alignment
+        try {
+          const windowDuration = Math.max(0.5, finalEnd - finalStart);
+          const sceneCuts = await sceneSnapper.detectSceneCuts(inputPath, finalStart, windowDuration);
+          if (sceneCuts.length > 0) {
+            sceneCutResult = sceneSnapper.snapBoundariesToSceneCut(finalStart, finalEnd, sceneCuts, 0.40, { words: words as any });
+            finalStart = sceneCutResult.snappedStartSec;
+            finalEnd = sceneCutResult.snappedEndSec;
+          }
+        } catch (sceneErr: any) {
+          console.warn(`[Worker]: Scene cut detection skipped for clip: ${sceneErr.message}`);
+        }
+
+        // 4. Multi-Scale Narrative Mapping
+        const clipDuration = finalEnd - finalStart;
+        const scaleType = clipDuration <= 35 ? '30s_hook' : clipDuration <= 70 ? '60s_story' : '90s_insight';
+        const matchedArc = multiScaleArcs.find(a => a.scaleType === scaleType) || multiScaleArcs[0];
+
         return {
           ...clip,
-          start_time: Number(snapped.startSec.toFixed(2)),
-          end_time: Number(snapped.endSec.toFixed(2))
+          start_time: finalStart,
+          end_time: finalEnd,
+          scale_type: scaleType,
+          recommended_platform: matchedArc ? matchedArc.recommendedPlatform : 'TikTok / Shorts',
+          editorial_plan: {
+            winning_variant: winning.variantId,
+            hook_score: winning.hookScore,
+            payoff_score: winning.payoffScore,
+            coherence_score: winning.coherenceScore,
+            composite_score: winning.compositeScore,
+            explanation: winning.explanation,
+          },
+          scene_cut_snapped: sceneCutResult,
         };
-      });
+      }));
+
+      // Filter rejected candidates; fallback to raw clips only if every candidate failed
+      const acceptedClips = evaluatedClips.filter((c): c is NonNullable<typeof c> => c !== null);
+      clips = acceptedClips.length > 0 ? acceptedClips : clips;
     } else if (segments.length > 0) {
       console.log(`[Worker]: Aligning ${clips.length} clips with transcript boundaries...`);
       clips = clips.map(clip => {
@@ -1093,9 +1180,10 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         const clipSegments = segments.filter(s => s.start >= clip.start_time && s.end <= clip.end_time);
         const analysis = await nexus.analyzeClip(
           inputPath, transcriptionText, clipSegments,
-          { runId: jobId, clipId: clip.id, isDraftMode },
+          { runId: jobId, clipId: clip.id, isDraftMode, startTime: clip.start_time, endTime: clip.end_time },
           analysisDir,
-          clipDuration
+          clipDuration,
+          clip.start_time
         );
 
         // Cleanup frames immediately after analysis to prevent disk bloat
@@ -1602,6 +1690,27 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       );
       (clip as any).words = rawClipWords;
 
+      // Plan micro jump-cuts to eliminate dead-air pauses (>0.55s)
+      let jumpCutPlan: any = null;
+      if (rawClipWords && rawClipWords.length > 0) {
+        try {
+          const plan = jumpCutter.planJumpCuts(rawClipWords, renderStart, renderEnd);
+          jumpCutPlan = {
+            time_saved_sec: plan.timeSavedSec,
+            total_new_duration_sec: plan.totalNewDurationSec,
+            total_original_duration_sec: plan.totalOriginalDurationSec,
+            edl_segments: plan.edlSegments,
+            retimed_words: plan.retimedWords,
+          };
+          if (plan.timeSavedSec > 0) {
+            console.log(`[Worker]: MicroJumpCutter saved ${plan.timeSavedSec.toFixed(2)}s dead-air across ${plan.edlSegments.length} continuous speech segments for clip ${clipIndex + 1}.`);
+          }
+        } catch (jcErr: any) {
+          console.warn(`[Worker]: MicroJumpCutter skipped for clip ${clipIndex + 1}: ${jcErr.message}`);
+        }
+      }
+      (clip as any).jump_cut_plan = jumpCutPlan;
+
       // DB.1: Prepare Clip DB record
       const dbClip = {
         id: clipId,
@@ -1624,6 +1733,12 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           score_breakdown: clip.score_breakdown,
           generation_mode: generationMode,
           nexus: (clip as any).nexus_metadata,
+          scale_type: (clip as any).scale_type,
+          recommended_platform: (clip as any).recommended_platform,
+          coherence_guard: (clip as any).coherence_guard,
+          scene_cut_snapped: (clip as any).scene_cut_snapped,
+          jump_cut_plan: jumpCutPlan,
+          words: rawClipWords,
         }
       };
       (dbClip as any).words = rawClipWords;
@@ -1660,7 +1775,8 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           clipStart: renderStart,
           clipEnd: renderEnd,
           clipWords: rawClipWords,
-          cropPlan: cropPlan
+          cropPlan: cropPlan,
+          jumpCutPlan: jumpCutPlan,
         }
       };
       
@@ -1741,8 +1857,10 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         clipEnd: clip?.end_time ?? rawClip?.end_time ?? 0,
         clipWords: (clip as any)?.words || (rawClip as any)?.words || [],
         cropPlan: (clip as any)?.metadata?.nexus?.crop_plan || (rawClip as any)?.metadata?.nexus?.crop_plan || (clip as any)?.cropPlan || null,
+        jumpCutPlan: (clip as any)?.metadata?.jump_cut_plan || (rawClip as any)?.jump_cut_plan || null,
         aspectRatio: rj.aspectRatio,
         quality: rj.quality,
+        caption_style: (data as any)?.caption_style || (data as any)?.caption_preset || (clip as any)?.metadata?.caption_style || 'submagic',
       };
 
       const renderJobData = {
@@ -1990,7 +2108,18 @@ async function processClaimedJobWithRetries(job: any, workerId: number) {
   // Load existing attempts from payload if present
   let attemptsHistory: any[] = Array.isArray(payload.attempts) ? payload.attempts : [];
   let attempt = attemptsHistory.length;
-  
+
+  if (attempt >= maxAttempts) {
+    console.warn(`[Worker]: Job ${job.id} has already exhausted all ${maxAttempts} attempts. Marking as failed.`);
+    try {
+      await db.updateJob(job.id, {
+        status: JobStatus.FAILED,
+        failed_reason: payload.failedReason || 'Exhausted maximum retry attempts.'
+      });
+    } catch {}
+    return { status: JobStatus.FAILED, failedReason: 'Exhausted maximum retry attempts.' };
+  }
+
   let lastResult: any = null;
 
   while (attempt < maxAttempts && !stopRequested) {

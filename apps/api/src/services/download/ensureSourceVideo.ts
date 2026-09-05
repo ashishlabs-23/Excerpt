@@ -19,7 +19,6 @@ export async function ensureSourceVideo(
   videoUrl: string | undefined,
   tempDir: string
 ): Promise<{ videoPath: string; telemetry: SourceVideoTelemetry }> {
-  const videoPath = path.join(tempDir, 'input.mp4');
   const startMs = Date.now();
 
   const validateMedia = async (filePath: string): Promise<{ valid: boolean, reason?: 'local_missing' | 'zero_byte_file' | 'ffprobe_failed' }> => {
@@ -43,6 +42,29 @@ export async function ensureSourceVideo(
     }
   };
 
+  // Check multiple possible candidate paths
+  const candidatePaths = [
+    path.join(tempDir, 'input.mp4'),
+    path.resolve(process.cwd(), 'apps/api/temp', jobId, 'input.mp4'),
+    path.resolve(process.cwd(), 'temp', jobId, 'input.mp4'),
+    path.resolve(__dirname, '../../../../temp', jobId, 'input.mp4'),
+    path.resolve(__dirname, '../../../../../temp', jobId, 'input.mp4'),
+  ];
+
+  for (const candidate of candidatePaths) {
+    if (fs.existsSync(candidate)) {
+      const check = await validateMedia(candidate);
+      if (check.valid) {
+        console.log(`[ensureSourceVideo]: Found valid local video at ${candidate}`);
+        return {
+          videoPath: candidate,
+          telemetry: { strategy: 'local_cache', downloaded: false, durationMs: Date.now() - startMs }
+        };
+      }
+    }
+  }
+
+  const videoPath = path.join(tempDir, 'input.mp4');
   const initialCheck = await validateMedia(videoPath);
   if (initialCheck.valid) {
     return {

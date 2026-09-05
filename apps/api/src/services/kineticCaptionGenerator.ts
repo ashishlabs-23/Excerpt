@@ -34,50 +34,59 @@ export class KineticCaptionGenerator {
     generateASS(
         words: {start: number; end: number; word: string}[],
         outputPath: string,
-        preset: CaptionPreset | string = 'hormozi'
+        preset: CaptionPreset | string = 'submagic'
     ) {
-        const normalizedPreset = (preset || 'hormozi').toLowerCase();
-        let highlightColor = '&H002BF500&'; // Hormozi Lime Green (BGR)
+        const normalizedPreset = (preset || 'submagic').toLowerCase();
+        let highlightColor = '&H009948EC&'; // Submagic Vibrant Pink (BGR for #ec4899)
         let outlineThickness = 4;
-        let shadowThickness = 0;
-        let fontSize = 60;
+        let shadowThickness = 2;
+        let fontSize = 52;
+        let isItalic = 0;
 
         if (normalizedPreset === 'submagic') {
-            highlightColor = '&H009948EC&'; // Submagic Vibrant Pink
+            highlightColor = '&H009948EC&'; // Vibrant Pink (#ec4899)
             outlineThickness = 4;
             shadowThickness = 2;
-            fontSize = 62;
+            fontSize = 52;
         } else if (normalizedPreset === 'tiktok') {
-            highlightColor = '&H0015CCFA&'; // TikTok High-Contrast Yellow
-            outlineThickness = 5;
-            shadowThickness = 1;
-            fontSize = 64;
-        } else if (normalizedPreset === 'mrbeast') {
-            highlightColor = '&H0000D7FF&'; // MrBeast Golden Yellow
-            outlineThickness = 5;
-            shadowThickness = 2;
-            fontSize = 62;
-        } else if (normalizedPreset === 'neon') {
-            highlightColor = '&H00FFFF00&'; // Electric Cyan
+            highlightColor = '&H0015CCFA&'; // High-Contrast Yellow (#facc15)
             outlineThickness = 4;
             shadowThickness = 1;
-            fontSize = 58;
+            fontSize = 52;
+        } else if (normalizedPreset === 'hormozi') {
+            highlightColor = '&H0008B3EA&'; // Alex Hormozi Warm Gold/Yellow (#eab308)
+            outlineThickness = 4;
+            shadowThickness = 2;
+            fontSize = 52;
+            isItalic = -1; // Italic pop matching editor
+        } else if (normalizedPreset === 'mrbeast') {
+            highlightColor = '&H005EC522&'; // MrBeast Neon Green (#22c55e)
+            outlineThickness = 4;
+            shadowThickness = 2;
+            fontSize = 52;
+        } else if (normalizedPreset === 'neon') {
+            highlightColor = '&H00FFFF00&'; // Electric Cyan (#00ffff)
+            outlineThickness = 4;
+            shadowThickness = 1;
+            fontSize = 48;
         } else if (normalizedPreset === 'minimalist' || normalizedPreset === 'minimal') {
             highlightColor = '&H00FFFFFF&';
             outlineThickness = 2;
             shadowThickness = 0;
-            fontSize = 50;
+            fontSize = 44;
         }
 
         let assContent = `[Script Info]
 Title: Excerpt SOTA Kinetic Captions (${preset.toUpperCase()})
 ScriptType: v4.00+
+WrapStyle: 0
+ScaledBorderAndShadow: yes
 PlayResX: 1080
 PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial Black,${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,${outlineThickness},${shadowThickness},2,60,60,340,1
+Style: Default,Arial Black,${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,${isItalic},0,0,100,100,0,0,1,${outlineThickness},${shadowThickness},2,80,80,360,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -106,7 +115,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             }
         }
 
-        // Group words into phrases (max 3 words for high kinetic energy)
+        // Group words into punchy, high-retention phrases (1-2 words, max 12 chars)
+        // Prevents horizontal overflow on 9:16 vertical viewports
         const phrases: {words: typeof words; start: number; end: number}[] = [];
         let currentGroup: typeof words = [];
 
@@ -116,10 +126,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
             const hasPunctuation = /[.,\/#!$%\^&\*;:{}=\-_`~()?]/g.test(w.word);
             const nextW = words[i + 1];
-            const isGap = nextW ? (nextW.start - w.end > 0.4) : false;
-            const isMaxWords = currentGroup.length >= 3;
+            const isGap = nextW ? (nextW.start - w.end > 0.35) : false;
 
-            if (isGap || isMaxWords || hasPunctuation || !nextW) {
+            const currentChars = currentGroup.reduce((acc, item) => acc + item.word.length, 0);
+            const nextWordChars = nextW ? nextW.word.length : 0;
+
+            const isFull = currentGroup.length >= 2
+                || currentChars >= 10
+                || (currentChars + nextWordChars > 12);
+
+            if (isGap || isFull || hasPunctuation || !nextW) {
                 phrases.push({
                     words: currentGroup,
                     start: currentGroup[0].start,
@@ -150,7 +166,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     const formatted = emoji ? `${cleanWord} ${emoji}` : cleanWord;
                     
                     if (idx === activeIdx) {
-                        return `{\\1c${highlightColor}\\t(0,70,\\fscx112\\fscy112)\\t(70,140,\\fscx106\\fscy106)}${formatted}{\\fscx100\\fscy100\\1c&HFFFFFF&}`;
+                        return `{\\1c${highlightColor}\\t(0,70,\\fscx108\\fscy108)\\t(70,140,\\fscx100\\fscy100)}${formatted}{\\fscx100\\fscy100\\1c&HFFFFFF&}`;
                     }
                     return formatted;
                 }).join(" ");
