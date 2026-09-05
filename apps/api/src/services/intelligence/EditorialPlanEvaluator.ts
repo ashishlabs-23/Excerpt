@@ -15,7 +15,13 @@ export interface EditorialVariant {
   hookScore: number;
   payoffScore: number;
   coherenceScore: number;
-  compositeScore: number;
+  editorialScore: number;
+  performancePredictionScore: number;
+  compositeScore: number; // Aliased to editorialScore for backward compatibility
+  speech_density_wps: number;
+  pause_density_ratio: number;
+  start_boundary_quality: 'clean_thesis' | 'snapped_onset' | 'preamble_present';
+  end_boundary_quality: 'complete_terminal' | 'extended_resolution' | 'incomplete_cliffhanger';
   isValid: boolean;
   rejectionReason?: string;
   explanation: string;
@@ -50,6 +56,43 @@ export class EditorialPlanEvaluator {
     }
   }
 
+  private calculatePacingMetrics(
+    words: Array<{ word: string; start: number; end: number }>,
+    startSec: number,
+    endSec: number
+  ): { speechDensityWps: number; pauseDensityRatio: number; pacingScore: number } {
+    const duration = Math.max(0.5, endSec - startSec);
+    const clipWords = words.filter(w => w.start >= startSec - 0.1 && w.end <= endSec + 0.1);
+    const count = clipWords.length;
+    const speechDensityWps = Number((count / duration).toFixed(2));
+
+    let totalSpokenTime = 0;
+    for (const w of clipWords) {
+      totalSpokenTime += Math.max(0, w.end - w.start);
+    }
+    const pauseTime = Math.max(0, duration - totalSpokenTime);
+    const pauseDensityRatio = Number(Math.min(1.0, pauseTime / duration).toFixed(2));
+
+    // Optimal spoken density in short-form is ~2.0 - 3.5 WPS
+    let pacingScore = 75;
+    if (speechDensityWps >= 2.0 && speechDensityWps <= 3.5) {
+      pacingScore = 90;
+    } else if (speechDensityWps >= 1.5 && speechDensityWps < 2.0) {
+      pacingScore = 80;
+    } else if (speechDensityWps < 1.0) {
+      pacingScore = 55; // Excessive dead air
+    } else if (speechDensityWps > 4.2) {
+      pacingScore = 70; // Unnaturally fast
+    }
+
+    // Heavy pause density penalty if > 45% of clip is silence
+    if (pauseDensityRatio > 0.45) {
+      pacingScore = Math.max(40, pacingScore - 20);
+    }
+
+    return { speechDensityWps, pauseDensityRatio, pacingScore };
+  }
+
   /**
    * Evaluates candidate-dependent counterfactual variants in-memory at zero render cost.
    * Strictly enforces: No candidate ends before its validated payoff.
@@ -71,12 +114,17 @@ export class EditorialPlanEvaluator {
     const rawPayoff = this.payoffEngine.analyzePayoffWords(words, rawCoherence.startSec, rawCoherence.endSec, maxClipDurationSec);
 
     const rawCoherenceScore = rawCoherence.danglingPronounResolved || rawCoherence.cliffhangerResolved ? 80 : 95;
-    const rawComposite = Number(
+    const rawEditorialScore = Number(
       (
         rawPayoff.payoffScore * weights.payoff +
         rawOpening.hookScore * weights.hook +
         rawCoherenceScore * weights.coherence
       ).toFixed(2)
+    );
+
+    const rawPacing = this.calculatePacingMetrics(words, rawCoherence.startSec, rawCoherence.endSec);
+    const rawPerformanceScore = Number(
+      (0.35 * rawPacing.pacingScore + 0.35 * rawOpening.hookScore + 0.30 * rawPayoff.payoffScore).toFixed(2)
     );
 
     // Decision hierarchy check:
@@ -91,7 +139,13 @@ export class EditorialPlanEvaluator {
       hookScore: rawOpening.hookScore,
       payoffScore: rawPayoff.payoffScore,
       coherenceScore: rawCoherenceScore,
-      compositeScore: rawComposite,
+      editorialScore: rawEditorialScore,
+      performancePredictionScore: rawPerformanceScore,
+      compositeScore: rawEditorialScore,
+      speech_density_wps: rawPacing.speechDensityWps,
+      pause_density_ratio: rawPacing.pauseDensityRatio,
+      start_boundary_quality: rawOpening.isWeakPreamble ? 'preamble_present' : 'snapped_onset',
+      end_boundary_quality: !rawPayoff.isPayoffComplete ? 'incomplete_cliffhanger' : 'complete_terminal',
       isValid: rawIsValid,
       rejectionReason: rawIsValid ? undefined : rawPayoff.explanation,
       explanation: `Raw acoustic candidate: ${rawOpening.explanation} ${rawPayoff.explanation}`,
@@ -110,12 +164,17 @@ export class EditorialPlanEvaluator {
         const sharpenedHookScore = Math.max(hookOpening.hookScore, 85);
         const hookPayoff = this.payoffEngine.analyzePayoffWords(words, hookStart, hookEnd, maxClipDurationSec);
         const hookCoherenceScore = 90; // High coherence with throat-clearing removed
-        const hookComposite = Number(
+        const hookEditorialScore = Number(
           (
             hookPayoff.payoffScore * weights.payoff +
             sharpenedHookScore * weights.hook +
             hookCoherenceScore * weights.coherence
           ).toFixed(2)
+        );
+
+        const hookPacing = this.calculatePacingMetrics(words, hookStart, hookEnd);
+        const hookPerformanceScore = Number(
+          (0.35 * hookPacing.pacingScore + 0.35 * sharpenedHookScore + 0.30 * hookPayoff.payoffScore).toFixed(2)
         );
 
         const hookIsValid = !hookPayoff.materialViolation && hookPayoff.isPayoffComplete;
@@ -128,7 +187,13 @@ export class EditorialPlanEvaluator {
           hookScore: sharpenedHookScore,
           payoffScore: hookPayoff.payoffScore,
           coherenceScore: hookCoherenceScore,
-          compositeScore: hookComposite,
+          editorialScore: hookEditorialScore,
+          performancePredictionScore: hookPerformanceScore,
+          compositeScore: hookEditorialScore,
+          speech_density_wps: hookPacing.speechDensityWps,
+          pause_density_ratio: hookPacing.pauseDensityRatio,
+          start_boundary_quality: 'clean_thesis',
+          end_boundary_quality: !hookPayoff.isPayoffComplete ? 'incomplete_cliffhanger' : 'complete_terminal',
           isValid: hookIsValid,
           rejectionReason: hookIsValid ? undefined : hookPayoff.explanation,
           explanation: `Preamble stripped: Starts on core thesis with sharpened hook.`,
@@ -148,12 +213,17 @@ export class EditorialPlanEvaluator {
         const extPayoff = this.payoffEngine.analyzePayoffWords(words, bestStart, extendedEnd, maxClipDurationSec);
         const extHookScore = bestStart !== rawCoherence.startSec ? Math.max(extOpening.hookScore, 85) : extOpening.hookScore;
         const extCoherenceScore = 95;
-        const extComposite = Number(
+        const extEditorialScore = Number(
           (
             extPayoff.payoffScore * weights.payoff +
             extHookScore * weights.hook +
             extCoherenceScore * weights.coherence
           ).toFixed(2)
+        );
+
+        const extPacing = this.calculatePacingMetrics(words, bestStart, extendedEnd);
+        const extPerformanceScore = Number(
+          (0.35 * extPacing.pacingScore + 0.35 * extHookScore + 0.30 * extPayoff.payoffScore).toFixed(2)
         );
 
         const extIsValid = extPayoff.isPayoffComplete && !extPayoff.materialViolation;
@@ -166,7 +236,13 @@ export class EditorialPlanEvaluator {
           hookScore: extHookScore,
           payoffScore: extPayoff.payoffScore,
           coherenceScore: extCoherenceScore,
-          compositeScore: extComposite,
+          editorialScore: extEditorialScore,
+          performancePredictionScore: extPerformanceScore,
+          compositeScore: extEditorialScore,
+          speech_density_wps: extPacing.speechDensityWps,
+          pause_density_ratio: extPacing.pauseDensityRatio,
+          start_boundary_quality: bestStart !== rawCoherence.startSec ? 'clean_thesis' : 'snapped_onset',
+          end_boundary_quality: 'extended_resolution',
           isValid: extIsValid,
           rejectionReason: extIsValid ? undefined : extPayoff.explanation,
           explanation: `Payoff extended forward to naturally conclude the narrative premise.`,
