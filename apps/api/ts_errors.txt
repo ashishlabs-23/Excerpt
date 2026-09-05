@@ -1,1 +1,0 @@
-src/services/mockAIService.ts(1,33): error TS2307: Cannot find module '../../../packages/types' or its corresponding type declarations.
