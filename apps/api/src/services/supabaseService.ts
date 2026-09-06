@@ -313,12 +313,21 @@ export class DatabaseService {
     const workerEnv = process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development');
 
     if (devModeBypass) {
-      const { data: clips, error } = await this.db
+      let { data: clips, error } = await this.db
         .from('clips')
         .select('*, jobs(user_id, video_url)')
         .eq('environment', workerEnv)
         .order('created_at', { ascending: false })
         .limit(limit);
+      if (error && (this.isMissingColumnError(error, 'environment') || error.message?.includes('environment'))) {
+        const fallback = await this.db
+          .from('clips')
+          .select('*, jobs(user_id, video_url)')
+          .order('created_at', { ascending: false })
+          .limit(limit);
+        clips = fallback.data;
+        error = fallback.error;
+      }
       if (error) throw error;
       return clips;
     }
@@ -331,13 +340,23 @@ export class DatabaseService {
     const jobIds = jobs?.map((j) => j.id) || [];
     if (jobIds.length === 0) return [];
 
-    const { data: clips, error } = await this.db
+    let { data: clips, error } = await this.db
       .from('clips')
       .select('*, jobs(user_id, video_url)')
       .eq('environment', workerEnv)
       .in('job_id', jobIds)
       .order('created_at', { ascending: false })
       .limit(limit);
+    if (error && (this.isMissingColumnError(error, 'environment') || error.message?.includes('environment'))) {
+      const fallback = await this.db
+        .from('clips')
+        .select('*, jobs(user_id, video_url)')
+        .in('job_id', jobIds)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      clips = fallback.data;
+      error = fallback.error;
+    }
     if (error) throw error;
     return clips;
   }
@@ -431,13 +450,24 @@ export class DatabaseService {
   }
 
   private async getNextQueuedJobLegacy(workerEnv: string) {
-    const { data: candidates, error: selectError } = await this.db
+    let { data: candidates, error: selectError } = await this.db
       .from('jobs')
       .select('*')
       .eq('status', 'queued')
       .eq('environment', workerEnv)
       .order('created_at', { ascending: true })
       .limit(1);
+
+    if (selectError && (this.isMissingColumnError(selectError, 'environment') || selectError.message?.includes('environment'))) {
+      const fallback = await this.db
+        .from('jobs')
+        .select('*')
+        .eq('status', 'queued')
+        .order('created_at', { ascending: true })
+        .limit(1);
+      candidates = fallback.data;
+      selectError = fallback.error;
+    }
 
     if (selectError) {
       console.error('[Supabase]: Legacy queue select failed:', selectError.message);

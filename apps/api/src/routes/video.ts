@@ -752,7 +752,7 @@ router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
   // 2. Try Supabase (secondary)
   try {
     const workerEnv = process.env.WORKER_ENV || 'development';
-    const { data, error } = await supabase()
+    let { data, error } = await supabase()
       .from('jobs')
       .select('*')
       .eq('user_id', userId)
@@ -760,7 +760,18 @@ router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
       .order('created_at', { ascending: false })
       .limit(15);
 
-    if (!error) return res.json(data || []);
+    if (error && (error.code === 'PGRST204' || error.message?.includes('environment'))) {
+      const fallback = await supabase()
+        .from('jobs')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(15);
+      data = fallback.data;
+      error = fallback.error;
+    }
+
+    if (!error && data) return res.json(data);
   } catch (sbErr: any) {
     console.warn('[VideoRoute]: Supabase jobs fetch failed, trying local DB:', sbErr.message);
   }
@@ -1053,7 +1064,7 @@ router.get('/clips', requireUserJWT, async (req: Request, res: Response) => {
   try {
     let clips: any[] = [];
     try {
-      clips = await db.getRecentClips(req.user.id);
+      clips = (await db.getRecentClips(req.user.id)) || [];
     } catch {}
 
     if (!clips || clips.length === 0) {
