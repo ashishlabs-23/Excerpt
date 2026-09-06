@@ -261,7 +261,8 @@ async function signClip(clip: any): Promise<any> {
 
 async function signClips(clips: any[]): Promise<any[]> {
   if (!Array.isArray(clips)) return [];
-  return Promise.all(clips.map(signClip));
+  const signed = await Promise.all(clips.map(signClip));
+  return signed.filter(c => c && (c.status === 'uploaded' || Boolean(c.video_url || c.video_file || c.storage_path)));
 }
 
 async function streamClipResponse(
@@ -280,6 +281,9 @@ async function streamClipResponse(
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 
   const localClipPath = resolveLocalClipPath(videoUrl, clip.job_id, showCaptions);
   if (localClipPath && fs.existsSync(localClipPath)) {

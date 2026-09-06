@@ -133,7 +133,8 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
         const response = await authFetch('/api/video/clips');
         if (response.ok) {
           const data = await response.json();
-          setAllClips(data);
+          const valid = Array.isArray(data) ? data.filter((c: any) => Boolean(c.video_url || c.video_file || c.storage_path) && c.status !== 'pending') : [];
+          setAllClips(valid);
         }
       }
     } catch {
