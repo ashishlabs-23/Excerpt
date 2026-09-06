@@ -313,7 +313,17 @@ export class TranscriptionService {
 
     const jsonResponse = await response.json() as any;
     const segments = jsonResponse.segments || [];
-    const words = jsonResponse.words || [];
+    // Groq returns word timestamps either at top-level or nested inside each segment.
+    // Extract from top-level first; fall back to segment-level words if top-level is empty.
+    let words = jsonResponse.words || [];
+    if (words.length === 0 && segments.length > 0) {
+      words = segments.flatMap((seg: any) => (seg.words || []).map((w: any) => ({
+        word: w.word,
+        start: w.start,
+        end: w.end,
+        confidence: w.probability ?? w.confidence ?? 1,
+      })));
+    }
     const text = segments.map((seg: any) => `[${seg.start.toFixed(1)}s - ${seg.end.toFixed(1)}s]: ${seg.text.trim()}`).join('\n');
 
     const telemetry: TranscriptionCallTelemetry = {

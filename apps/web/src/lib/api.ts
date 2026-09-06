@@ -22,27 +22,51 @@ export function apiUrl(path: string) {
   return `${base}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+let cachedAccessToken: { token: string; expiresAtMs: number } | null = null;
+let pendingTokenPromise: Promise<string | null> | null = null;
+
 export async function getAccessToken(): Promise<string | null> {
-  const supabase = getSupabaseBrowserClient();
-  if (!supabase) return null;
-
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) return null;
-
-    const expiresAtMs = session.expires_at ? session.expires_at * 1000 : 0;
-    if (expiresAtMs && expiresAtMs - Date.now() < 60_000) {
-      const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
-      if (!refreshError && refreshed.session?.access_token) {
-        return refreshed.session.access_token;
-      }
-    }
-
-    return session.access_token;
-  } catch (err) {
-    console.warn('[api]: Failed to get session token:', err);
-    return null;
+  const now = Date.now();
+  if (cachedAccessToken && cachedAccessToken.expiresAtMs - now > 60_000) {
+    return cachedAccessToken.token;
   }
+
+  if (pendingTokenPromise) {
+    return pendingTokenPromise;
+  }
+
+  pendingTokenPromise = (async () => {
+    try {
+      const supabase = getSupabaseBrowserClient();
+      if (!supabase) return null;
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        cachedAccessToken = null;
+        return null;
+      }
+
+      const expiresAtMs = session.expires_at ? session.expires_at * 1000 : now + 3600_000;
+      if (expiresAtMs - now < 60_000) {
+        const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+        if (!refreshError && refreshed.session?.access_token) {
+          const refExpires = refreshed.session.expires_at ? refreshed.session.expires_at * 1000 : now + 3600_000;
+          cachedAccessToken = { token: refreshed.session.access_token, expiresAtMs: refExpires };
+          return refreshed.session.access_token;
+        }
+      }
+
+      cachedAccessToken = { token: session.access_token, expiresAtMs };
+      return session.access_token;
+    } catch (err) {
+      console.warn('[api]: Failed to get session token:', err);
+      return null;
+    } finally {
+      pendingTokenPromise = null;
+    }
+  })();
+
+  return pendingTokenPromise;
 }
 
 export async function authHeaders(init?: HeadersInit): Promise<Headers> {
@@ -73,7 +97,14 @@ export async function authFetch(path: string, init?: RequestInit): Promise<Respo
   return fetch(apiUrl(path), { ...init, headers });
 }
 
+const playUrlMemoryCache = new Map<string, { url: string; expiresAt: number }>();
+
 export async function getClipPlayUrl(clipId: string): Promise<string> {
+  const cached = playUrlMemoryCache.get(clipId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.url;
+  }
+
   const response = await authFetch(`/api/video/play-token/${clipId}`, { method: "POST" });
   const data = await response.json();
 
@@ -82,8 +113,9 @@ export async function getClipPlayUrl(clipId: string): Promise<string> {
   }
 
   const playUrl = data.playUrl as string;
-  if (playUrl.startsWith("http")) return playUrl;
-  return apiUrl(playUrl);
+  const fullUrl = playUrl.startsWith("http") ? playUrl : apiUrl(playUrl);
+  playUrlMemoryCache.set(clipId, { url: fullUrl, expiresAt: Date.now() + 8 * 60 * 1000 });
+  return fullUrl;
 }
 
 /**

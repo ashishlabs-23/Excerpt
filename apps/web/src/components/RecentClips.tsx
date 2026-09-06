@@ -550,6 +550,7 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
                       clipId={selectedClip.id}
                       fallbackSrc={selectedClip.video_url}
                       key={selectedClip.id}
+                      eager
                       className={`${showMockup ? 'w-full h-full object-cover' : 'h-full w-auto max-w-full object-contain'}`}
                       controls={!showMockup}
                       autoPlay

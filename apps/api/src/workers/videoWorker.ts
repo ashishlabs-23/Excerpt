@@ -693,7 +693,9 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
             end: s.end,
             speaker: s.speaker
           }));
-          words = graph.transcript.flatMap((s: any) => s.words) as any;
+          words = graph.transcript
+            .flatMap((s: any) => s.words || [])
+            .filter((w: any) => w && typeof w.start === 'number' && typeof w.end === 'number') as any;
 
           // Serialize and cache the pipeline context for future bypassing only if non-empty
           if (transcriptionText && transcriptionText.trim().length > 0 && segments.length > 0) {

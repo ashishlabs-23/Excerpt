@@ -1,63 +1,122 @@
 "use client";
 
-import React, { forwardRef, useEffect, useState } from "react";
+import React, { forwardRef, useEffect, useRef, useState } from "react";
 import { getClipPlayUrl } from "@/lib/api";
 
-type AuthenticatedVideoProps = React.VideoHTMLAttributes<HTMLVideoElement> & {
+export type AuthenticatedVideoProps = React.VideoHTMLAttributes<HTMLVideoElement> & {
   clipId: string;
   fallbackSrc?: string;
+  /** If true, fetch the play token immediately on mount (for modal/autoplay use). Default: false (lazy on first play/hover). */
+  eager?: boolean;
 };
 
 export const AuthenticatedVideo = forwardRef<HTMLVideoElement, AuthenticatedVideoProps>(
-  function AuthenticatedVideo({ clipId, fallbackSrc, ...videoProps }, ref) {
-    const [src, setSrc] = useState<string | null>(fallbackSrc || null);
+  function AuthenticatedVideo({ clipId, fallbackSrc, eager = false, ...videoProps }, ref) {
+    const internalRef = useRef<HTMLVideoElement | null>(null);
+    const [src, setSrc] = useState<string | null>(null);
     const [error, setError] = useState(false);
+    const [isLoading, setIsLoading] = useState(eager);
+    const isHoveredRef = useRef(false);
+    const fetchingRef = useRef(false);
+
+    // Merge forwarded ref with internal ref so ref is always the true HTMLVideoElement
+    const setRefs = (node: HTMLVideoElement | null) => {
+      internalRef.current = node;
+      if (typeof ref === "function") {
+        ref(node);
+      } else if (ref) {
+        (ref as React.MutableRefObject<HTMLVideoElement | null>).current = node;
+      }
+    };
+
+    const fetchPlayUrl = async () => {
+      if (fetchingRef.current || !clipId) return;
+      fetchingRef.current = true;
+      setIsLoading(true);
+      try {
+        const playUrl = await getClipPlayUrl(clipId);
+        if (playUrl) {
+          setSrc(playUrl);
+          setError(false);
+          // If the user is still hovering when the stream URL arrives, trigger playback
+          if (isHoveredRef.current && internalRef.current) {
+            internalRef.current.play().catch(() => {});
+          }
+        }
+      } catch {
+        if (fallbackSrc) {
+          setSrc(fallbackSrc);
+          setError(false);
+        } else {
+          setError(true);
+        }
+      } finally {
+        fetchingRef.current = false;
+        setIsLoading(false);
+      }
+    };
 
     useEffect(() => {
-      let cancelled = false;
-
-      // If we don't have a clipId, use fallbackSrc directly
       if (!clipId) {
         if (fallbackSrc) setSrc(fallbackSrc);
         return;
       }
-
-      getClipPlayUrl(clipId)
-        .then((playUrl) => {
-          if (!cancelled && playUrl) {
-            setSrc(playUrl);
-            setError(false);
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            if (fallbackSrc) {
-              setSrc(fallbackSrc);
-              setError(false);
-            } else {
-              setError(true);
-            }
-          }
-        });
-
-      return () => {
-        cancelled = true;
-      };
-    }, [clipId, fallbackSrc]);
+      if (eager) {
+        fetchPlayUrl();
+      }
+    }, [clipId, fallbackSrc, eager]);
 
     if (error && !src) {
-      return <div className="w-full h-full bg-black/60 flex items-center justify-center text-xs text-white/30">Video Unavailable</div>;
+      return (
+        <div
+          className={`w-full h-full bg-black/60 flex items-center justify-center text-xs text-white/30 ${
+            videoProps.className || ""
+          }`}
+        >
+          Video Unavailable
+        </div>
+      );
     }
 
-    if (!src) {
-      return <div className="w-full h-full bg-black/40 animate-pulse" />;
-    }
+    const videoClasses = `${videoProps.className || ""} ${
+      isLoading && !src ? "animate-pulse bg-black/40" : ""
+    }`.trim();
 
     return (
       <video
         {...videoProps}
-        ref={ref}
-        src={src}
+        ref={setRefs}
+        className={videoClasses}
+        src={src || undefined}
+        onMouseEnter={(e) => {
+          isHoveredRef.current = true;
+          if (!src) fetchPlayUrl();
+          if (videoProps.onMouseEnter) videoProps.onMouseEnter(e);
+        }}
+        onMouseOver={(e) => {
+          isHoveredRef.current = true;
+          if (!src) {
+            fetchPlayUrl();
+          } else {
+            if (videoProps.onMouseOver) videoProps.onMouseOver(e);
+          }
+        }}
+        onMouseLeave={(e) => {
+          isHoveredRef.current = false;
+          if (videoProps.onMouseLeave) videoProps.onMouseLeave(e);
+        }}
+        onMouseOut={(e) => {
+          isHoveredRef.current = false;
+          if (videoProps.onMouseOut) videoProps.onMouseOut(e);
+        }}
+        onPlay={async (e) => {
+          if (!src && !fetchingRef.current) {
+            e.currentTarget.pause();
+            await fetchPlayUrl();
+            e.currentTarget.play().catch(() => {});
+          }
+          if (videoProps.onPlay) videoProps.onPlay(e);
+        }}
         onError={(e) => {
           if (fallbackSrc && src !== fallbackSrc) {
             setSrc(fallbackSrc);
@@ -65,9 +124,7 @@ export const AuthenticatedVideo = forwardRef<HTMLVideoElement, AuthenticatedVide
           } else {
             setError(true);
           }
-          if (videoProps.onError) {
-            videoProps.onError(e);
-          }
+          if (videoProps.onError) videoProps.onError(e);
         }}
       />
     );
