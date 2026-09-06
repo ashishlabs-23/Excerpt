@@ -4,8 +4,8 @@ const nextConfig = {
   // No server functions, no lambdas, works perfectly on Netlify CDN
   output: 'export',
   env: {
-    NEXT_PUBLIC_SUPABASE_URL: "https://maldlbmoeorpetllaceg.supabase.co",
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: "sb_publishable_9VdJC0QxIpx40M30cOb4wA_DJTQwedb",
+    NEXT_PUBLIC_SUPABASE_URL: "https://hrdpopibasomgvpwgikk.supabase.co",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: "sb_publishable_PvTVKf8rmEPqYcTlrhzyBA_7Cq3Rk5w",
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8010",
   },
   reactStrictMode: false,

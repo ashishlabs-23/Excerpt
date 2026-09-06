@@ -276,6 +276,15 @@ export class FirebaseDatabaseService {
     }
   }
 
+  async listAllClips(limitCount = 50): Promise<FirestoreClipRecord[]> {
+    const queue = this.readQueue();
+    const allClips = { ...Object.fromEntries(this.inMemoryClips), ...queue.clips };
+    return Object.values(allClips)
+      .filter((c: any) => c && (c.status === 'uploaded' || Boolean(c.video_url || c.video_file || c.storage_path)))
+      .sort((a: any, b: any) => new Date(b.created_at || b.createdAt || 0).getTime() - new Date(a.created_at || a.createdAt || 0).getTime())
+      .slice(0, limitCount) as FirestoreClipRecord[];
+  }
+
   async getClipsForJob(jobId: string): Promise<FirestoreClipRecord[]> {
     const queue = this.readQueue();
     const allQueueClips = { ...Object.fromEntries(this.inMemoryClips), ...queue.clips };

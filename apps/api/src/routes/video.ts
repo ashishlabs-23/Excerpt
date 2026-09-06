@@ -1051,12 +1051,25 @@ router.get('/status/:jobId', requireUserJWT, async (req: Request, res: Response)
 router.get('/clips', requireUserJWT, async (req: Request, res: Response) => {
   const db = new DatabaseService();
   try {
-    const clips = await db.getRecentClips(req.user.id);
+    let clips: any[] = [];
+    try {
+      clips = await db.getRecentClips(req.user.id);
+    } catch {}
+
+    if (!clips || clips.length === 0) {
+      clips = await firebaseDb.listAllClips(50);
+    }
     const signedClips = await signClips(clips);
     return res.json(signedClips);
   } catch (error: any) {
-    console.error('[VideoRoute]: Failed to fetch recent clips:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    console.warn('[VideoRoute]: Failed to fetch recent clips from DB, checking local queue:', error.message);
+    try {
+      const localClips = await firebaseDb.listAllClips(50);
+      const signedClips = await signClips(localClips);
+      return res.json(signedClips);
+    } catch {
+      return res.status(500).json({ error: 'Internal server error' });
+    }
   }
 });
 
