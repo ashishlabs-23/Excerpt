@@ -121,8 +121,11 @@ export default function DashboardPage() {
         
         if (data.status === "completed") {
           console.log("[Dashboard]: Job completed successfully. Validating result fields...");
-          if (data.result && Array.isArray(data.result) && data.result.length > 0) {
-            const firstClip = data.result[0];
+          const rawResult = Array.isArray(data.result) ? data.result : [];
+          const validClips = rawResult.filter((c: any) => Boolean(c.video_file || c.video_url || c.storage_path) && c.status !== "pending");
+          
+          if (validClips.length > 0) {
+            const firstClip = validClips[0];
             const requiredFields = [
               { key: "video_file", valid: Boolean(firstClip.video_file || firstClip.video_url || firstClip.storage_path) },
               { key: "thumbnail", valid: Boolean(firstClip.thumbnail || firstClip.thumbnail_file || firstClip.thumbnail_url || firstClip.storage_path) },
@@ -133,7 +136,7 @@ export default function DashboardPage() {
             
             if (missing.length === 0) {
               console.log("[Dashboard]: All Gen-3 fields verified:", {
-                video: firstClip.video_file,
+                video: firstClip.video_file || firstClip.video_url,
                 thumbnail: firstClip.thumbnail || firstClip.thumbnail_file,
                 title: firstClip.title,
                 caption: firstClip.caption?.slice(0, 30) + "..."
@@ -142,7 +145,10 @@ export default function DashboardPage() {
               console.warn("[Dashboard]: Missing fields in result schema:", missing, firstClip);
             }
           }
-          setActiveJob(data);
+          setActiveJob({
+            ...data,
+            result: validClips.length > 0 ? validClips : data.result,
+          });
           setLastJobId(null); // Stop polling
           if (!userClickedCompletedJob.current) {
             setTimeout(() => setShowProcessingOverlay(false), 1500);
@@ -510,7 +516,16 @@ export default function DashboardPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
             >
-              <RecentClips clips={activeJob?.result && activeJob.result.length > 0 ? activeJob.result : activeJob?.clips && activeJob.clips.length > 0 ? activeJob.clips : undefined} />
+              <RecentClips clips={(() => {
+                const candidates = activeJob?.result && activeJob.result.length > 0 
+                  ? activeJob.result 
+                  : activeJob?.clips && activeJob.clips.length > 0 
+                    ? activeJob.clips 
+                    : undefined;
+                if (!candidates) return undefined;
+                const filtered = candidates.filter((c: any) => Boolean(c.video_url || c.video_file || c.storage_path) && c.status !== 'pending');
+                return filtered.length > 0 ? filtered : undefined;
+              })()} />
             </motion.section>
           </div>
 

@@ -160,12 +160,15 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
 
   React.useEffect(() => {
     if (clips && clips.length > 0) {
-      // Merge new clips with existing ones, avoiding duplicates
-      setAllClips(prevClips => {
-        const existingIds = new Set(prevClips.map(c => c.id));
-        const newUniqueClips = clips.filter(c => !existingIds.has(c.id));
-        return [...newUniqueClips, ...prevClips];
-      });
+      // Merge new clips with existing ones, avoiding duplicates and filtering out unrendered pending clips
+      const validClips = clips.filter(c => Boolean(c.video_url || (c as any).video_file || (c as any).storage_path) && (c as any).status !== 'pending');
+      if (validClips.length > 0) {
+        setAllClips(prevClips => {
+          const existingIds = new Set(prevClips.map(c => c.id));
+          const newUniqueClips = validClips.filter(c => !existingIds.has(c.id));
+          return [...newUniqueClips, ...prevClips];
+        });
+      }
     }
   }, [clips]);
 
