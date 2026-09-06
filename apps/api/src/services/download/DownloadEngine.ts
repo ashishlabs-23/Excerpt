@@ -255,7 +255,19 @@ export class DownloadIntelligenceEngine {
         inactivityTimer = setTimeout(() => {
           let currentSize = 0;
           try {
-            if (fs.existsSync(outputPath)) currentSize = fs.statSync(outputPath).size;
+            if (fs.existsSync(outputPath)) {
+              currentSize = fs.statSync(outputPath).size;
+            } else {
+              const dir = path.dirname(outputPath);
+              if (fs.existsSync(dir)) {
+                const files = fs.readdirSync(dir);
+                for (const f of files) {
+                  if (f.startsWith('input')) {
+                    try { currentSize += fs.statSync(path.join(dir, f)).size; } catch {}
+                  }
+                }
+              }
+            }
           } catch {}
           
           if (currentSize > lastKnownSize) {
@@ -360,7 +372,7 @@ export class DownloadIntelligenceEngine {
           const dir = path.dirname(outputPath);
           const files = fs.readdirSync(dir);
           const matches = files
-            .filter(f => f.startsWith('input') && (f.endsWith('.mp4') || f.endsWith('.webm') || f.endsWith('.mkv') || f.includes('.mp4') || f.includes('.mkv')))
+            .filter(f => f.startsWith('input') && !f.endsWith('.part') && !f.endsWith('.ytdl') && !f.endsWith('.tmp') && (f.endsWith('.mp4') || f.endsWith('.webm') || f.endsWith('.mkv')))
             .map(f => ({ name: f, size: fs.statSync(path.join(dir, f)).size }))
             .sort((a, b) => b.size - a.size);
 

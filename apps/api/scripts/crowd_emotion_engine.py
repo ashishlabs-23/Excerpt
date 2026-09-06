@@ -18,14 +18,21 @@ class CrowdEmotionEngine:
         avg_vol = np.mean(audio_peaks)
         peak_vol = np.max(audio_peaks)
 
-        # High cheer threshold
-        cheer_intensity = min(1.0, (peak_vol / 95.0)) # norm relative to 95dB
+        # Handle both negative dBFS (FFmpeg standard) and positive SPL scales
+        if peak_vol <= 0:
+            # Negative dBFS scale (0 dBFS is max volume, -60 is silence)
+            cheer_intensity = max(0.0, min(1.0, (peak_vol + 60.0) / 60.0))
+            peak_found = peak_vol > -15.0
+        else:
+            # Positive SPL scale (0 to 100dB)
+            cheer_intensity = max(0.0, min(1.0, peak_vol / 95.0))
+            peak_found = peak_vol > 80.0
 
         return {
             "average_volume_db": round(float(avg_vol), 2),
             "peak_volume_db": round(float(peak_vol), 2),
             "crowd_excitement": round(float(cheer_intensity), 4),
-            "peak_found": peak_vol > 80.0
+            "peak_found": bool(peak_found)
         }
 
 def main():

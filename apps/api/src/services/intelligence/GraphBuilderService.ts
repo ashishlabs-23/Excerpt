@@ -79,6 +79,7 @@ export class GraphBuilderService {
         }));
       } else if (transcriptionResult.status === 'rejected') {
         console.error(`[GraphBuilder]: Transcript extraction failed:`, transcriptionResult.reason);
+        throw transcriptionResult.reason;
       }
 
       // 3. Fuse Visual (Crop Plan / Layout Engine)
@@ -151,17 +152,83 @@ export class GraphBuilderService {
 
 
   private async extractAudio(videoPath: string, duration: number): Promise<GraphAudioNode[]> {
-    // TODO: We could use ffmpeg `astats` or `volumedetect` to get actual dB energy per second.
-    // For now, we return a mock array mapping to 1-second intervals.
     const audioNodes: GraphAudioNode[] = [];
-    for (let t = 0; t < duration; t++) {
-      audioNodes.push({
-        time: t,
-        duration: 1.0,
-        energy: 0.5, // placeholder
-        isSilence: false // placeholder
-      });
+    const totalDuration = Math.max(1, Math.round(duration));
+
+    try {
+      const { execFile } = require('child_process');
+      const util = require('util');
+      const execFileAsync = util.promisify(execFile);
+      const { getBinaryPath } = require('../videoProcessor');
+      const ffmpegBin = getBinaryPath('ffmpeg');
+      const nullSink = process.platform === 'win32' ? 'NUL' : '/dev/null';
+
+      // Real FFmpeg broadcast loudness measurement (EBU R128 Momentary Loudness)
+      const { stderr } = await execFileAsync(
+        ffmpegBin,
+        [
+          '-i', videoPath,
+          '-vn',
+          '-af', 'ebur128=metadata=1,ametadata=print:key=lavfi.r128.M',
+          '-f', 'null', nullSink
+        ],
+        { timeout: 45000, maxBuffer: 10 * 1024 * 1024 }
+      );
+
+      const lines = stderr.split(/\r?\n/);
+      const secondLoudness: Map<number, number[]> = new Map();
+      let currentT = 0;
+
+      for (const line of lines) {
+        const tMatch = line.match(/pts_time:([\d.]+)/) || line.match(/t:([\d.]+)/);
+        if (tMatch) {
+          currentT = parseFloat(tMatch[1]);
+          continue;
+        }
+        const mMatch = line.match(/lavfi\.r128\.M=([\-\d.]+)/);
+        if (mMatch) {
+          const lufs = parseFloat(mMatch[1]);
+          if (!isNaN(lufs) && isFinite(lufs)) {
+            const sec = Math.floor(currentT);
+            if (!secondLoudness.has(sec)) secondLoudness.set(sec, []);
+            secondLoudness.get(sec)!.push(lufs);
+          }
+        }
+      }
+
+      for (let t = 0; t < totalDuration; t++) {
+        const samples = secondLoudness.get(t);
+        if (samples && samples.length > 0) {
+          const avgLufs = samples.reduce((s, v) => s + v, 0) / samples.length;
+          // Normalize LUFS (-70 to 0) to [0, 1] energy range
+          const energy = Math.max(0, Math.min(1, Number(((avgLufs + 70) / 70).toFixed(3))));
+          audioNodes.push({
+            time: t,
+            duration: 1.0,
+            energy,
+            isSilence: avgLufs <= -50
+          });
+        } else {
+          audioNodes.push({
+            time: t,
+            duration: 1.0,
+            energy: 0.3,
+            isSilence: false
+          });
+        }
+      }
+      return audioNodes;
+    } catch (err: any) {
+      console.warn(`[GraphBuilder]: Real audio extraction fallback: ${err.message}`);
+      for (let t = 0; t < totalDuration; t++) {
+        audioNodes.push({
+          time: t,
+          duration: 1.0,
+          energy: 0.5,
+          isSilence: false
+        });
+      }
+      return audioNodes;
     }
-    return audioNodes;
   }
 }

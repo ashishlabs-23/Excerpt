@@ -32,6 +32,8 @@ export * from './ranking/ClipRankingEngine';
 export * from './director/types';
 export * from './director/SmartReframeEngine';
 export * from './director/ComputeCeiling';
+export * from './director/DirectorProfiles';
+export * from './director/ContextualDirectorEngine';
 export * from './captions/types';
 export * from './planning/CaptionPlanner';
 export * from './render/types';

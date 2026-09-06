@@ -434,9 +434,10 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       fs.copyFileSync(cachedInputPath, inputPath);
     } else {
       console.log(`[Worker]: 🛰️ Satellite Link Active -> Downloading from ${videoUrl}`);
+      let dlResult: any;
       try {
         let lastReportedProgress = 10;
-        const dlResult = await processor.downloadVideo(videoUrl, cachedInputPath, async (percent: number, speed?: string, eta?: string, strategy?: string) => {
+        dlResult = await processor.downloadVideo(videoUrl, cachedInputPath, async (percent: number, speed?: string, eta?: string, strategy?: string) => {
           // Monotonic progress model: 10% (start) -> 12% (bytes active) -> 12-40% (progressing)
           let calculatedProgress = 10;
           if (percent > 0) {
@@ -501,8 +502,17 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         });
       }
       
+      // Resolve actual downloaded file path (yt-dlp may merge or adjust extension)
+      const resolvedSource = (dlResult?.outputPath && fs.existsSync(dlResult.outputPath))
+        ? dlResult.outputPath
+        : (fs.existsSync(cachedInputPath) ? cachedInputPath : null);
+
+      if (!resolvedSource) {
+        throw new Error(`Download completed but output media file was not found on disk at ${cachedInputPath}`);
+      }
+
       // Copy to job-specific path for FFmpeg stability
-      fs.copyFileSync(cachedInputPath, inputPath);
+      fs.copyFileSync(resolvedSource, inputPath);
       console.log(`[Worker]: 🗄️ Source cached for future Neural Remixes.`);
     }
 
@@ -587,17 +597,34 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
 
       if (!forceDraftMode) {
         try {
+          let validCacheLoaded = false;
           if (fs.existsSync(cachedTranscriptionPath)) {
-            console.log(`[Worker]: 🧠 Semantic Cache HIT! Loading existing transcription.`);
-            const cachedData = JSON.parse(fs.readFileSync(cachedTranscriptionPath, 'utf8'));
-            const parsedGraph = typeof cachedData.graph === 'string' ? JSON.parse(cachedData.graph) : cachedData.graph;
-            transcriptionText = cachedData.text || (parsedGraph?.transcript ? parsedGraph.transcript.map((s: any) => s.text).join(' ') : '');
-            segments = cachedData.segments || (parsedGraph?.transcript ? parsedGraph.transcript.map((s: any) => ({ text: s.text, start: s.start, end: s.end, speaker: s.speaker })) : []);
-            words = cachedData.words && Array.isArray(cachedData.words) && cachedData.words.length > 0
-              ? cachedData.words
-              : (parsedGraph?.transcript ? parsedGraph.transcript.flatMap((s: any) => s.words || []) : []);
-            console.log(`[Worker]: Restored ${segments.length} segments and ${words.length} word timestamps from semantic cache.`);
-          } else {
+            try {
+              const cachedData = JSON.parse(fs.readFileSync(cachedTranscriptionPath, 'utf8'));
+              const parsedGraph = typeof cachedData.graph === 'string' ? JSON.parse(cachedData.graph) : cachedData.graph;
+              const candidateText = cachedData.text || (parsedGraph?.transcript ? parsedGraph.transcript.map((s: any) => s.text).join(' ') : '');
+              const candidateSegments = cachedData.segments || (parsedGraph?.transcript ? parsedGraph.transcript.map((s: any) => ({ text: s.text, start: s.start, end: s.end, speaker: s.speaker })) : []);
+
+              if (candidateText && candidateText.trim().length > 0 && candidateSegments.length > 0) {
+                console.log(`[Worker]: 🧠 Semantic Cache HIT! Loading existing transcription.`);
+                transcriptionText = candidateText;
+                segments = candidateSegments;
+                words = cachedData.words && Array.isArray(cachedData.words) && cachedData.words.length > 0
+                  ? cachedData.words
+                  : (parsedGraph?.transcript ? parsedGraph.transcript.flatMap((s: any) => s.words || []) : []);
+                console.log(`[Worker]: Restored ${segments.length} segments and ${words.length} word timestamps from semantic cache.`);
+                validCacheLoaded = true;
+              } else {
+                console.warn(`[Worker]: Semantic cache at ${cachedTranscriptionPath} has empty text/segments. Invalidating.`);
+                try { fs.unlinkSync(cachedTranscriptionPath); } catch {}
+              }
+            } catch (cacheErr: any) {
+              console.warn(`[Worker]: Failed to read semantic cache: ${cacheErr.message}. Invalidating.`);
+              try { fs.unlinkSync(cachedTranscriptionPath); } catch {}
+            }
+          }
+
+          if (!validCacheLoaded) {
           await JobStateMachine.transition(db, jobId, JobStatus.TRANSCRIBING, { progress: 20, stage_label: 'Extracting audio & preparing analysis frames' });
           console.log(`[Worker]: 🌪️ Groq / Neural Decode & Spatial Graph Build START...`);
           const graphBuildStart = Date.now();
@@ -668,15 +695,17 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           }));
           words = graph.transcript.flatMap((s: any) => s.words) as any;
 
-          // Serialize and cache the pipeline context for future bypassing
-          const cacheData = {
-            graph,
-            words,
-            eventGraph,
-            storyGraph,
-            rankedCandidates
-          };
-          fs.writeFileSync(cachedTranscriptionPath, JSON.stringify(cacheData, null, 2));
+          // Serialize and cache the pipeline context for future bypassing only if non-empty
+          if (transcriptionText && transcriptionText.trim().length > 0 && segments.length > 0) {
+            const cacheData = {
+              graph,
+              words,
+              eventGraph,
+              storyGraph,
+              rankedCandidates
+            };
+            fs.writeFileSync(cachedTranscriptionPath, JSON.stringify(cacheData, null, 2));
+          }
 
         }
       } catch (transcriptionError: any) {
@@ -1249,8 +1278,10 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     );
     
     if (clips.length === 0) {
-      console.error(`[SYNC] Llama-3.3 / AI Detection FAILED -> No clips found in transcription.`);
-      throw new Error('AI returned 0 clips. The transcription may have been too short or empty.');
+      console.warn(`[Worker]: AI Detection returned 0 clips (sparse speech or threshold clamp). Generating fallback timeline clips...`);
+      recoveryMode = true;
+      generationMode = 'recovery';
+      clips = buildRecoveryClips(sourceDuration, numClips);
     }
 
     // â”€â”€ Intelligence Orchestrator: Python Engine Bridge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -2242,6 +2273,7 @@ async function processClaimedJobWithRetries(job: any, workerId: number) {
 
 let activeWorkers = 0;
 const MAX_CONCURRENT_WORKERS = 5;
+const inFlightJobIds = new Set<string>();
 
 const pollForJobs = async (workerId: number) => {
   console.log(`[Worker-${workerId}]: 🟢 Polling started.`);
@@ -2251,12 +2283,23 @@ const pollForJobs = async (workerId: number) => {
       const job = await db.getNextQueuedJob(workerEnv);
       
       if (job) {
-        console.log(`[Worker-${workerId}]: ⚡ Processing Job ${job.id}`);
-        const result = await processClaimedJobWithRetries(job, workerId);
-        if (result?.status === 'completed') {
-          console.log(`[Worker-${workerId}]: ✅ Job ${job.id} finished.`);
-        } else {
-          console.warn(`[Worker-${workerId}]: Job ${job.id} ended with status ${result?.status || 'unknown'}.`);
+        if (inFlightJobIds.has(job.id)) {
+          // Already in progress by another worker thread
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          continue;
+        }
+
+        inFlightJobIds.add(job.id);
+        try {
+          console.log(`[Worker-${workerId}]: ⚡ Processing Job ${job.id}`);
+          const result = await processClaimedJobWithRetries(job, workerId);
+          if (result?.status === 'completed') {
+            console.log(`[Worker-${workerId}]: ✅ Job ${job.id} finished.`);
+          } else {
+            console.warn(`[Worker-${workerId}]: Job ${job.id} ended with status ${result?.status || 'unknown'}.`);
+          }
+        } finally {
+          inFlightJobIds.delete(job.id);
         }
       } else {
         await new Promise(resolve => setTimeout(resolve, 5000));

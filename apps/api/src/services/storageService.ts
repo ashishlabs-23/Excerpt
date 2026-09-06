@@ -117,35 +117,45 @@ export class StorageService {
       }
     }
 
-    // 3. Local fallback for development / offline environments
+    // 3. Try Supabase Storage (if configured)
     try {
-      const port = process.env.PORT === '3000' ? 8010 : (process.env.PORT || 8010);
-      const destPath = path.resolve(process.cwd(), 'temp', key);
-      fs.mkdirSync(path.dirname(destPath), { recursive: true });
-      if (path.resolve(filePath) !== destPath) {
-        fs.copyFileSync(filePath, destPath);
+      const supabaseClient = this.getSupabase();
+      if (supabaseClient && supabaseClient.storage) {
+        console.log(`[StorageService]: Attempting Supabase Storage upload for ${key}...`);
+        const fileBuffer = fs.readFileSync(filePath);
+        const storageBucket = this.bucket.includes('.') ? 'clips' : this.bucket;
+        const { error: sbUploadErr } = await supabaseClient.storage
+          .from(storageBucket)
+          .upload(key, fileBuffer, {
+            contentType,
+            upsert: true,
+          });
+        if (!sbUploadErr) {
+          const { data: publicUrlData } = supabaseClient.storage
+            .from(storageBucket)
+            .getPublicUrl(key);
+          if (publicUrlData?.publicUrl) {
+            console.log(`[StorageService]: Supabase Storage Upload Success -> ${publicUrlData.publicUrl}`);
+            return publicUrlData.publicUrl;
+          }
+        } else {
+          console.warn(`[StorageService]: Supabase storage upload warning: ${sbUploadErr.message}`);
+        }
       }
-      const localUrl = `http://localhost:${port}/temp/${key}`;
-      console.log(`[StorageService]: Local static fallback -> ${localUrl}`);
-      return localUrl;
-    } catch (localErr: any) {
-      console.error(`[StorageService]: Local fallback failed:`, localErr.message);
+    } catch (sbErr: any) {
+      console.warn(`[StorageService]: Supabase storage upload failed: ${sbErr.message}`);
     }
 
-    throw new Error(`No cloud storage provider available for ${key}`);
+    throw new PipelineError({
+      category: ErrorCategory.UPLOAD,
+      message: `Failed to upload ${key}: All cloud storage providers (B2, Firebase, Supabase) failed. Local storage fallback is disabled.`,
+      stage: 'storage_upload',
+      component: 'StorageService',
+    });
   }
 
   async createSignedUrl(key: string, expiresInSeconds?: number): Promise<string> {
     const ttl = expiresInSeconds || Number(process.env.STORAGE_SIGNED_URL_TTL_SECONDS || 60 * 60);
-    
-    // 0. Check local disk first (for development or cached clips)
-    try {
-      const localPath = path.resolve(process.cwd(), 'temp', key);
-      if (fs.existsSync(localPath)) {
-        const port = process.env.PORT === '3000' ? 8010 : (process.env.PORT || 8010);
-        return `http://localhost:${port}/temp/${key}`;
-      }
-    } catch {}
 
     // 1. Try Firebase Storage Signed URL ONLY IF object actually exists in Firebase
     const firebaseBucket = this.getFirebaseBucket();
@@ -180,8 +190,22 @@ export class StorageService {
       }
     }
 
-    const port = process.env.PORT === '3000' ? 8010 : (process.env.PORT || 8010);
-    return `http://localhost:${port}/temp/${key}`;
+    // 3. Try Supabase Storage Signed URL
+    try {
+      const supabaseClient = this.getSupabase();
+      if (supabaseClient && supabaseClient.storage) {
+        const storageBucket = this.bucket.includes('.') ? 'clips' : this.bucket;
+        const { data, error } = await supabaseClient.storage
+          .from(storageBucket)
+          .createSignedUrl(key, ttl);
+        if (!error && data?.signedUrl) {
+          return data.signedUrl;
+        }
+      }
+    } catch {}
+
+    const regionFallback = process.env.B2_REGION || "us-east-005";
+    return `https://${this.bucket}.s3.${regionFallback}.backblazeb2.com/${key}`;
   }
 
   async getFileStream(key: string, range?: string): Promise<{ stream: NodeJS.ReadableStream; contentLength?: number; contentType?: string; contentRange?: string; statusCode?: number } | null> {

@@ -63,15 +63,9 @@ def main():
 
         cap.release()
     except Exception as e:
-        # Graceful fallback: output empty list or log error
-        # In production, we don't crash, we just let the pipeline continue
+        # Graceful fallback: output empty list on failure without injecting phantom timestamps
         sys.stderr.write(f"MediaPipe pose analysis failed or not installed: {str(e)}\n")
-        
-        # We can yield some heuristic points if we are running in tests or want a demo
-        results = [
-            {"timestamp": 12.0, "score": 0.85, "class": "raised_arms"},
-            {"timestamp": 47.0, "score": 0.80, "class": "jumping"}
-        ]
+        results = []
 
     # Print JSON output to stdout
     print(json.dumps(results))

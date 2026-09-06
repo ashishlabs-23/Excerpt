@@ -114,6 +114,7 @@ export interface FirestoreClipRecord {
 export class FirebaseDatabaseService {
   private inMemoryJobs = new Map<string, any>();
   private inMemoryClips = new Map<string, any>();
+  public inFlightClaims = new Set<string>();
 
   private get db(): admin.firestore.Firestore {
     return getFirestoreDb();
@@ -202,9 +203,17 @@ export class FirebaseDatabaseService {
       this.writeQueue(queue);
     }
 
+    if (updates.status && ['completed', 'failed', 'dead_letter', 'cancelled'].includes(updates.status)) {
+      this.inFlightClaims.delete(jobId);
+    }
+
     try {
       await this.db.collection('jobs').doc(jobId).set(cleanUpdates, { merge: true });
     } catch {}
+  }
+
+  releaseJobClaim(jobId: string): void {
+    this.inFlightClaims.delete(jobId);
   }
 
   async getJob(jobId: string): Promise<FirestoreJobRecord | null> {
@@ -345,8 +354,15 @@ export class FirebaseDatabaseService {
     const queue = this.readQueue();
     // 1. Pick up actively queued job
     for (const [id, job] of Object.entries(queue.jobs)) {
-      if (job.status === 'queued') {
-        const updated = { ...job, id, status: 'processing', updatedAt: new Date().toISOString() };
+      if (job.status === 'queued' && !this.inFlightClaims.has(id)) {
+        this.inFlightClaims.add(id);
+        const updated = { 
+          ...job, 
+          id, 
+          status: 'processing', 
+          updatedAt: new Date().toISOString(),
+          heartbeat_at: new Date().toISOString() 
+        };
         queue.jobs[id] = updated;
         this.writeQueue(queue);
         this.inMemoryJobs.set(id, updated);
@@ -358,12 +374,19 @@ export class FirebaseDatabaseService {
     const nonTerminalStatuses = ['processing', 'cutting', 'captioning', 'transcribing', 'detecting_clips', 'recovering'];
     const now = Date.now();
     for (const [id, job] of Object.entries(queue.jobs)) {
-      if (nonTerminalStatuses.includes(job.status)) {
+      if (nonTerminalStatuses.includes(job.status) && !this.inFlightClaims.has(id)) {
         const lastUpdated = new Date(job.heartbeat_at || job.updatedAt || job.createdAt || 0).getTime();
         // If inactive for > 60 seconds, reclaim it back into the worker
         if (now - lastUpdated > 60000) {
           console.log(`[LocalQueue]: Reclaiming orphaned job ${id} (last state was ${job.status}, updated ${Math.round((now - lastUpdated)/1000)}s ago)`);
-          const updated = { ...job, id, status: 'processing', updatedAt: new Date().toISOString() };
+          this.inFlightClaims.add(id);
+          const updated = { 
+            ...job, 
+            id, 
+            status: 'processing', 
+            updatedAt: new Date().toISOString(),
+            heartbeat_at: new Date().toISOString() 
+          };
           queue.jobs[id] = updated;
           this.writeQueue(queue);
           this.inMemoryJobs.set(id, updated);
@@ -483,7 +506,16 @@ export class FirebaseDatabaseService {
     const queue = this.readQueue();
     if (!Array.isArray(queue.render_jobs) || queue.render_jobs.length === 0) return null;
     const now = Date.now();
+
+    // Only claim render jobs belonging to currently active jobs
+    const activeJobIds = new Set(
+      Object.values(queue.jobs)
+        .filter((j: any) => ['rendering', 'processing', 'queued'].includes(j.status))
+        .map((j: any) => j.id)
+    );
+
     const queuedIdx = queue.render_jobs.findIndex((rj: any) => {
+      if (activeJobIds.size > 0 && !activeJobIds.has(rj.job_id)) return false;
       if (rj.status === 'pending' || rj.status === 'queued' || rj.status === 'retrying') return true;
       if (rj.status === 'rendering' || rj.status === 'uploading') {
         const lockedAt = new Date(rj.locked_at || rj.updated_at || 0).getTime();

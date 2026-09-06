@@ -312,6 +312,42 @@ async function processRenderJob(renderJob: any) {
         total_ms: cropMs + captionMs + uploadMs
       });
 
+      // 7. Cleanup Job Temp Directory ONLY if ALL render jobs for this job are done
+      try {
+        let hasPending = false;
+        try {
+          const localJobs = firebaseDb.getRenderJobsForJob(renderJob.job_id);
+          hasPending = localJobs.some((j: any) =>
+            ['pending', 'queued', 'rendering', 'uploading'].includes(j.status) && j.id !== renderJob.id
+          );
+        } catch {}
+
+        if (!hasPending) {
+          try {
+            const { data: pendingJobs, error } = await db.getSupabase()
+              .from('render_jobs')
+              .select('id')
+              .eq('job_id', renderJob.job_id)
+              .in('status', ['pending', 'queued', 'rendering']);
+
+            if (!error && pendingJobs && pendingJobs.length > 0) {
+              hasPending = true;
+            }
+          } catch {}
+        }
+
+        if (!hasPending) {
+          if (fs.existsSync(tempDir)) {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+            console.log(`[RenderWorker]: 🧹 Cleaned up job temp directory: ${tempDir}`);
+          }
+        } else {
+          console.log(`[RenderWorker]: ⏳ Preserving ${tempDir}; sibling render jobs still active for job ${renderJob.job_id}`);
+        }
+      } catch (cleanErr: any) {
+        console.warn(`[RenderWorker]: Job temp cleanup warning: ${cleanErr.message}`);
+      }
+
       console.log(`[RenderWorker]: Completed render job ${renderJob.id}`);
     } catch (err: any) {
       console.error(`[RenderWorker]: Render job failed:`, err);

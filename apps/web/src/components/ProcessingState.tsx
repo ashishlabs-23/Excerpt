@@ -222,13 +222,15 @@ export const ProcessingState: React.FC<ProcessingStateProps> = ({ status, progre
                     <AlertTriangle size={18} className="text-red-400 shrink-0" />
                     <div>
                       <h4 className="text-[10px] font-black uppercase tracking-wider text-red-400 mb-1">
-                        Download Blocked
+                        {displayError.toLowerCase().includes('download') ? 'Download Blocked' : 'Pipeline Interrupted'}
                       </h4>
                       <p className="text-[10px] text-red-200/60 leading-normal font-semibold italic">
                         {displayError}
-                        <strong className="text-red-400 block mt-1">
-                          Tip: Drag and drop a local file to bypass third-party rate limits.
-                        </strong>
+                        {displayError.toLowerCase().includes('download') && (
+                          <strong className="text-red-400 block mt-1">
+                            Tip: Drag and drop a local file to bypass third-party rate limits.
+                          </strong>
+                        )}
                       </p>
                     </div>
                   </div>

@@ -51,11 +51,36 @@ export async function ensureSourceVideo(
     path.resolve(__dirname, '../../../../../temp', jobId, 'input.mp4'),
   ];
 
+  if (videoUrl) {
+    try {
+      const crypto = require('crypto');
+      const cacheKey = crypto.createHash('md5').update(videoUrl).digest('hex').substring(0, 12);
+      candidatePaths.push(
+        path.resolve(process.cwd(), 'temp/cache', cacheKey, 'input.mp4'),
+        path.resolve(process.cwd(), 'apps/api/temp/cache', cacheKey, 'input.mp4'),
+        path.resolve(__dirname, '../../../../temp/cache', cacheKey, 'input.mp4'),
+        path.resolve(__dirname, '../../../../../temp/cache', cacheKey, 'input.mp4')
+      );
+    } catch {}
+  }
+
   for (const candidate of candidatePaths) {
     if (fs.existsSync(candidate)) {
       const check = await validateMedia(candidate);
       if (check.valid) {
         console.log(`[ensureSourceVideo]: Found valid local video at ${candidate}`);
+        const targetInTemp = path.join(tempDir, 'input.mp4');
+        if (!fs.existsSync(targetInTemp)) {
+          try {
+            if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+            fs.copyFileSync(candidate, targetInTemp);
+            console.log(`[ensureSourceVideo]: Copied cached video to ${targetInTemp}`);
+            return {
+              videoPath: targetInTemp,
+              telemetry: { strategy: 'local_cache', downloaded: false, durationMs: Date.now() - startMs }
+            };
+          } catch {}
+        }
         return {
           videoPath: candidate,
           telemetry: { strategy: 'local_cache', downloaded: false, durationMs: Date.now() - startMs }

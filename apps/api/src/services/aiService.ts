@@ -49,8 +49,8 @@ interface CandidateWindow {
   };
 }
 
-const MIN_CLIP_DURATION = 15;
-const MAX_CLIP_DURATION = 45;
+const MIN_CLIP_DURATION = Number(process.env.MIN_CLIP_DURATION || 12);
+const MAX_CLIP_DURATION = Number(process.env.MAX_CLIP_DURATION || 60);
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));

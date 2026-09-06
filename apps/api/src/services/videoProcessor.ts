@@ -615,7 +615,7 @@ export class VideoProcessor {
           let speakerNormY = 0.35; // default upper third
 
           const clipEnd = start + duration;
-          const pointsInWindow: { x: number; y: number; weight: number }[] = [];
+          const timedPointsInWindow: { time: number; x: number; y: number; weight: number }[] = [];
 
           if (nexusCropPlan && Array.isArray(nexusCropPlan.frames_data) && nexusCropPlan.frames_data.length > 0) {
             // Filter frames strictly within the clip's timestamp window [start, clipEnd]
@@ -627,16 +627,17 @@ export class VideoProcessor {
             const candidateFrames = windowFrames.length > 0 ? windowFrames : nexusCropPlan.frames_data;
 
             for (const f of candidateFrames) {
+              const frameTime = typeof f.time === 'number' ? f.time : start;
               // Extract primary active region (from active speaker tracker)
               if (Array.isArray(f.regions) && f.regions.length > 0) {
                 const r = f.regions[0];
                 if (typeof r.x === 'number' && r.x >= 0 && r.x <= 1) {
                   const weight = (typeof r.confidence === 'number' && r.confidence > 0) ? r.confidence : 1;
                   const ry = (typeof r.y === 'number' && r.y >= 0 && r.y <= 1) ? r.y : 0.35;
-                  pointsInWindow.push({ x: r.x, y: ry, weight });
+                  timedPointsInWindow.push({ time: frameTime, x: r.x, y: ry, weight });
                 }
               } else if (typeof f.x === 'number' && f.x >= 0 && f.x <= 1) {
-                pointsInWindow.push({ x: f.x, y: typeof f.y === 'number' ? f.y : 0.35, weight: 1 });
+                timedPointsInWindow.push({ time: frameTime, x: f.x, y: typeof f.y === 'number' ? f.y : 0.35, weight: 1 });
               }
             }
           } else if (nexusCropPlan && Array.isArray(nexusCropPlan.points) && nexusCropPlan.points.length > 0) {
@@ -646,32 +647,76 @@ export class VideoProcessor {
             });
             const candPoints = windowPoints.length > 0 ? windowPoints : nexusCropPlan.points;
             for (const p of candPoints) {
+              const pTime = typeof p.time === 'number' ? p.time : start;
               if (typeof p.x === 'number' && p.x >= 0 && p.x <= 1) {
-                pointsInWindow.push({ x: p.x, y: typeof p.y === 'number' ? p.y : 0.35, weight: 1 });
+                timedPointsInWindow.push({ time: pTime, x: p.x, y: typeof p.y === 'number' ? p.y : 0.35, weight: 1 });
               }
             }
           }
 
-          if (pointsInWindow.length > 0) {
-            const totalWeight = pointsInWindow.reduce((s, p) => s + p.weight, 0);
-            speakerNormX = pointsInWindow.reduce((s, p) => s + p.x * p.weight, 0) / totalWeight;
-            speakerNormY = pointsInWindow.reduce((s, p) => s + p.y * p.weight, 0) / totalWeight;
+          if (timedPointsInWindow.length > 0) {
+            const totalWeight = timedPointsInWindow.reduce((s, p) => s + p.weight, 0);
+            speakerNormX = timedPointsInWindow.reduce((s, p) => s + p.x * p.weight, 0) / totalWeight;
+            speakerNormY = timedPointsInWindow.reduce((s, p) => s + p.y * p.weight, 0) / totalWeight;
           }
 
-          // Center the 1080px crop window directly around the speaker's detected horizontal position
+          // Compute horizontal framing: dynamic pan if speaker moves or speakers switch across the clip
           const targetCropX = Math.round(Math.max(0, Math.min(maxOffset, speakerNormX * scaledWidth - cropWidth / 2)));
+          let targetXExpression = String(targetCropX);
+          let framingMode: 'static' | 'dynamic' = 'static';
+
+          // Group into temporal buckets to check for intentional movement vs camera noise
+          const bucketDuration = 2.5;
+          const buckets: { time: number; x: number; weight: number }[] = [];
+          for (let t = 0; t < duration; t += bucketDuration) {
+            const segStart = start + t;
+            const segEnd = segStart + bucketDuration;
+            const ptsInSeg = timedPointsInWindow.filter(p => p.time >= segStart && p.time < segEnd);
+            if (ptsInSeg.length > 0) {
+              const wSum = ptsInSeg.reduce((s, p) => s + p.weight, 0);
+              const avgX = ptsInSeg.reduce((s, p) => s + p.x * p.weight, 0) / wSum;
+              buckets.push({ time: t + bucketDuration / 2, x: avgX, weight: wSum });
+            }
+          }
+
+          if (buckets.length >= 2) {
+            const minX = Math.min(...buckets.map(b => b.x));
+            const maxX = Math.max(...buckets.map(b => b.x));
+            const deltaNorm = maxX - minX;
+
+            // Only activate dynamic camera pan if movement exceeds 8% horizontal shift
+            if (deltaNorm >= 0.08) {
+              framingMode = 'dynamic';
+              const keyframes = buckets.map(b => ({
+                time: Number(b.time.toFixed(2)),
+                pixelX: Math.round(Math.max(0, Math.min(maxOffset, b.x * scaledWidth - cropWidth / 2)))
+              }));
+
+              let expr = String(keyframes[keyframes.length - 1].pixelX);
+              for (let i = keyframes.length - 2; i >= 0; i--) {
+                const kfCurr = keyframes[i];
+                const kfNext = keyframes[i + 1];
+                const dt = Math.max(0.5, kfNext.time - kfCurr.time);
+                const dx = kfNext.pixelX - kfCurr.pixelX;
+                const interp = `${kfCurr.pixelX}+(${dx})*(t-${kfCurr.time})/${dt.toFixed(2)}`;
+                expr = `if(lt(t,${kfNext.time.toFixed(2)}),${interp},${expr})`;
+              }
+              targetXExpression = `max(0,min(${maxOffset},${expr}))`;
+            }
+          }
+
           // Position eye-line near the upper 35% of the 1920px frame
           const idealY = Math.round(speakerNormY * scaledHeight - cropHeight * 0.35);
           const targetCropY = Math.round(Math.max(0, Math.min(maxVOffset, idealY)));
 
           cropPlan = {
-            mode: 'center',
-            xExpression: String(targetCropX),
+            mode: framingMode === 'dynamic' ? 'dynamic' : 'center',
+            xExpression: targetXExpression,
             yExpression: String(targetCropY),
-            debug: `active-speaker-crop (xNorm=${speakerNormX.toFixed(2)}, yNorm=${speakerNormY.toFixed(2)}, target=[${targetCropX}, ${targetCropY}])`,
+            debug: `${framingMode}-speaker-crop (xNorm=${speakerNormX.toFixed(2)}, yNorm=${speakerNormY.toFixed(2)}, xExpr=${targetXExpression})`,
           };
 
-          cropFilter = `scale=${scaledWidth}:${scaledHeight}:flags=bicubic,crop=${cropWidth}:${cropHeight}:${targetCropX}:${targetCropY},setsar=1`;
+          cropFilter = `scale=${scaledWidth}:${scaledHeight}:flags=bicubic,crop=${cropWidth}:${cropHeight}:${targetXExpression}:${targetCropY},setsar=1`;
 
           // Pattern Interrupts (Deferred to Phase C Contextual DirectorPlan; disabled by default to avoid metronomic over-editing)
           const enablePatternInterrupts = process.env.EXCERPT_PATTERN_INTERRUPTS === 'true' && duration >= 8.0;
