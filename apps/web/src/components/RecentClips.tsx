@@ -560,10 +560,28 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
                       loop
                       playsInline
                       muted={false}
+                      onClick={(e) => {
+                        const video = e.currentTarget;
+                        if (video.paused) {
+                          video.muted = false;
+                          video.play().catch(() => {
+                            video.muted = true;
+                            video.play().catch(() => {});
+                          });
+                        } else {
+                          video.pause();
+                        }
+                      }}
                       onLoadedData={(e) => {
-                        e.currentTarget.muted = false;
-                        e.currentTarget.volume = 1.0;
-                        e.currentTarget.play().catch(() => {});
+                        const video = e.currentTarget;
+                        video.volume = 1.0;
+                        const p = video.play();
+                        if (p !== undefined) {
+                          p.catch(() => {
+                            video.muted = true;
+                            video.play().catch(() => {});
+                          });
+                        }
                       }}
                     />
                     

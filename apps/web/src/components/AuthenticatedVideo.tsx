@@ -38,8 +38,9 @@ export const AuthenticatedVideo = forwardRef<HTMLVideoElement, AuthenticatedVide
         if (playUrl) {
           setSrc(playUrl);
           setError(false);
-          // If the user is still hovering when the stream URL arrives, trigger playback
+          // If the user is still hovering when the stream URL arrives, trigger muted playback
           if (isHoveredRef.current && internalRef.current) {
+            internalRef.current.muted = true;
             internalRef.current.play().catch(() => {});
           }
         }
@@ -65,6 +66,21 @@ export const AuthenticatedVideo = forwardRef<HTMLVideoElement, AuthenticatedVide
         fetchPlayUrl();
       }
     }, [clipId, fallbackSrc, eager]);
+
+    // When src is populated, if eager or autoPlay, kick off playback with fallback to muted
+    useEffect(() => {
+      if (src && internalRef.current && (eager || videoProps.autoPlay)) {
+        const video = internalRef.current;
+        const playPromise = video.play();
+        if (playPromise !== undefined) {
+          playPromise.catch((err) => {
+            // Autoplay without user interaction was blocked, switch to muted autoplay
+            video.muted = true;
+            video.play().catch(() => {});
+          });
+        }
+      }
+    }, [src, eager, videoProps.autoPlay]);
 
     if (error && !src) {
       return (
