@@ -326,6 +326,75 @@ async function streamClipResponse(
     return;
   }
 
+  // If clean clip requested but no local clean clip exists and no clean key in metadata, check if source video exists to render clean clip on the fly
+  if (!showCaptions && !clip?.metadata?.video_clean_storage_key) {
+    const candidateSourcePaths = [
+      path.join(process.cwd(), 'temp', 'jobs', clip.job_id || '', 'video.mp4'),
+      path.join(process.cwd(), 'temp', clip.job_id || '', 'video.mp4'),
+    ];
+    try {
+      const cacheDir = path.join(process.cwd(), 'temp', 'cache');
+      if (fs.existsSync(cacheDir)) {
+        for (const d of fs.readdirSync(cacheDir)) {
+          candidateSourcePaths.push(path.join(cacheDir, d, 'input.mp4'));
+        }
+      }
+    } catch {}
+
+    const sourceVideoPath = candidateSourcePaths.find(p => fs.existsSync(p));
+    if (sourceVideoPath) {
+      const targetCleanDir = path.join(process.cwd(), 'temp', 'jobs', clip.job_id || '');
+      if (!fs.existsSync(targetCleanDir)) fs.mkdirSync(targetCleanDir, { recursive: true });
+      const targetCleanPath = path.join(targetCleanDir, `clip-${clipId}-clean.mp4`);
+
+      if (!fs.existsSync(targetCleanPath)) {
+        const clipStart = typeof clip.start_time === 'number' ? clip.start_time : (clip.startTime || 0);
+        const clipEnd = typeof clip.end_time === 'number' ? clip.end_time : (clip.endTime || 60);
+        try {
+          console.log(`[VideoRoute]: Auto-generating clean clip on the fly for stream ${clipId}...`);
+          await videoProcessor.processClip(
+            sourceVideoPath,
+            targetCleanPath,
+            clipStart,
+            clipEnd - clipStart,
+            clip.metadata?.nexus?.crop_plan || clip.metadata?.crop_plan,
+            undefined
+          );
+        } catch (e: any) {
+          console.warn(`[VideoRoute]: Auto-generate clean clip stream failed:`, e.message);
+        }
+      }
+
+      if (fs.existsSync(targetCleanPath)) {
+        const stats = fs.statSync(targetCleanPath);
+        const range = req.headers.range;
+        if (range) {
+          const parts = range.replace(/bytes=/, '').split('-');
+          const start = parseInt(parts[0], 10);
+          const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1;
+          res.writeHead(206, {
+            'Content-Range': `bytes ${start}-${end}/${stats.size}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': end - start + 1,
+            'Content-Type': 'video/mp4',
+            'Content-Disposition': `${disposition}; filename="${fileName}"`,
+          });
+          const stream = fs.createReadStream(targetCleanPath, { start, end });
+          req.on('close', () => { if (!stream.destroyed) stream.destroy(); });
+          stream.pipe(res);
+          return;
+        }
+
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Content-Length', stats.size.toString());
+        const stream = fs.createReadStream(targetCleanPath);
+        req.on('close', () => { if (!stream.destroyed) stream.destroy(); });
+        stream.pipe(res);
+        return;
+      }
+    }
+  }
+
   // Resolve storage key, prioritizing the new DB.1 storage_path columns
   let baseStorageKey = clip.storage_path || clip?.metadata?.video_storage_key || extractStorageKey(videoUrl) || '';
   if (baseStorageKey.startsWith('clips/')) baseStorageKey = baseStorageKey.slice('clips/'.length);
@@ -1130,19 +1199,82 @@ async function handleCustomClipExport(
     cropOffset: params.cropOffset,
     aspectRatio: params.aspectRatio,
     captionStyle: params.captionStyle,
+    captions: params.captions,
     hasCustomWords: Boolean(params.words?.length),
   });
-
-  const videoUrl = clip.storage_path || clip.video_url || '';
-  let localVideo = resolveLocalClipPath(videoUrl, clip.job_id, false);
-  if (!localVideo || !fs.existsSync(localVideo)) {
-    localVideo = resolveLocalClipPath(videoUrl, clip.job_id, true);
-  }
 
   const exportDir = path.join(process.cwd(), 'temp', 'exports');
   if (!fs.existsSync(exportDir)) fs.mkdirSync(exportDir, { recursive: true });
 
   let cleanupDownloadedFile: string | null = null;
+  const videoUrl = clip.storage_path || clip.video_url || '';
+
+  // 1. Try local clean clip first
+  let localVideo = resolveLocalClipPath(videoUrl, clip.job_id, false);
+
+  // 2. If no local clean clip, try clean storage key
+  if (!localVideo || !fs.existsSync(localVideo)) {
+    let cleanKey = clip.metadata?.video_clean_storage_key || '';
+    if (cleanKey.startsWith('clips/')) cleanKey = cleanKey.slice('clips/'.length);
+    if (cleanKey) {
+      const tempCleanPath = path.join(exportDir, `base-clean-${clipId}-${Date.now()}.mp4`);
+      const streamResult = await storageService.getFileStream(cleanKey);
+      if (streamResult) {
+        await new Promise<void>((resolve, reject) => {
+          const ws = fs.createWriteStream(tempCleanPath);
+          streamResult.stream.pipe(ws);
+          ws.on('finish', resolve);
+          ws.on('error', reject);
+        });
+        localVideo = tempCleanPath;
+        cleanupDownloadedFile = tempCleanPath;
+      }
+    }
+  }
+
+  // 3. If still no clean video, check if source video exists to cut clean clip on the fly
+  if (!localVideo || !fs.existsSync(localVideo)) {
+    const clipStart = typeof clip.start_time === 'number' ? clip.start_time : (clip.startTime || 0);
+    const clipEnd = typeof clip.end_time === 'number' ? clip.end_time : (clip.endTime || 60);
+    const candidateSourcePaths = [
+      path.join(process.cwd(), 'temp', 'jobs', clip.job_id || '', 'video.mp4'),
+      path.join(process.cwd(), 'temp', clip.job_id || '', 'video.mp4'),
+    ];
+    try {
+      const cacheDir = path.join(process.cwd(), 'temp', 'cache');
+      if (fs.existsSync(cacheDir)) {
+        for (const d of fs.readdirSync(cacheDir)) {
+          candidateSourcePaths.push(path.join(cacheDir, d, 'input.mp4'));
+        }
+      }
+    } catch {}
+
+    const sourceVideoPath = candidateSourcePaths.find(p => fs.existsSync(p));
+    if (sourceVideoPath) {
+      console.log(`[VideoRoute]: Found source video at ${sourceVideoPath}, cutting clean clip for export.`);
+      const tempCleanPath = path.join(exportDir, `rendered-clean-${clipId}-${Date.now()}.mp4`);
+      try {
+        await videoProcessor.processClip(
+          sourceVideoPath,
+          tempCleanPath,
+          clipStart,
+          clipEnd - clipStart,
+          clip.metadata?.nexus?.crop_plan || clip.metadata?.crop_plan,
+          undefined
+        );
+        localVideo = tempCleanPath;
+        cleanupDownloadedFile = tempCleanPath;
+      } catch (genCleanErr: any) {
+        console.warn(`[VideoRoute]: Generating clean clip from source failed:`, genCleanErr.message);
+      }
+    }
+  }
+
+  // 4. Fallback to captioned local clip or captioned storage key
+  if (!localVideo || !fs.existsSync(localVideo)) {
+    localVideo = resolveLocalClipPath(videoUrl, clip.job_id, true);
+  }
+
   if (!localVideo || !fs.existsSync(localVideo)) {
     let storageKey = clip.storage_path || clip?.metadata?.video_storage_key || extractStorageKey(videoUrl) || '';
     if (storageKey.startsWith('clips/')) storageKey = storageKey.slice('clips/'.length);
@@ -1170,11 +1302,30 @@ async function handleCustomClipExport(
 
   const clipStart = typeof clip.start_time === 'number' ? clip.start_time : (clip.startTime || 0);
   const clipEnd = typeof clip.end_time === 'number' ? clip.end_time : (clip.endTime || 60);
+  const clipDuration = Math.max(0.5, clipEnd - clipStart);
 
-  const absTrimIn = params.trimIn !== undefined ? params.trimIn : clipStart;
-  const absTrimOut = params.trimOut !== undefined ? params.trimOut : clipEnd;
-  const relStart = Math.max(0, absTrimIn - clipStart);
-  const relEnd = Math.max(relStart + 0.5, absTrimOut - clipStart);
+  let relStart = 0;
+  if (typeof params.trimIn === 'number') {
+    if (params.trimIn >= Math.max(1, clipStart - 1)) {
+      relStart = Math.max(0, params.trimIn - clipStart);
+    } else {
+      relStart = Math.max(0, params.trimIn);
+    }
+  }
+
+  let relEnd = clipDuration;
+  if (typeof params.trimOut === 'number') {
+    if (params.trimOut > Math.max(1, clipStart + 0.5)) {
+      relEnd = Math.min(clipDuration, Math.max(relStart + 0.5, params.trimOut - clipStart));
+    } else {
+      relEnd = Math.min(clipDuration, Math.max(relStart + 0.5, params.trimOut));
+    }
+  }
+
+  if (relEnd <= relStart) {
+    relEnd = clipDuration;
+    relStart = 0;
+  }
 
   const exportId = `${clipId}-${Date.now()}`;
   const outPath = path.join(exportDir, `export-${exportId}.mp4`);
@@ -1184,17 +1335,22 @@ async function handleCustomClipExport(
   if (params.captions !== false) {
     const rawWords = (params.words && params.words.length > 0) ? params.words : (clip.metadata?.words || []);
     if (rawWords.length > 0) {
+      const firstWordStart = typeof rawWords[0].start === 'number' ? rawWords[0].start : 0;
+      const isWordsAbsolute = firstWordStart >= Math.max(1, clipStart - 1);
+
       const relativeWords = rawWords
         .map((w: any) => {
-          const wStart = typeof w.start === 'number' ? w.start : 0;
-          const wEnd = typeof w.end === 'number' ? w.end : (wStart + 0.3);
+          const rawStart = typeof w.start === 'number' ? w.start : 0;
+          const rawEnd = typeof w.end === 'number' ? w.end : (rawStart + 0.3);
+          const baseStart = isWordsAbsolute ? rawStart - clipStart : rawStart;
+          const baseEnd = isWordsAbsolute ? rawEnd - clipStart : rawEnd;
           return {
             ...w,
-            start: Math.max(0, Number((wStart - absTrimIn).toFixed(3))),
-            end: Math.max(0.05, Number((wEnd - absTrimIn).toFixed(3))),
+            start: Math.max(0, Number((baseStart - relStart).toFixed(3))),
+            end: Math.max(0.05, Number((baseEnd - relStart).toFixed(3))),
           };
         })
-        .filter((w: any) => w.end > 0 && w.start < (absTrimOut - absTrimIn + 0.5));
+        .filter((w: any) => w.end > 0 && w.start < (relEnd - relStart + 0.5));
 
       if (relativeWords.length > 0) {
         captionService.generateASS(relativeWords, assPath, params.captionStyle || 'hormozi');
@@ -1203,10 +1359,15 @@ async function handleCustomClipExport(
     }
   }
 
-  const relativeCuts = (params.cuts || []).map(cut => ({
-    start: Math.max(0, cut.start - absTrimIn),
-    end: Math.max(0, cut.end - absTrimIn),
-  })).filter(c => c.end > c.start);
+  const relativeCuts = (params.cuts || []).map(cut => {
+    const isCutAbsolute = cut.start >= Math.max(1, clipStart - 1);
+    const baseCutStart = isCutAbsolute ? cut.start - clipStart : cut.start;
+    const baseCutEnd = isCutAbsolute ? cut.end - clipStart : cut.end;
+    return {
+      start: Math.max(0, baseCutStart - relStart),
+      end: Math.max(0, baseCutEnd - relStart),
+    };
+  }).filter(c => c.end > c.start);
 
   try {
     await videoProcessor.exportCustomClip(localVideo, outPath, {
@@ -1285,7 +1446,8 @@ router.get('/download/:clipId', requireUserJWT, async (req: Request, res: Respon
     }
     const hasCustomWords = Array.isArray(parsedWords) && parsedWords.length > 0;
 
-    const isCustomExport = hasCustomTrim || hasCuts || hasCropOffset || hasCustomAspect || hasCaptionStyle || hasCustomWords;
+    const hasCaptionsParam = req.query.captions !== undefined && req.query.captions === '0';
+    const isCustomExport = hasCustomTrim || hasCuts || hasCropOffset || hasCustomAspect || hasCaptionStyle || hasCustomWords || hasCaptionsParam;
 
     if (isCustomExport) {
       await handleCustomClipExport(clipId, clip, {

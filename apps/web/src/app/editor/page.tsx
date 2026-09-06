@@ -7,7 +7,7 @@ import { EditorSidebar, ExportOptions } from '@/components/EditorSidebar';
 import { VideoPlayer } from '@/components/VideoPlayer';
 import { Timeline } from '@/components/Timeline';
 import { TranscriptView } from '@/components/TranscriptView';
-import { authFetch, downloadAuthenticatedClip, getClipPlayUrl } from '@/lib/api';
+import { authFetch, exportCustomClip, getClipPlayUrl } from '@/lib/api';
 import { AuthGate } from '@/components/AuthGate';
 import { Scissors, ArrowLeft, AlertCircle, Loader2 } from 'lucide-react';
 import Link from 'next/link';
@@ -18,34 +18,46 @@ interface ClipData {
   title: string;
   startTime: number;
   endTime: number;
-  words: any[];
+  words: Array<{ word: string; start: number; end: number }>;
   viralityScore?: number;
   intent?: string;
 }
 
-function EditorContent() {
+export default function ClipEditorPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-screen w-screen items-center justify-center bg-[#030712] text-white">
+          <Loader2 className="animate-spin text-primary" size={32} />
+        </div>
+      }
+    >
+      <AuthGate>
+        <ClipEditorContent />
+      </AuthGate>
+    </Suspense>
+  );
+}
+
+function ClipEditorContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
   const [videoData, setVideoData] = useState<ClipData | null>(null);
   const [isLoadingMeta, setIsLoadingMeta] = useState(false);
   const [metaError, setMetaError] = useState<string | null>(null);
-
-  // Player state
-  const [currentTime, setCurrentTime] = useState(0);
-  const [manualSeek, setManualSeek] = useState<number | null>(null);
-
-  // Editor feature toggles
-  const [captionsEnabled, setCaptionsEnabled] = useState(true);
-  const [faceCenteringEnabled, setFaceCenteringEnabled] = useState(true);
-  const [bRollEnabled, setBRollEnabled] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
 
-  // Studio Redesign states
-  const [aspectRatio, setAspectRatio] = useState<'9:16' | '1:1' | '16:9'>('9:16');
+  // Playback & tool state
+  const [currentTime, setCurrentTime] = useState(0);
+  const [manualSeek, setManualSeek] = useState<number | null>(null);
+  const [captionsEnabled, setCaptionsEnabled] = useState(true);
+  const [faceCenteringEnabled, setFaceCenteringEnabled] = useState(true);
+  const [bRollEnabled, setBRollEnabled] = useState(false);
   const [excludedWordIndices, setExcludedWordIndices] = useState<Set<number>>(new Set());
-  const [captionStyle, setCaptionStyle] = useState<string>('Submagic');
+  const [captionStyle, setCaptionStyle] = useState('Submagic');
+  const [aspectRatio, setAspectRatio] = useState<'9:16' | '1:1' | '16:9'>('9:16');
   const [cropOffset, setCropOffset] = useState<number>(0);
   const [thumbnailTime, setThumbnailTime] = useState<number | null>(null);
   const [thumbnailTitle, setThumbnailTitle] = useState<string>('');
@@ -98,9 +110,12 @@ function EditorContent() {
           end: isOffset ? Math.max(0, Number((w.end - clipStart).toFixed(3))) : Number(w.end.toFixed(3)),
         }));
 
+        // In studio editor, request clean video stream so interactive captions overlay cleanly
+        const cleanPlayUrl = playUrl.includes('?') ? `${playUrl}&captions=0` : `${playUrl}?captions=0`;
+
         setVideoData({
           id,
-          url: playUrl,
+          url: cleanPlayUrl,
           title: clip?.metadata?.title || title,
           startTime: 0,
           endTime: totalClipDuration,
@@ -167,21 +182,16 @@ function EditorContent() {
         });
       }
 
-      await downloadAuthenticatedClip(videoData.id, fileName, {
-        t: Date.now().toString(),
-        face_centering: faceCenteringEnabled ? '1' : '0',
-        b_roll: bRollEnabled ? '1' : '0',
-        captions: captionsEnabled ? '1' : '0',
-        aspect_ratio: opts.aspectRatio,
+      await exportCustomClip(videoData.id, fileName, {
+        trimIn,
+        trimOut,
+        cuts: cuts.length > 0 ? cuts : undefined,
+        cropOffset,
+        aspectRatio: opts.aspectRatio,
         quality: opts.quality,
-        trim_in: String(trimIn),
-        trim_out: String(trimOut),
-        cuts: cuts.length > 0 ? JSON.stringify(cuts) : '',
-        words: videoData.words?.length ? JSON.stringify(videoData.words) : '',
-        caption_style: captionStyle,
-        crop_offset: String(cropOffset),
-        thumbnail_time: thumbnailTime !== null ? String(thumbnailTime) : '',
-        thumbnail_title: thumbnailTitle,
+        captionStyle,
+        captions: captionsEnabled,
+        words: videoData.words,
       });
 
       setExportSuccess(true);
@@ -398,22 +408,5 @@ function EditorContent() {
         </div>
       </main>
     </div>
-  );
-}
-
-export default function EditorPage() {
-  return (
-    <AuthGate>
-      <Suspense
-        fallback={
-          <div className="h-screen w-screen bg-[#030712] flex items-center justify-center gap-3 text-white">
-            <Loader2 size={20} className="animate-spin text-primary" />
-            <span className="text-sm font-bold uppercase tracking-widest">Initializing Editor...</span>
-          </div>
-        }
-      >
-        <EditorContent />
-      </Suspense>
-    </AuthGate>
   );
 }

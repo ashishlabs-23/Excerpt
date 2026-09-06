@@ -191,16 +191,30 @@ async function processRenderJob(renderJob: any) {
         }
       }
 
-      console.log(`[RenderWorker]: Executing Single-Pass Render for clip ${clipId} (captions: ${hasCaptions})...`);
+      const cleanOutputPath = path.join(tempDir, `clip-${clipId}-clean.mp4`);
+      console.log(`[RenderWorker]: Executing Single-Pass Render for clean clip ${clipId}...`);
       const renderStart = Date.now();
       await processor.processClip(
         videoPath,
-        outputPath,
+        cleanOutputPath,
         clipStart,
         clipEnd - clipStart,
         cropPlan,
-        hasCaptions ? assFilePath : undefined
+        undefined
       );
+
+      if (hasCaptions) {
+        console.log(`[RenderWorker]: Burning ASS captions onto clip ${clipId}...`);
+        await processor.exportCustomClip(
+          cleanOutputPath,
+          outputPath,
+          {
+            subtitlePath: assFilePath,
+          }
+        );
+      } else {
+        fs.copyFileSync(cleanOutputPath, outputPath);
+      }
       cropMs = Date.now() - renderStart;
       captionMs = hasCaptions ? 1 : 0;
 
@@ -238,10 +252,12 @@ async function processRenderJob(renderJob: any) {
 
       const uploadStart = Date.now();
       const storageKey = `jobs/${renderJob.job_id}/${clipId}.mp4`;
+      const cleanStorageKey = `jobs/${renderJob.job_id}/${clipId}-clean.mp4`;
       const thumbStorageKey = `jobs/${renderJob.job_id}/${clipId}.jpg`;
 
-      const [videoUrl, thumbUrl] = await Promise.all([
+      const [videoUrl, cleanVideoUrl, thumbUrl] = await Promise.all([
         storage.uploadFile(outputPath, storageKey),
+        storage.uploadFile(cleanOutputPath, cleanStorageKey),
         storage.uploadFile(thumbnailPath, thumbStorageKey)
       ]);
       uploadMs = Date.now() - uploadStart;
@@ -256,6 +272,13 @@ async function processRenderJob(renderJob: any) {
             video_url: videoUrl,
             thumbnail_url: thumbUrl,
             status: 'uploaded',
+            metadata: {
+              ...(queue.clips[clipId].metadata || {}),
+              video_clean_storage_key: cleanStorageKey,
+              video_clean_url: cleanVideoUrl,
+              video_captioned_storage_key: storageKey,
+              video_captioned_url: videoUrl,
+            },
             updated_at: new Date().toISOString(),
           };
           firebaseDb.writeQueue(queue);
@@ -263,18 +286,28 @@ async function processRenderJob(renderJob: any) {
       } catch {}
 
       try {
+        const { data: existingClip } = await db.getSupabase().from('clips').select('metadata').eq('id', clipId).single();
+        const mergedMeta = {
+          ...(existingClip?.metadata || {}),
+          video_clean_storage_key: cleanStorageKey,
+          video_clean_url: cleanVideoUrl,
+          video_captioned_storage_key: storageKey,
+          video_captioned_url: videoUrl,
+        };
         const { data: updatedClipData, error: clipUpdateErr } = await db.getSupabase().from('clips').update({
           storage_path: storageKey,
           video_url: videoUrl,
           thumbnail_url: thumbUrl,
-          status: 'uploaded'
+          status: 'uploaded',
+          metadata: mergedMeta,
         }).eq('id', clipId).select();
 
         console.log(`[RenderWorker]: Clip DB Update Result for ${clipId}:`, {
           success: Boolean(updatedClipData && updatedClipData.length > 0),
           count: updatedClipData?.length || 0,
           error: clipUpdateErr?.message || null,
-          storageKey
+          storageKey,
+          cleanStorageKey,
         });
       } catch (dbErr: any) {
         console.warn(`[RenderWorker]: Clip Supabase update fallback:`, dbErr.message);

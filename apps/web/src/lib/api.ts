@@ -171,6 +171,52 @@ export async function downloadAuthenticatedClip(
   }, 5000);
 }
 
+export async function exportCustomClip(
+  clipId: string,
+  fileName: string,
+  payload: {
+    trimIn?: number;
+    trimOut?: number;
+    cuts?: Array<{ start: number; end: number }>;
+    cropOffset?: number;
+    aspectRatio?: '9:16' | '1:1' | '16:9';
+    quality?: 'high' | 'medium';
+    captionStyle?: string;
+    captions?: boolean;
+    words?: any[];
+  }
+): Promise<void> {
+  const response = await authFetch(`/api/video/export-clip/${clipId}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `Export failed (HTTP ${response.status})`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const blob = new Blob([arrayBuffer], { type: "video/mp4" });
+  const objectUrl = URL.createObjectURL(blob);
+
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = fileName;
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+
+  window.setTimeout(() => {
+    anchor.remove();
+    URL.revokeObjectURL(objectUrl);
+  }, 5000);
+}
+
 export type ApiResult<T> =
   | { success: true; data: T; error?: never }
   | { success: false; error: { statusCode: number; message: string }; data?: never };

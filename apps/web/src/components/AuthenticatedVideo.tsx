@@ -110,12 +110,12 @@ export const AuthenticatedVideo = forwardRef<HTMLVideoElement, AuthenticatedVide
           if (videoProps.onMouseOut) videoProps.onMouseOut(e);
         }}
         onPlay={async (e) => {
-          if (!src && !fetchingRef.current) {
-            e.currentTarget.pause();
-            await fetchPlayUrl();
-            e.currentTarget.play().catch(() => {});
-          }
           if (videoProps.onPlay) videoProps.onPlay(e);
+          if (!src && !fetchingRef.current) {
+            internalRef.current?.pause();
+            await fetchPlayUrl();
+            internalRef.current?.play().catch(() => {});
+          }
         }}
         onError={(e) => {
           if (fallbackSrc && src !== fallbackSrc) {
