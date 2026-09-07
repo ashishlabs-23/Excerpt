@@ -141,6 +141,13 @@ export const EXPERIMENTAL_FEATURES = {
   boundary_learning: process.env.ENABLE_BOUNDARY_LEARNING === 'true',
   football_intelligence: process.env.ENABLE_FOOTBALL_INTELLIGENCE === 'true',
   v3_engines: process.env.ENABLE_V3_ENGINES === 'true',
+  /**
+   * Phase E — Contextual B-Roll + Hook Card overlay.
+   * Gate: ENABLE_PHASE_E_BROLL=true (default off — non-breaking).
+   * Adds procedural motion-graphic B-roll clips and an editorial hook banner
+   * to the rendered clip output. Requires FFmpeg lavfi filters to be available.
+   */
+  phase_e_broll: process.env.ENABLE_PHASE_E_BROLL === 'true',
 } as const;
 
 /** Helper to check if the orchestrator should run. */

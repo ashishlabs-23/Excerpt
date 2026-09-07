@@ -139,8 +139,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return result;
   }, [words, excludedWordIndices]);
 
-  const activeWord = words.find(w => currentTime >= w.start && currentTime <= w.end);
-  const activePhrase = phrases.find(p => currentTime >= p.start && currentTime <= p.end);
+  const activePhrase = React.useMemo(() => {
+    return phrases.find(p => currentTime >= p.start && currentTime <= p.end);
+  }, [phrases, currentTime]);
+
+  const activeWord = React.useMemo(() => {
+    if (!activePhrase) return null;
+    const found = activePhrase.words.find((w, idx) => {
+      const nextW = activePhrase.words[idx + 1];
+      const wordEnd = nextW ? nextW.start : activePhrase.end;
+      return currentTime >= w.start && currentTime < wordEnd;
+    });
+    if (found) return found;
+    if (currentTime < activePhrase.words[0].start) return activePhrase.words[0];
+    return activePhrase.words[activePhrase.words.length - 1];
+  }, [activePhrase, currentTime]);
 
   // -- Time event listeners --
   useEffect(() => {
@@ -173,6 +186,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const onFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
 
     video.addEventListener('timeupdate', onTimeUpdateHandler);
+    video.addEventListener('seeked', onTimeUpdateHandler);
     video.addEventListener('loadedmetadata', onMeta);
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
@@ -180,6 +194,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     return () => {
       video.removeEventListener('timeupdate', onTimeUpdateHandler);
+      video.removeEventListener('seeked', onTimeUpdateHandler);
       video.removeEventListener('loadedmetadata', onMeta);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
@@ -187,7 +202,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [startTime, endTime, onLoadedMetadata, excludedIntervals]);
 
-  // High-precision (60fps) jump-cutting monitor to eliminate audio stutter on excluded words
+  // High-precision (60fps) caption sync & jump-cutting monitor
   useEffect(() => {
     if (!isPlaying) return;
     let animId: number;
@@ -196,6 +211,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       const video = videoRef.current;
       if (video && !video.paused) {
         const time = video.currentTime;
+        setCurrentTime(time);
+
         // Check if current time falls within any excluded interval
         const activeExclude = excludedIntervals.find(interval => time >= interval.start && time < interval.end);
         if (activeExclude) {

@@ -29,13 +29,25 @@
 
 The development has matured from a Python-scripted prototype into a highly reliable, distributed micro-worker architecture.
 
-### 🛑 CURRENT PHASE: Evidence-Driven Quality Optimization
-We have officially completed the infrastructure hardening phase and transitioned into **Clip Quality Optimization**. All future changes to the AI pipeline must be proven via the automated benchmark suite.
-1. **Modular Evaluation Pipeline**: Quality is graded across 5 distinct axes: Boundaries, Subtitles, Render Plans, Ranking Reasoning, and Diversity.
-2. **Strict Subtitle QA**: Subtitles are penalized for character overflows, high reading speed (CPS), overlapping dialogue, and orphan words.
-3. **Immutable Benchmarks**: All benchmark runs are saved to `benchmark-results/production/YYYY-MM-DD/` with git commit hashes and exact dataset hashes.
-4. **A/B Promotion Gate**: Experimental pipelines are evaluated against baselines via `ab-evaluator.ts`. Pipelines are only promoted if they increase overall score by >1.0% without degrading any individual component by >2.0%.
-5. **Append-Only Arena**: Human feedback is collected immutably via `human_arena` and `human_reviews` tables for future RLHF training.
+### 🛑 CURRENT PHASE: Phase D (Captions + Audio) Completed
+We have officially completed **Phase D (Captions + Audio)**.
+
+#### 🎯 Compact Production Roadmap & Priority Tiers:
+* **P0 (Completed)**:
+  - **Phase A ✅**: Editorial Intelligence (Hook + Payoff + Coherence)
+  - **Phase B ✅**: Real-Video Editorial Benchmark & Human Preference
+  - **Phase C ✅**: Contextual Director + Adaptive Framing
+  - **Phase C Acceptance ✅**: Rendered A/B Validation (100% decisive wins on active framing, 0 regressions)
+* **P1**:
+  - **Phase D ✅**: Captions + Audio (Word-by-word kinetic captions, EBU R128 loudness normalization, 50ms anti-pop fades, highpass 80Hz rumble filter)
+  - **Phase E ⏸**: B-Roll + Visual Augmentation (Content-aware overlays, contextual cutaways) [NEXT]
+* **P2**:
+  - **Phase F**: Performance Prediction (Lightweight composite scoring across Editorial + Acoustic + Visual Quality)
+* **Permanently Removed**:
+  - **Phase G / RLHF / Reward Models**: Removed to eliminate ML retraining infrastructure debt, feedback-data contamination, and operational overhead. Future learning belongs in separate R&D tracks outside the core production pipeline.
+
+**Core Production Objective**:
+> *"Given a video, identify the best moment, edit it intelligently, frame it well, render it reliably, and deliver a playable high-quality clip."*
 
 ### 🔒 NON-NEGOTIABLE ARCHITECTURAL INVARIANTS (PERMANENT):
 1. **TalkNet Active Speaker MAR Lip Motion Weighting (`unified_crop_planner.py`)**:

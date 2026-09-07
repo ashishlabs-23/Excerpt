@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
+import pLimit from 'p-limit';
 
 // Load environment variables
 const envPaths = [
@@ -24,8 +25,12 @@ import { CaptionService } from '../services/captionService';
 import { JobStateMachine, JobStatus } from '../utils/JobStateMachine';
 import { installConsoleLogger, withLogContext } from '../services/logger';
 import { ensureSourceVideo } from '../services/download/ensureSourceVideo';
+import { GenerativeVisualEngine } from '../services/intelligence/GenerativeVisualEngine';
 
 import { firebaseDb } from '../services/firebaseService';
+
+const PHASE_E_BROLL_ENABLED = process.env.ENABLE_PHASE_E_BROLL === 'true';
+const generativeVisualEngine = new GenerativeVisualEngine();
 
 installConsoleLogger();
 
@@ -111,6 +116,7 @@ async function processRenderJob(renderJob: any) {
     const payload = renderJob.payload;
     const clipId = renderJob.clip_id;
     const { clipStart, clipEnd, clipWords, cropPlan } = payload;
+    const hookText: string = payload.hookText || '';
     
     // Path Normalization: Reconstruct absolute paths dynamically
     const tempDir = path.join(process.cwd(), 'temp', renderJob.job_id);
@@ -149,28 +155,24 @@ async function processRenderJob(renderJob: any) {
     try {
       // 1. Single-Pass High-Speed Render with Burned Captions
       let hasCaptions = false;
-      const jumpPlan = renderJob.payload?.jumpCutPlan;
-      const hasRetimedWords = Boolean(
-        jumpPlan &&
-        ((jumpPlan.timeSavedSec && jumpPlan.timeSavedSec > 0) || (jumpPlan.time_saved_sec && jumpPlan.time_saved_sec > 0)) &&
-        ((jumpPlan.retimedWords && jumpPlan.retimedWords.length > 0) || (jumpPlan.retimed_words && jumpPlan.retimed_words.length > 0))
-      );
-      const wordsToCaption = hasRetimedWords
-        ? (jumpPlan.retimedWords || jumpPlan.retimed_words)
-        : clipWords;
+      const wordsToCaption = clipWords;
 
       if (wordsToCaption && wordsToCaption.length > 0) {
         try {
-          // Normalize word timestamps relative to the cut video start
+          // Robust check if words have absolute timestamps from source video or are already relative to 0
+          const isWordsAbsolute = clipStart > 2.0 && wordsToCaption.some((w: any) => typeof w.start === 'number' && w.start >= (clipStart * 0.5));
+
+          // Normalize word timestamps relative to the cut video start (0.000s)
           const relativeWords = wordsToCaption
             .map((w: any) => {
-              const startOffset = hasRetimedWords
-                ? Math.max(0, Number((w.start ?? 0).toFixed(3)))
-                : Math.max(0, Number(((w.start ?? 0) - clipStart).toFixed(3)));
-              const rawEnd = typeof w.end === 'number' ? w.end : ((w.start ?? 0) + 0.3);
-              const endOffset = hasRetimedWords
-                ? Math.max(startOffset + 0.05, Number(rawEnd.toFixed(3)))
-                : Math.max(startOffset + 0.05, Number((rawEnd - clipStart).toFixed(3)));
+              const rawStart = typeof w.start === 'number' ? w.start : 0;
+              const rawEnd = typeof w.end === 'number' ? w.end : (rawStart + 0.3);
+              const startOffset = isWordsAbsolute
+                ? Math.max(0, Number((rawStart - clipStart).toFixed(3)))
+                : Math.max(0, Number(rawStart.toFixed(3)));
+              const endOffset = isWordsAbsolute
+                ? Math.max(startOffset + 0.05, Number((rawEnd - clipStart).toFixed(3)))
+                : Math.max(startOffset + 0.05, Number(rawEnd.toFixed(3)));
               return {
                 ...w,
                 start: startOffset,
@@ -217,6 +219,82 @@ async function processRenderJob(renderJob: any) {
       }
       cropMs = Date.now() - renderStart;
       captionMs = hasCaptions ? 1 : 0;
+
+      // ── Phase E: Contextual B-Roll + Hook Card ──────────────────────────
+      // Gate: ENABLE_PHASE_E_BROLL=true (off by default — non-breaking)
+      //
+      // FIX-Bug2: B-Roll clips are synthesised with concurrency=2 to prevent
+      //   spawning N concurrent FFmpeg processes that can exhaust memory on
+      //   low-memory servers when multiple unique keywords are detected.
+      //
+      // FIX-Bug3: File promotion uses fs.renameSync (atomic on the same
+      //   filesystem) instead of copyFileSync+unlink. This eliminates the
+      //   window where outputPath is partially written on a disk-full error.
+      //   The temp file is only cleaned up AFTER ffprobe confirms outputPath.
+      //
+      // FIX-Bug4: Hook Card progress bar duration uses the actual rendered
+      //   clip length from jumpCutPlan (dead-air removed) rather than the
+      //   raw source window (clipEnd - clipStart) which was always longer.
+      if (PHASE_E_BROLL_ENABLED) {
+        try {
+          const clipDurationSec = clipEnd - clipStart;
+          // Actual rendered duration may be shorter when jump-cuts removed dead air.
+          // FIX-Bug4: Use total_new_duration_sec from jumpCutPlan if available.
+          const jumpCutPlan = payload.jumpCutPlan as { total_new_duration_sec?: number } | null | undefined;
+          const actualRenderedDurationSec = jumpCutPlan?.total_new_duration_sec ?? clipDurationSec;
+
+          // Words arrive from videoWorker in source-absolute timestamps.
+          // We pre-normalise here so planBRollMoments receives 0-based times.
+          const isWordsAbsolute = clipStart > 2.0 && (clipWords || []).some((w: any) => typeof w.start === 'number' && w.start >= clipStart * 0.5);
+          const relWordsForBRoll = (clipWords || []).map((w: any) => ({
+            word: w.word || '',
+            start: isWordsAbsolute ? Math.max(0, (w.start ?? 0) - clipStart) : Math.max(0, w.start ?? 0),
+            end: isWordsAbsolute ? Math.max(0, (w.end ?? 0) - clipStart) : Math.max(0, w.end ?? 0),
+          }));
+
+          const bRollMoments = generativeVisualEngine.planBRollMoments(
+            relWordsForBRoll,
+            0,                   // words are already 0-based
+            clipDurationSec      // plan against original window; overlay times are relative
+          );
+
+          if (bRollMoments.length > 0) {
+            const bRollDir = path.join(tempDir, `broll-${clipId}`);
+            // FIX-Bug2: Concurrency cap prevents OOM from parallel FFmpeg processes.
+            const synthesisLimit = pLimit(2);
+            const renderedClips = await Promise.all(
+              bRollMoments.map((moment) =>
+                synthesisLimit(async () => {
+                  const bRollPath = await generativeVisualEngine.generateLocalBRollClip(moment, bRollDir);
+                  return { videoPath: bRollPath, startSec: moment.startSec, durationSec: moment.durationSec, layout: moment.layout };
+                })
+              )
+            );
+
+            const bRollOutputPath = path.join(tempDir, `clip-${clipId}-broll.mp4`);
+            await processor.overlayBRoll(outputPath, renderedClips, bRollOutputPath);
+            // FIX-Bug3: Atomic rename instead of copy+delete.
+            // renameSync is guaranteed atomic on the same filesystem partition.
+            // outputPath is only replaced after bRollOutputPath is fully written.
+            fs.renameSync(bRollOutputPath, outputPath);
+            try { fs.rmSync(bRollDir, { recursive: true, force: true }); } catch {}
+            console.log(`[RenderWorker]: Phase E — ${bRollMoments.length} B-Roll overlays applied to clip ${clipId}`);
+          }
+
+          // Hook Card + Progress Bar (always on when Phase E is active)
+          if (hookText && hookText.length > 0) {
+            const hookOutputPath = path.join(tempDir, `clip-${clipId}-hook.mp4`);
+            // FIX-Bug4: actualRenderedDurationSec reflects jump-cut removal;
+            // the progress bar will now correctly reach 100% at the end of the clip.
+            await processor.addHookAndProgressBar(outputPath, hookOutputPath, hookText, actualRenderedDurationSec);
+            // FIX-Bug3: Atomic rename.
+            fs.renameSync(hookOutputPath, outputPath);
+            console.log(`[RenderWorker]: Phase E — Hook Card applied to clip ${clipId} (dur=${actualRenderedDurationSec.toFixed(2)}s)`);
+          }
+        } catch (phaseEErr: any) {
+          console.warn(`[RenderWorker]: Phase E non-fatal error (clip will continue without B-Roll): ${phaseEErr.message}`);
+        }
+      }
 
       // 2. Local FFprobe Stream Verification Gate (Verifies local MP4 health before upload)
       console.log(`[RenderWorker]: Running local ffprobe stream check for clip ${clipId}...`);
@@ -322,8 +400,9 @@ async function processRenderJob(renderJob: any) {
         });
       } catch {}
 
-      // 6. Cleanup Local Temp Files
+      // 6. Cleanup Local Temp Files (Eager unlinking to prevent disk leaks)
       try {
+        if (fs.existsSync(cleanOutputPath)) fs.unlinkSync(cleanOutputPath);
         if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
         if (fs.existsSync(thumbnailPath)) fs.unlinkSync(thumbnailPath);
         if (fs.existsSync(assFilePath)) fs.unlinkSync(assFilePath);

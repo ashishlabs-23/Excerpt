@@ -10,12 +10,19 @@ export type AuthenticatedVideoProps = React.VideoHTMLAttributes<HTMLVideoElement
   eager?: boolean;
 };
 
+function isValidDirectUrl(url?: string): boolean {
+  if (!url) return false;
+  return /^https?:\/\//i.test(url);
+}
+
 export const AuthenticatedVideo = forwardRef<HTMLVideoElement, AuthenticatedVideoProps>(
   function AuthenticatedVideo({ clipId, fallbackSrc, eager = false, ...videoProps }, ref) {
     const internalRef = useRef<HTMLVideoElement | null>(null);
-    const [src, setSrc] = useState<string | null>(null);
+    // Prioritize direct cloud/B2/S3 signed URL immediately for 0ms latency & native CDN streaming
+    const directUrl = isValidDirectUrl(fallbackSrc) ? fallbackSrc! : null;
+    const [src, setSrc] = useState<string | null>(directUrl);
     const [error, setError] = useState(false);
-    const [isLoading, setIsLoading] = useState(eager);
+    const [isLoading, setIsLoading] = useState(!directUrl && eager);
     const isHoveredRef = useRef(false);
     const fetchingRef = useRef(false);
 
@@ -58,11 +65,18 @@ export const AuthenticatedVideo = forwardRef<HTMLVideoElement, AuthenticatedVide
     };
 
     useEffect(() => {
+      // If direct URL is present, use it directly (matching Voiceover Studio speed)
+      if (isValidDirectUrl(fallbackSrc)) {
+        setSrc(fallbackSrc!);
+        setError(false);
+        setIsLoading(false);
+        return;
+      }
       if (!clipId) {
         if (fallbackSrc) setSrc(fallbackSrc);
         return;
       }
-      if (eager) {
+      if (eager && !src) {
         fetchPlayUrl();
       }
     }, [clipId, fallbackSrc, eager]);
@@ -73,7 +87,7 @@ export const AuthenticatedVideo = forwardRef<HTMLVideoElement, AuthenticatedVide
         const video = internalRef.current;
         const playPromise = video.play();
         if (playPromise !== undefined) {
-          playPromise.catch((err) => {
+          playPromise.catch(() => {
             // Autoplay without user interaction was blocked, switch to muted autoplay
             video.muted = true;
             video.play().catch(() => {});
@@ -134,6 +148,12 @@ export const AuthenticatedVideo = forwardRef<HTMLVideoElement, AuthenticatedVide
           }
         }}
         onError={(e) => {
+          // If direct URL failed (e.g. expired signed URL), fall back to fetching fresh play token URL
+          if (clipId && src === fallbackSrc && !fetchingRef.current) {
+            console.warn('[AuthenticatedVideo] Direct signed URL failed, requesting fresh stream token for', clipId);
+            fetchPlayUrl();
+            return;
+          }
           if (fallbackSrc && src !== fallbackSrc) {
             setSrc(fallbackSrc);
             setError(false);

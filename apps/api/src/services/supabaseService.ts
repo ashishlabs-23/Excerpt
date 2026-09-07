@@ -148,7 +148,17 @@ export class DatabaseService {
 
     // 2. Try Supabase
     try {
-      const clipsWithTime = clips.map(c => ({...c, created_at: new Date().toISOString()}));
+      const now = new Date();
+      const defaultExpires = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+      const clipsWithTime = clips.map(c => {
+        const createdAt = c.created_at || now.toISOString();
+        const expiresAt = c.expires_at || new Date(new Date(createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString();
+        return {
+          ...c,
+          created_at: createdAt,
+          expires_at: expiresAt,
+        };
+      });
       const { data, error } = await this.db
         .from('clips')
         .upsert(clipsWithTime, { onConflict: 'id' });
@@ -312,17 +322,23 @@ export class DatabaseService {
     const devModeBypass = process.env.DISABLE_OWNERSHIP_CHECKS === 'true';
     const workerEnv = process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development');
 
+    const nowIso = new Date().toISOString();
+    const cutoff24hIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const expiryFilter = `expires_at.gt.${nowIso},and(expires_at.is.null,created_at.gt.${cutoff24hIso})`;
+
     if (devModeBypass) {
       let { data: clips, error } = await this.db
         .from('clips')
         .select('*, jobs(user_id, video_url)')
         .eq('environment', workerEnv)
+        .or(expiryFilter)
         .order('created_at', { ascending: false })
         .limit(limit);
       if (error && (this.isMissingColumnError(error, 'environment') || error.message?.includes('environment'))) {
         const fallback = await this.db
           .from('clips')
           .select('*, jobs(user_id, video_url)')
+          .or(expiryFilter)
           .order('created_at', { ascending: false })
           .limit(limit);
         clips = fallback.data;
@@ -345,6 +361,7 @@ export class DatabaseService {
       .select('*, jobs(user_id, video_url)')
       .eq('environment', workerEnv)
       .in('job_id', jobIds)
+      .or(expiryFilter)
       .order('created_at', { ascending: false })
       .limit(limit);
     if (error && (this.isMissingColumnError(error, 'environment') || error.message?.includes('environment'))) {
@@ -352,6 +369,7 @@ export class DatabaseService {
         .from('clips')
         .select('*, jobs(user_id, video_url)')
         .in('job_id', jobIds)
+        .or(expiryFilter)
         .order('created_at', { ascending: false })
         .limit(limit);
       clips = fallback.data;
@@ -503,6 +521,14 @@ export class DatabaseService {
   }
 
   async getNextQueuedJob(workerEnv: string) {
+    // 0. Pre-flight node capacity check (Disk & Memory gate)
+    const { QueueHealthGate } = require('./QueueHealthGate');
+    const capacity = QueueHealthGate.checkCapacity();
+    if (!capacity.allowed) {
+      console.warn(`[Supabase Queue]: Throttling job claim — ${capacity.reason}`);
+      return null;
+    }
+
     // 1. Try Firebase / Local Queue first
     try {
       const fbJob = await firebaseDb.getNextQueuedJob();
@@ -860,72 +886,19 @@ export class DatabaseService {
   }
 
   /**
-   * Automatically purges clips older than retention hours (default: 24h) from Supabase
-   * and cloud storage to enforce daily retention and free up storage.
+   * Automatically purges clips older than retention hours (default: 24h) from Supabase,
+   * cloud storage (B2/S3), and the active queue via canonical RetentionService.
    */
   async purgeOldClips(retentionHours = 24): Promise<{ deletedCount: number; keysRemoved: string[] }> {
-    const cutoffDate = new Date(Date.now() - retentionHours * 60 * 60 * 1000).toISOString();
-    console.log(`[Supabase Purge]: Checking for clips older than ${retentionHours}h (created before ${cutoffDate})...`);
-
     try {
-      // Find old clips
-      const { data: expiredClips, error: fetchErr } = await this.db
-        .from('clips')
-        .select('id, storage_path, thumbnail_url')
-        .lt('created_at', cutoffDate);
-
-      if (fetchErr) {
-        console.warn(`[Supabase Purge]: Could not fetch expired clips:`, fetchErr.message);
-        return { deletedCount: 0, keysRemoved: [] };
-      }
-
-      if (!expiredClips || expiredClips.length === 0) {
-        return { deletedCount: 0, keysRemoved: [] };
-      }
-
-      const clipIds = expiredClips.map((c: any) => c.id);
-      const keysToRemove: string[] = [];
-      for (const c of expiredClips) {
-        if (c.storage_path) keysToRemove.push(c.storage_path);
-      }
-
-      // Delete files from storage
-      if (keysToRemove.length > 0) {
-        try {
-          const { storageService } = require('./storageService');
-          await storageService.deleteObjects(keysToRemove);
-        } catch (storageErr: any) {
-          console.warn(`[Supabase Purge]: Storage deletion warning:`, storageErr.message);
-        }
-      }
-
-      // Delete rows from Supabase
-      const { error: deleteErr } = await this.db
-        .from('clips')
-        .delete()
-        .in('id', clipIds);
-
-      if (deleteErr) {
-        console.warn(`[Supabase Purge]: Database deletion warning:`, deleteErr.message);
-      }
-
-      // Also clean up local active queue representation
-      try {
-        const queue = firebaseDb.readQueue();
-        let changed = false;
-        for (const id of clipIds) {
-          if (queue.clips && queue.clips[id]) {
-            delete queue.clips[id];
-            changed = true;
-          }
-        }
-        if (changed) firebaseDb.writeQueue(queue);
-      } catch {}
-
-      console.log(`[Supabase Purge]: Purged ${clipIds.length} expired clip(s) older than ${retentionHours}h.`);
-      return { deletedCount: clipIds.length, keysRemoved: keysToRemove };
+      const { RetentionService } = require('./RetentionService');
+      const telemetry = await RetentionService.getInstance().run();
+      return {
+        deletedCount: telemetry.deleted,
+        keysRemoved: telemetry.keysRemoved,
+      };
     } catch (err: any) {
-      console.error(`[Supabase Purge]: Error during daily clip purge:`, err.message);
+      console.error(`[Supabase Purge]: Error during clip purge:`, err.message);
       return { deletedCount: 0, keysRemoved: [] };
     }
   }

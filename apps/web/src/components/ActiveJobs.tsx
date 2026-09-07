@@ -173,9 +173,6 @@ export const ActiveJobs: React.FC<{ onJobSelect?: (job: any) => void }> = ({ onJ
     }
   };
 
-  if (isInitialLoad && jobs.length === 0) return null;
-  if (!isInitialLoad && jobs.length === 0) return null;
-
   return (
     <div className="mb-12 relative group/carousel">
       {/* Header section without top arrows */}
@@ -184,8 +181,22 @@ export const ActiveJobs: React.FC<{ onJobSelect?: (job: any) => void }> = ({ onJ
         <div className="w-16 h-px bg-gradient-to-r from-primary/40 to-transparent" />
       </div>
 
-      {/* Slide Container and Arrow Overlays */}
-      <div className="relative w-full">
+      {isInitialLoad && jobs.length === 0 ? (
+        <div className="h-36 rounded-[24px] border border-white/5 bg-white/[0.01] flex items-center justify-center">
+          <div className="flex items-center gap-3 text-white/40 text-xs font-mono">
+            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+            <span>Loading projects...</span>
+          </div>
+        </div>
+      ) : jobs.length === 0 ? (
+        <div className="h-36 rounded-[24px] border border-dashed border-white/10 bg-white/[0.01] flex flex-col items-center justify-center gap-2 p-6 text-center">
+          <Film className="w-6 h-6 text-white/20" />
+          <p className="text-sm font-bold text-white/50">No video projects yet</p>
+          <p className="text-xs text-white/30 max-w-sm">Submit a YouTube link or upload a video in the creator studio above to generate your first AI clips.</p>
+        </div>
+      ) : (
+        /* Slide Container and Arrow Overlays */
+        <div className="relative w-full">
         {/* Left sliding side-arrow overlay */}
         {showLeftArrow && (
           <button
@@ -386,6 +397,7 @@ export const ActiveJobs: React.FC<{ onJobSelect?: (job: any) => void }> = ({ onJ
           </AnimatePresence>
         </div>
       </div>
+      )}
     </div>
   );
 };

@@ -56,6 +56,20 @@ const upload = multer({
   }
 });
 
+function isClipExpired(c: any): boolean {
+  if (!c) return false;
+  const now = Date.now();
+  const exp = c.expires_at || c.expiresAt;
+  if (exp) {
+    return new Date(exp).getTime() <= now;
+  }
+  const created = c.created_at || c.createdAt;
+  if (created) {
+    return (now - new Date(created).getTime()) >= 24 * 60 * 60 * 1000;
+  }
+  return false;
+}
+
 function sanitizeDownloadFileName(value: string) {
   const normalized = value
     .replace(/[^a-z0-9]+/gi, '-')
@@ -417,6 +431,19 @@ async function streamClipResponse(
   
   // Try direct storage service stream first (handles local cache, S3/B2, and Firebase with HTTP 206 range support)
   if (storageKey) {
+    // For inline playback, redirect directly to the fresh CDN / Backblaze B2 signed URL
+    // Eliminates proxy hops, single-threaded Node buffering, and provides instant zero-latency playback
+    if (options.inline) {
+      try {
+        const freshSignedUrl = await storageService.createSignedUrl(storageKey);
+        if (freshSignedUrl && /^https?:\/\//i.test(freshSignedUrl)) {
+          return res.redirect(302, freshSignedUrl);
+        }
+      } catch (redirectErr: any) {
+        console.warn(`[VideoRoute]: Direct signed redirect failed, falling back to proxy stream:`, redirectErr?.message);
+      }
+    }
+
     const rangeHeader = req.headers.range as string | undefined;
     const fileResult = await storageService.getFileStream(storageKey, rangeHeader);
     if (fileResult) {
@@ -572,6 +599,32 @@ async function streamClipResponse(
 
   proxyStream.pipe(res);
 }
+
+/**
+ * @route   POST /api/video/presigned-upload-url
+ * @desc    Get an S3/B2 Presigned PUT URL to upload source videos directly to cloud storage,
+ *          eliminating large local disk footprints and server memory buffering.
+ */
+router.post('/presigned-upload-url', requireUserJWT, jobSubmissionRateLimit, async (req: Request, res: Response) => {
+  try {
+    const filename = (req.body.filename as string) || 'source.mp4';
+    const contentType = (req.body.contentType as string) || 'video/mp4';
+    const sanitized = sanitizeDownloadFileName(path.parse(filename).name);
+    const ext = path.extname(filename) || '.mp4';
+    const storageKey = `uploads/${req.user.id}/${Date.now()}-${sanitized}${ext}`;
+
+    const presigned = await storageService.getPresignedUploadUrl(storageKey, contentType, 3600);
+    return res.status(200).json({
+      uploadUrl: presigned.uploadUrl,
+      key: presigned.key,
+      publicUrl: presigned.publicUrl,
+      expiresInSeconds: 3600,
+    });
+  } catch (err: any) {
+    console.error('[VideoRoute]: Presigned upload URL generation failed:', err);
+    return res.status(500).json({ error: err.message || 'Failed to generate presigned upload URL' });
+  }
+});
 
 /**
  * @route   POST /api/video/upload
@@ -731,6 +784,7 @@ router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
           }
         } catch {}
         const finalClips = (clips && clips.length > 0) ? clips : (j.result || j.clips || []);
+        const unexpiredClips = finalClips.filter((c: any) => !isClipExpired(c));
         return {
           ...j,
           id: j.id,
@@ -739,8 +793,8 @@ router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
           num_clips: j.numClips || j.num_clips,
           created_at: j.createdAt || j.created_at,
           updated_at: j.updatedAt || j.updated_at,
-          clips: finalClips,
-          result: finalClips,
+          clips: unexpiredClips,
+          result: unexpiredClips,
         };
       }));
       return res.json(normalized);
@@ -905,8 +959,11 @@ router.get('/clips', requireUserJWT, async (req: Request, res: Response) => {
       } catch {}
     }
 
+    // Filter out clips that have expired under the 24-hour ephemeral policy
+    const validClips = allClips.filter(c => !isClipExpired(c));
+
     // Sign URLs and return
-    const signedClips = await signClips(allClips);
+    const signedClips = await signClips(validClips);
     return res.json(signedClips);
   } catch (error: any) {
     console.error('[VideoRoute]: /clips route failed:', error);
@@ -1090,12 +1147,19 @@ router.get('/clips', requireUserJWT, async (req: Request, res: Response) => {
  *          Hardened: Accept-Ranges, keep-alive, client-disconnect cleanup,
  *          nosniff, stream error boundaries.
  */
+
+/**
+ * Helper to fetch a clip from either Firebase active queue or Supabase,
+ * rejecting clips that have passed their 24-hour expiration.
+ */
 async function fetchClipAnywhere(clipId: string): Promise<any> {
+  let clip: any = null;
+
   // 1. Try Firebase / local queue
   try {
     const fbClip: any = await firebaseDb.getClip(clipId);
     if (fbClip) {
-      return {
+      clip = {
         ...fbClip,
         id: fbClip.id || clipId,
         job_id: fbClip.jobId || fbClip.job_id,
@@ -1106,13 +1170,20 @@ async function fetchClipAnywhere(clipId: string): Promise<any> {
   } catch {}
 
   // 2. Try Supabase
-  try {
-    const db = new DatabaseService();
-    const sbClip = await db.getClip(clipId);
-    if (sbClip) return sbClip;
-  } catch {}
+  if (!clip) {
+    try {
+      const db = new DatabaseService();
+      const sbClip = await db.getClip(clipId);
+      if (sbClip) clip = sbClip;
+    } catch {}
+  }
 
-  return null;
+  if (clip && isClipExpired(clip)) {
+    console.log(`[VideoRoute]: Clip ${clipId} accessed but is expired under 24h retention policy.`);
+    return null;
+  }
+
+  return clip;
 }
 
 router.post('/play-token/:clipId', requireUserJWT, async (req: Request, res: Response) => {
@@ -1363,8 +1434,7 @@ async function handleCustomClipExport(
   if (params.captions !== false) {
     const rawWords = (params.words && params.words.length > 0) ? params.words : (clip.metadata?.words || []);
     if (rawWords.length > 0) {
-      const firstWordStart = typeof rawWords[0].start === 'number' ? rawWords[0].start : 0;
-      const isWordsAbsolute = firstWordStart >= Math.max(1, clipStart - 1);
+      const isWordsAbsolute = clipStart > 2.0 && rawWords.some((w: any) => typeof w.start === 'number' && w.start >= (clipStart * 0.5));
 
       const relativeWords = rawWords
         .map((w: any) => {

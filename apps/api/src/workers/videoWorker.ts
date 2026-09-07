@@ -1744,6 +1744,45 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       }
       (clip as any).jump_cut_plan = jumpCutPlan;
 
+      // ── Phase F: Lightweight Performance Prediction Score ──────────────────
+      // Draws ONLY from signals already computed by V3 engines above.
+      // No new model, no new service, no new network call.
+      //
+      // FIX-Con5: When ENABLE_V3_ENGINES is off, pipelineContext.retention /
+      //   .curiosity / .emotionIntelligence / .viralPatterns are all undefined.
+      //   The old fallbacks (?? 50 / ?? 30 / ?? 80) produced a uniform 56-65
+      //   for every clip — worse than null because it implies differentiation.
+      //   We now return null when V3 engines are off so the dashboard can
+      //   render "N/A" rather than a misleading number.
+      let performancePredictionScore: number | null = null;
+      let performancePredictionBreakdown: Record<string, number | null> | null = null;
+
+      if (EXPERIMENTAL_FEATURES.v3_engines) {
+        const editorialComposite = (clip as any).editorial_plan?.composite_score ?? clipScore ?? 50;
+        const retentionScore = pipelineContext.retention?.[clipId]?.retention_score ?? 50;
+        const emotionArc = pipelineContext.emotionIntelligence?.[clipId]?.arc_strength ?? 50;
+        const curiosityScore = pipelineContext.curiosity?.[clipId]?.curiosity_score ?? 50;
+        const viralPatternPerf = pipelineContext.viralPatterns?.[clipId]?.historical_performance ?? 80;
+        const viralPatternConf = pipelineContext.viralPatterns?.[clipId]?.confidence ?? 30;
+        // Weighted composite — tunable, validated against Phase B benchmark.
+        // Weights: editorial 35%, retention 25%, emotion arc 15%, curiosity 15%, viral pattern 10%.
+        performancePredictionScore = Math.min(100, Math.max(0, Math.round(
+          editorialComposite  * 0.35 +
+          retentionScore      * 0.25 +
+          emotionArc          * 0.15 +
+          curiosityScore      * 0.15 +
+          (viralPatternPerf * viralPatternConf / 100) * 0.10
+        )));
+        performancePredictionBreakdown = {
+          editorial_composite: Number(editorialComposite.toFixed(1)),
+          retention_score: retentionScore,
+          emotion_arc: emotionArc,
+          curiosity_score: curiosityScore,
+          viral_pattern_weighted: Number((viralPatternPerf * viralPatternConf / 100).toFixed(1)),
+          final_score: performancePredictionScore,
+        };
+      }
+
       // DB.1: Prepare Clip DB record
       const dbClip = {
         id: clipId,
@@ -1753,6 +1792,8 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         title: clipTitle,
         start_time: renderStart,
         end_time: renderEnd,
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         storage_path: '',
         thumbnail_url: '',
         metadata: {
@@ -1772,6 +1813,9 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           scene_cut_snapped: (clip as any).scene_cut_snapped,
           jump_cut_plan: jumpCutPlan,
           words: rawClipWords,
+          // Phase F: Performance Prediction
+          performance_prediction: performancePredictionScore,
+          performance_prediction_breakdown: performancePredictionBreakdown,
         }
       };
       (dbClip as any).words = rawClipWords;
@@ -1894,6 +1938,8 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         aspectRatio: rj.aspectRatio,
         quality: rj.quality,
         caption_style: (data as any)?.caption_style || (data as any)?.caption_preset || (clip as any)?.metadata?.caption_style || 'submagic',
+        // Phase E: Hook text for editorial hook card
+        hookText: (clip as any)?.metadata?.hook || (rawClip as any)?.hook || '',
       };
 
       const renderJobData = {

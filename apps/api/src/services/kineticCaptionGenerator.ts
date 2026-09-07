@@ -76,6 +76,7 @@ export class KineticCaptionGenerator {
             fontSize = 44;
         }
 
+        const fontName = process.env.EXCERPT_CAPTION_FONT || 'Montserrat';
         let assContent = `[Script Info]
 Title: Excerpt SOTA Kinetic Captions (${preset.toUpperCase()})
 ScriptType: v4.00+
@@ -86,7 +87,7 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial Black,Montserrat,DejaVu Sans,sans-serif,${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,${isItalic},0,0,100,100,0,0,1,${outlineThickness},${shadowThickness},2,80,80,360,1
+Style: Default,${fontName},${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,${isItalic},0,0,100,100,0,0,1,${outlineThickness},${shadowThickness},2,80,80,380,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -180,10 +181,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     }
 
     private formatTime(seconds: number) {
-        const ms = Math.floor((seconds % 1) * 100);
-        const s = Math.floor(seconds) % 60;
-        const m = Math.floor(seconds / 60) % 60;
-        const h = Math.floor(seconds / 3600);
-        return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+        const totalCentiseconds = Math.round(Math.max(0, seconds) * 100);
+        const cs = totalCentiseconds % 100;
+        const totalSeconds = Math.floor(totalCentiseconds / 100);
+        const s = totalSeconds % 60;
+        const m = Math.floor(totalSeconds / 60) % 60;
+        const h = Math.floor(totalSeconds / 3600);
+        return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${cs.toString().padStart(2, '0')}`;
     }
 }

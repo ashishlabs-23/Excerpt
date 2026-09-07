@@ -755,10 +755,31 @@ def generate_crop_plan(frame_dir: Path, duration: float, output_path: Optional[P
     type_counts = Counter(content_types)
     dominant_type = type_counts.most_common(1)[0][0] if type_counts else 'mixed'
 
+    # ── Multi-Speaker Split Detection (Ponytail Rung 2: Leverage existing vstack pipeline) ──
+    confident_tracks = [t for t in track_manager.tracks.values() if t.get('tracking_confidence', 0) > 0.4]
+    speaker1_x = None
+    speaker2_x = None
+    layout_override = None
+
+    if len(confident_tracks) >= 2:
+        confident_tracks.sort(key=lambda t: t['cx'])
+        left_speaker = confident_tracks[0]
+        right_speaker = confident_tracks[-1]
+        horizontal_sep = right_speaker['cx'] - left_speaker['cx']
+        # If two distinct speakers are separated horizontally by >= 25% of the frame with active speech
+        if horizontal_sep >= 0.25 and (left_speaker.get('mar_activity', 0) > 0.08 or right_speaker.get('mar_activity', 0) > 0.08):
+            speaker1_x = round(max(0.0, left_speaker['cx'] - 0.25), 3)
+            speaker2_x = round(max(0.0, min(0.5, right_speaker['cx'] - 0.25)), 3)
+            if dominant_type in ('talking_head', 'mixed', 'presentation'):
+                layout_override = 'dual_split'
+
     result = {
         "frames_data": frames_data,
         "detection_backend": backend_name,
-        "content_type": dominant_type,
+        "content_type": layout_override if layout_override else dominant_type,
+        "layout": layout_override if layout_override else "single",
+        "speaker1_x": speaker1_x if speaker1_x is not None else 0.0,
+        "speaker2_x": speaker2_x if speaker2_x is not None else 0.5,
         "content_type_breakdown": dict(type_counts),
         "recommended_zoom": CONTENT_ZOOM.get(dominant_type, 1.10),
         "stats": {
@@ -769,6 +790,7 @@ def generate_crop_plan(frame_dir: Path, duration: float, output_path: Optional[P
             "ema_alpha": EMA_ALPHA,
             "dead_zone": DEAD_ZONE_THRESHOLD,
             "mar_speaker_detection": backend_name == "face_mesh",
+            "multi_speaker_detected": layout_override == 'dual_split',
         },
         "status": "success",
     }

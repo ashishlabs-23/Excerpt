@@ -1,10 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
+import { Readable } from 'stream';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from './supabaseService';
 import { initFirebaseAdmin } from './firebaseService';
 import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
+import { Upload } from "@aws-sdk/lib-storage";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PipelineError, ErrorCategory } from '@excerpt/clipping-core';
 
@@ -63,7 +65,99 @@ export class StorageService {
     }
   }
 
+  /**
+   * Streams content directly to cloud storage (S3/B2/Supabase) without full memory buffering.
+   * Leverages @aws-sdk/lib-storage Upload for multipart streaming chunks.
+   */
+  async uploadStream(
+    stream: Readable,
+    key: string,
+    contentType: string,
+    contentLength?: number
+  ): Promise<string> {
+    // 1. Primary: S3 / Backblaze B2 multipart stream upload
+    if (this.s3) {
+      try {
+        console.log(`[StorageService]: Streaming direct multipart upload for ${key} (${contentType})...`);
+        const parallelUpload = new Upload({
+          client: this.s3,
+          params: {
+            Bucket: this.bucket,
+            Key: key,
+            Body: stream,
+            ContentType: contentType,
+            ...(contentLength ? { ContentLength: contentLength } : {}),
+          },
+          queueSize: 4,
+          partSize: 1024 * 1024 * 5, // 5MB chunking
+          leavePartsOnError: false,
+        });
+
+        await parallelUpload.done();
+
+        const region = process.env.B2_REGION || "us-west-004";
+        const publicUrl = `https://${this.bucket}.s3.${region}.backblazeb2.com/${key}`;
+        console.log(`[StorageService]: S3/B2 Stream Upload Success -> ${publicUrl}`);
+        return publicUrl;
+      } catch (uploadErr: any) {
+        console.warn(`[StorageService]: S3 stream upload fallback: ${uploadErr.message}`);
+      }
+    }
+
+    // 2. Fallback: buffer stream for Supabase Storage
+    try {
+      const supabaseClient = this.getSupabase();
+      if (supabaseClient && supabaseClient.storage) {
+        console.log(`[StorageService]: Buffering stream for Supabase storage fallback for ${key}...`);
+        const chunks: Buffer[] = [];
+        for await (const chunk of stream) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        const buffer = Buffer.concat(chunks);
+        const storageBucket = this.bucket.includes('.') ? 'clips' : this.bucket;
+        const { error: sbErr } = await supabaseClient.storage
+          .from(storageBucket)
+          .upload(key, buffer, {
+            contentType,
+            upsert: true,
+          });
+
+        if (!sbErr) {
+          const { data: publicUrlData } = supabaseClient.storage
+            .from(storageBucket)
+            .getPublicUrl(key);
+          if (publicUrlData?.publicUrl) {
+            console.log(`[StorageService]: Supabase Stream Upload Success -> ${publicUrlData.publicUrl}`);
+            return publicUrlData.publicUrl;
+          }
+        }
+      }
+    } catch (sbErr: any) {
+      console.warn(`[StorageService]: Supabase fallback upload failed: ${sbErr.message}`);
+    }
+
+    throw new PipelineError({
+      category: ErrorCategory.UPLOAD,
+      message: `Failed to stream upload ${key}: All cloud storage providers failed.`,
+      stage: 'storage_upload_stream',
+      component: 'StorageService',
+    });
+  }
+
+  /**
+   * Uploads a file using non-blocking read streams instead of loading entire files into memory.
+   */
   async uploadFile(filePath: string, key: string): Promise<string> {
+    if (!fs.existsSync(filePath)) {
+      throw new PipelineError({
+        category: ErrorCategory.UPLOAD,
+        message: `File to upload does not exist: ${filePath}`,
+        stage: 'storage_upload',
+        component: 'StorageService',
+      });
+    }
+
+    const stat = fs.statSync(filePath);
     const fileExtension = path.extname(filePath);
     const contentType = this.getContentType(fileExtension);
 
@@ -89,69 +183,66 @@ export class StorageService {
       }
     }
 
-    // 2. Try B2 Upload (if initialized)
+    // 2. Stream directly via non-blocking read stream (avoids heap memory spikes)
+    const fileStream = fs.createReadStream(filePath);
+    return this.uploadStream(fileStream, key, contentType, stat.size);
+  }
+
+  /**
+   * Generates a presigned S3/B2 PUT URL so clients or background services can upload
+   * files directly to cloud storage without routing heavy video binaries through the API server.
+   */
+  async getPresignedUploadUrl(
+    key: string,
+    contentType: string,
+    expiresInSeconds: number = 3600
+  ): Promise<{ uploadUrl: string; key: string; publicUrl: string }> {
+    const region = process.env.B2_REGION || "us-west-004";
+    const publicUrl = `https://${this.bucket}.s3.${region}.backblazeb2.com/${key}`;
+
     if (this.s3) {
-      try {
-        console.log(`[StorageService]: Attempting B2 upload for ${key}...`);
-        const fileBuffer = fs.readFileSync(filePath);
-        const uploadPromise = this.s3.send(new PutObjectCommand({
-          Bucket: this.bucket,
-          Key: key,
-          Body: fileBuffer,
-          ContentType: contentType,
-          ContentLength: fileBuffer.length,
-        }));
+      const command = new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ContentType: contentType,
+      });
 
-        // Generous timeout for high bitrate 1080p clips (120s)
-        await Promise.race([
-          uploadPromise,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('B2_UPLOAD_TIMEOUT')), 120000))
-        ]);
+      const uploadUrl = await getSignedUrl(this.s3, command, {
+        expiresIn: expiresInSeconds,
+      });
 
-        const region = process.env.B2_REGION || "us-west-004";
-        const publicUrl = `https://${this.bucket}.s3.${region}.backblazeb2.com/${key}`;
-        console.log(`[StorageService]: B2 Upload Success -> ${publicUrl}`);
-        return publicUrl;
-      } catch (error: any) {
-        console.warn(`[StorageService]: Cloud storage upload fallback: ${error.message}`);
-      }
+      return {
+        uploadUrl,
+        key,
+        publicUrl,
+      };
     }
 
-    // 3. Try Supabase Storage (if configured)
+    // Supabase fallback if S3 is not configured
     try {
       const supabaseClient = this.getSupabase();
-      if (supabaseClient && supabaseClient.storage) {
-        console.log(`[StorageService]: Attempting Supabase Storage upload for ${key}...`);
-        const fileBuffer = fs.readFileSync(filePath);
-        const storageBucket = this.bucket.includes('.') ? 'clips' : this.bucket;
-        const { error: sbUploadErr } = await supabaseClient.storage
-          .from(storageBucket)
-          .upload(key, fileBuffer, {
-            contentType,
-            upsert: true,
-          });
-        if (!sbUploadErr) {
-          const { data: publicUrlData } = supabaseClient.storage
-            .from(storageBucket)
-            .getPublicUrl(key);
-          if (publicUrlData?.publicUrl) {
-            console.log(`[StorageService]: Supabase Storage Upload Success -> ${publicUrlData.publicUrl}`);
-            return publicUrlData.publicUrl;
-          }
-        } else {
-          console.warn(`[StorageService]: Supabase storage upload warning: ${sbUploadErr.message}`);
-        }
+      const storageBucket = this.bucket.includes('.') ? 'clips' : this.bucket;
+      const { data, error } = await supabaseClient.storage
+        .from(storageBucket)
+        .createSignedUploadUrl(key);
+
+      if (!error && data?.signedUrl) {
+        return {
+          uploadUrl: data.signedUrl,
+          key,
+          publicUrl: supabaseClient.storage.from(storageBucket).getPublicUrl(key).data.publicUrl,
+        };
       }
     } catch (sbErr: any) {
-      console.warn(`[StorageService]: Supabase storage upload failed: ${sbErr.message}`);
+      console.warn(`[StorageService]: Supabase presigned URL generation failed: ${sbErr.message}`);
     }
 
-    throw new PipelineError({
-      category: ErrorCategory.UPLOAD,
-      message: `Failed to upload ${key}: All cloud storage providers (B2, Firebase, Supabase) failed. Local storage fallback is disabled.`,
-      stage: 'storage_upload',
-      component: 'StorageService',
-    });
+    // Mock local dev fallback URL
+    return {
+      uploadUrl: `http://localhost:8010/api/storage/mock-upload/${encodeURIComponent(key)}`,
+      key,
+      publicUrl,
+    };
   }
 
   async createSignedUrl(key: string, expiresInSeconds?: number): Promise<string> {
@@ -348,32 +439,129 @@ export class StorageService {
     }
   }
 
-  async deleteFile(key: string): Promise<boolean> {
+  /**
+   * Normalizes a storage path or URL to a clean S3/storage object key.
+   */
+  public normalizeStorageKey(keyOrUrl: string): string {
+    if (!keyOrUrl) return '';
+    if (!keyOrUrl.startsWith('http')) {
+      return keyOrUrl.replace(/^\/+/, '');
+    }
     try {
-      await this.deleteObjects([key]);
+      const parsed = new URL(keyOrUrl);
+      return parsed.pathname.replace(/^\/+/, '');
+    } catch {
+      return keyOrUrl.replace(/^\/+/, '');
+    }
+  }
+
+  /**
+   * Checks whether an object exists in storage (S3/B2 or local fallback).
+   */
+  async fileExists(keyOrUrl: string): Promise<boolean> {
+    const key = this.normalizeStorageKey(keyOrUrl);
+    if (!key) return false;
+
+    if (this.s3) {
+      try {
+        await this.s3.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+        return true;
+      } catch (err: any) {
+        if (err.name === 'NotFound' || err.$metadata?.httpStatusCode === 404) {
+          return false;
+        }
+      }
+    }
+
+    const localPath = path.resolve(process.cwd(), 'temp', key);
+    if (fs.existsSync(localPath)) return true;
+
+    return false;
+  }
+
+  async deleteFile(keyOrUrl: string): Promise<boolean> {
+    try {
+      await this.deleteObjects([keyOrUrl]);
       return true;
     } catch {
       return false;
     }
   }
 
-  async deleteObjects(keys: string[]): Promise<void> {
-    if (keys.length === 0) return;
+  async deleteObjects(keysOrUrls: string[]): Promise<{ deleted: string[]; errors: string[] }> {
+    if (!keysOrUrls || keysOrUrls.length === 0) return { deleted: [], errors: [] };
 
-    const firebaseBucket = this.getFirebaseBucket();
-    if (firebaseBucket) {
+    const normalizedKeys = Array.from(new Set(keysOrUrls.map(k => this.normalizeStorageKey(k)).filter(Boolean)));
+    if (normalizedKeys.length === 0) return { deleted: [], errors: [] };
+
+    const deleted: string[] = [];
+    const errors: string[] = [];
+
+    // 1. Primary: S3 / Backblaze B2 batch deletion
+    if (this.s3) {
       try {
-        await Promise.all(keys.map(k => firebaseBucket.file(k).delete({ ignoreNotFound: true })));
-      } catch (err) {
-        // Fallback
+        for (let i = 0; i < normalizedKeys.length; i += 1000) {
+          const batch = normalizedKeys.slice(i, i + 1000);
+          const response = await this.s3.send(new DeleteObjectsCommand({
+            Bucket: this.bucket,
+            Delete: {
+              Objects: batch.map(Key => ({ Key })),
+              Quiet: false,
+            },
+          }));
+
+          if (response.Deleted) {
+            response.Deleted.forEach(d => { if (d.Key) deleted.push(d.Key); });
+          }
+          if (response.Errors && response.Errors.length > 0) {
+            response.Errors.forEach(e => {
+              const msg = `S3 delete error for ${e.Key}: ${e.Code} - ${e.Message}`;
+              console.warn(`[StorageService]: ${msg}`);
+              errors.push(msg);
+            });
+          }
+        }
+        console.log(`[StorageService]: S3/B2 DeleteObjects batch executed: ${deleted.length} deleted, ${errors.length} failed.`);
+      } catch (err: any) {
+        const msg = `S3/B2 batch deletion critical error: ${err.message}`;
+        console.error(`[StorageService]: ${msg}`);
+        errors.push(msg);
       }
     }
 
+    // 2. Firebase Storage deletion
+    const firebaseBucket = this.getFirebaseBucket();
+    if (firebaseBucket) {
+      try {
+        await Promise.all(normalizedKeys.map(k => firebaseBucket.file(k).delete({ ignoreNotFound: true })));
+      } catch (err: any) {
+        // Non-blocking fallback
+      }
+    }
+
+    // 3. Supabase Storage deletion
     try {
-      await this.getSupabase().storage.from("clips").remove(keys);
+      await this.getSupabase().storage.from("clips").remove(normalizedKeys);
     } catch (err: any) {
       console.warn(`[StorageService]: Supabase object deletion error: ${err.message}`);
     }
+
+    // 4. Local filesystem cleanup (temp/jobs/...)
+    for (const key of normalizedKeys) {
+      try {
+        const localCandidates = [
+          path.resolve(process.cwd(), 'temp', key),
+          path.resolve(process.cwd(), '../../temp', key),
+        ];
+        for (const lp of localCandidates) {
+          if (fs.existsSync(lp)) {
+            fs.unlinkSync(lp);
+          }
+        }
+      } catch {}
+    }
+
+    return { deleted, errors };
   }
 
   private getContentType(ext: string): string {

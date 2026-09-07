@@ -192,8 +192,21 @@ async function bootstrap() {
   app.use(bodyParser.json());
   app.use(bodyParser.urlencoded({ extended: true }));
   app.use(requestLogger);
-  app.use('/temp', express.static(path.resolve(process.cwd(), 'temp')));
-  app.use('/jobs', express.static(path.resolve(process.cwd(), 'temp/jobs')));
+  const tempCandidates = [
+    path.resolve(process.cwd(), 'temp'),
+    path.resolve(process.cwd(), '../../temp'),
+    path.resolve(__dirname, '../../../temp'),
+    path.resolve(__dirname, '../../../../temp'),
+  ];
+  const rootTempDir = tempCandidates.find(d => fs.existsSync(d)) || path.resolve(process.cwd(), 'temp');
+  const jobsCandidates = [
+    path.join(rootTempDir, 'jobs'),
+    path.resolve(process.cwd(), 'temp/jobs'),
+    path.resolve(process.cwd(), '../../temp/jobs'),
+  ];
+  const rootJobsDir = jobsCandidates.find(d => fs.existsSync(d)) || path.join(rootTempDir, 'jobs');
+  app.use('/temp', express.static(rootTempDir));
+  app.use('/jobs', express.static(rootJobsDir));
 
   // Routes
   app.use('/api/video', videoRoutes);
@@ -251,7 +264,15 @@ async function bootstrap() {
         workers: workersHealthy ? 'healthy' : 'degraded',
         database: 'connected', // Optimistic for now, assuming pool is up
         redis: 'connected',
-        storage: 'connected'
+        storage: 'connected',
+        retention: (() => {
+          try {
+            const { RetentionService } = require('./services/RetentionService');
+            return RetentionService.getLatestTelemetry() || 'idle';
+          } catch {
+            return null;
+          }
+        })()
       }
     });
   });

@@ -11,7 +11,7 @@ export class ZombieSweeperService {
   private readonly STALE_THRESHOLD_MINUTES = 30;
   private readonly FAIL_THRESHOLD_MINUTES = 15; // Time after being requeued before failing
   private sweepCount: number = 0;              // tracks how many sweeps have run
-  private readonly RETENTION_INTERVAL_SWEEPS = 60; // run retention every 60 sweeps (~1 hour at 60s interval)
+  private readonly RETENTION_INTERVAL_SWEEPS = 30; // run retention every 30 sweeps (~30 min)
 
   constructor() {
     this.db = new DatabaseService();
@@ -21,7 +21,7 @@ export class ZombieSweeperService {
     if (this.intervalId) return;
     console.log(`[ZombieSweeper]: Started interval sweeps every ${intervalMs}ms`);
     this.intervalId = setInterval(() => this.sweep(), intervalMs);
-    // Initial sweep
+    // Initial sweep: run quickly after boot (5 seconds)
     setTimeout(() => this.sweep(), 5000);
   }
 
@@ -42,10 +42,10 @@ export class ZombieSweeperService {
       // 0. Storage Integrity Sweep
       await StorageIntegrityMonitor.getInstance().sweepDriftedClips();
 
-      // 0b. Retention Sweep — runs once per hour
-      if (this.sweepCount % this.RETENTION_INTERVAL_SWEEPS === 0) {
+      // 0b. Retention Sweep — runs on very first sweep after boot, then periodically
+      if (this.sweepCount === 1 || this.sweepCount % this.RETENTION_INTERVAL_SWEEPS === 0) {
         try {
-          await new RetentionService().run();
+          await RetentionService.getInstance().run();
         } catch (retentionErr) {
           console.error(`[ZombieSweeper]: RetentionService error:`, retentionErr);
         }
@@ -101,11 +101,11 @@ export class ZombieSweeperService {
       }
 
       // 2. Sweep Render Jobs (Video Generation)
-      const { data: staleRenders } = await supabase
+      const staleRenders = (await supabase
         .from('render_jobs')
         .select('id, status, attempt_count')
         .in('status', ['pending', 'processing', 'claimed', 'rendering', 'uploading', 'retrying'])
-        .lt('updated_at', staleJobThreshold);
+        .lt('updated_at', staleJobThreshold)).data;
 
       if (staleRenders && staleRenders.length > 0) {
         console.warn(`[ZombieSweeper]: Found ${staleRenders.length} stale render_jobs. Transitioning to stale.`);
@@ -154,7 +154,6 @@ export class ZombieSweeperService {
       }
 
       // 3. Sweep Orphan Clips (Status = pending, but created_at is extremely old)
-      // This specifically cleans up the 45 pending clips identified in the audit.
       const orphanThreshold = new Date(Date.now() - 60 * 60000).toISOString(); // 1 hour
       const { data: orphanClips } = await supabase
         .from('clips')
@@ -207,8 +206,18 @@ export class ZombieSweeperService {
       const now = Date.now();
       const FILE_STALE_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
 
+      const protectedNames = new Set([
+        'uploads',
+        'cache',
+        'retention_sweep.lock',
+        'active_queue.json',
+        'jobs',
+        'local_db.json',
+        'consensus_active_learning_queue.json',
+      ]);
+
       for (const file of tempFiles) {
-        if (file === 'uploads' || file === 'cache') continue;
+        if (protectedNames.has(file)) continue;
         const filePath = path.join(tempDirBase, file);
         try {
           const stats = fs.statSync(filePath);

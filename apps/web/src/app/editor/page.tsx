@@ -103,11 +103,11 @@ function ClipEditorContent() {
         const totalClipDuration = Math.max(1, clipEnd - clipStart);
 
         // If rawWords have timestamps offset by source video time, normalize relative to 0
-        const isOffset = rawWords.length > 0 && rawWords[0].start >= Math.max(0.8, clipStart - 0.5);
+        const isOffset = rawWords.length > 0 && clipStart > 2.0 && rawWords.some((w: any) => typeof w.start === 'number' && w.start >= (clipStart * 0.5));
         const normalizedWords = rawWords.map((w: any) => ({
           ...w,
           start: isOffset ? Math.max(0, Number((w.start - clipStart).toFixed(3))) : Number(w.start.toFixed(3)),
-          end: isOffset ? Math.max(0, Number((w.end - clipStart).toFixed(3))) : Number(w.end.toFixed(3)),
+          end: isOffset ? Math.max(0.05, Number((w.end - clipStart).toFixed(3))) : Number(w.end.toFixed(3)),
         }));
 
         // In studio editor, request clean video stream so interactive captions overlay cleanly

@@ -336,20 +336,12 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
                     controls={false}
                     loop
                     playsInline
+                    muted
                     preload="none"
                     onMouseOver={(e) => {
                       const video = e.currentTarget;
-                      video.muted = false; // Try unmuted first
-                      const playPromise = video.play();
-                      if (playPromise !== undefined) {
-                        playPromise.catch((err) => {
-                          // If auto-play blocked because of unmuted, try muted
-                          if (err.name === 'NotAllowedError') {
-                            video.muted = true;
-                            video.play().catch(() => {});
-                          }
-                        });
-                      }
+                      video.muted = true;
+                      video.play().catch(() => {});
                     }}
                     onMouseOut={(e) => {
                       e.currentTarget.pause();
@@ -555,16 +547,16 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
                       fallbackSrc={selectedClip.video_url}
                       key={selectedClip.id}
                       eager
+                      preload="auto"
                       className={`${showMockup ? 'w-full h-full object-cover' : 'h-full w-auto max-w-full object-contain'}`}
                       controls={!showMockup}
                       autoPlay
                       loop
                       playsInline
                       muted={false}
-                      onClick={(e) => {
+                      onClick={showMockup ? (e) => {
                         const video = e.currentTarget;
                         if (video.paused) {
-                          video.muted = false;
                           video.play().catch(() => {
                             video.muted = true;
                             video.play().catch(() => {});
@@ -572,18 +564,7 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
                         } else {
                           video.pause();
                         }
-                      }}
-                      onLoadedData={(e) => {
-                        const video = e.currentTarget;
-                        video.volume = 1.0;
-                        const p = video.play();
-                        if (p !== undefined) {
-                          p.catch(() => {
-                            video.muted = true;
-                            video.play().catch(() => {});
-                          });
-                        }
-                      }}
+                      } : undefined}
                     />
                     
                     {showMockup && (

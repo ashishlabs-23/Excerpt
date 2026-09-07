@@ -1,4 +1,5 @@
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
+import { Readable, PassThrough } from 'stream';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -149,6 +150,8 @@ const highQualityEncodeArgs = () => {
     '-color_trc', 'bt709',
     '-colorspace', 'bt709',
     '-vsync', 'cfr',
+    '-g', '60',
+    '-keyint_min', '60',
     '-c:a', 'aac',
     '-b:a', '320k',
     '-ar', '48000',
@@ -615,7 +618,7 @@ export class VideoProcessor {
           let speakerNormY = 0.35; // default upper third
 
           const clipEnd = start + duration;
-          const timedPointsInWindow: { time: number; x: number; y: number; weight: number }[] = [];
+          const timedPointsInWindow: { time: number; x: number; y: number; weight: number; trackId?: number }[] = [];
 
           if (nexusCropPlan && Array.isArray(nexusCropPlan.frames_data) && nexusCropPlan.frames_data.length > 0) {
             // Filter frames strictly within the clip's timestamp window [start, clipEnd]
@@ -634,7 +637,13 @@ export class VideoProcessor {
                 if (typeof r.x === 'number' && r.x >= 0 && r.x <= 1) {
                   const weight = (typeof r.confidence === 'number' && r.confidence > 0) ? r.confidence : 1;
                   const ry = (typeof r.y === 'number' && r.y >= 0 && r.y <= 1) ? r.y : 0.35;
-                  timedPointsInWindow.push({ time: frameTime, x: r.x, y: ry, weight });
+                  timedPointsInWindow.push({
+                    time: frameTime,
+                    x: r.x,
+                    y: ry,
+                    weight,
+                    trackId: typeof r.track === 'number' ? r.track : undefined
+                  });
                 }
               } else if (typeof f.x === 'number' && f.x >= 0 && f.x <= 1) {
                 timedPointsInWindow.push({ time: frameTime, x: f.x, y: typeof f.y === 'number' ? f.y : 0.35, weight: 1 });
@@ -667,7 +676,7 @@ export class VideoProcessor {
 
           // Group into temporal buckets to check for intentional movement vs camera noise
           const bucketDuration = 2.5;
-          const buckets: { time: number; x: number; weight: number }[] = [];
+          const buckets: { time: number; x: number; weight: number; trackId?: number }[] = [];
           for (let t = 0; t < duration; t += bucketDuration) {
             const segStart = start + t;
             const segEnd = segStart + bucketDuration;
@@ -675,7 +684,17 @@ export class VideoProcessor {
             if (ptsInSeg.length > 0) {
               const wSum = ptsInSeg.reduce((s, p) => s + p.weight, 0);
               const avgX = ptsInSeg.reduce((s, p) => s + p.x * p.weight, 0) / wSum;
-              buckets.push({ time: t + bucketDuration / 2, x: avgX, weight: wSum });
+              // Determine dominant track ID in this segment
+              const trackCounts: Record<number, number> = {};
+              for (const p of ptsInSeg) {
+                if (typeof (p as any).trackId === 'number') {
+                  const tid = (p as any).trackId as number;
+                  trackCounts[tid] = (trackCounts[tid] || 0) + 1;
+                }
+              }
+              const dominantTrack = Object.entries(trackCounts).sort((a, b) => b[1] - a[1])[0];
+              const trackId = dominantTrack ? Number(dominantTrack[0]) : undefined;
+              buckets.push({ time: t + bucketDuration / 2, x: avgX, weight: wSum, trackId });
             }
           }
 
@@ -689,7 +708,9 @@ export class VideoProcessor {
               framingMode = 'dynamic';
               const keyframes = buckets.map(b => ({
                 time: Number(b.time.toFixed(2)),
-                pixelX: Math.round(Math.max(0, Math.min(maxOffset, b.x * scaledWidth - cropWidth / 2)))
+                pixelX: Math.round(Math.max(0, Math.min(maxOffset, b.x * scaledWidth - cropWidth / 2))),
+                trackId: b.trackId,
+                normX: b.x,
               }));
 
               let expr = String(keyframes[keyframes.length - 1].pixelX);
@@ -698,14 +719,46 @@ export class VideoProcessor {
                 const kfNext = keyframes[i + 1];
                 const dt = Math.max(0.5, kfNext.time - kfCurr.time);
                 const dx = kfNext.pixelX - kfCurr.pixelX;
-                const interp = `${kfCurr.pixelX}+(${dx})*(t-${kfCurr.time})/${dt.toFixed(2)}`;
-                expr = `if(lt(t,${kfNext.time.toFixed(2)}),${interp},${expr})`;
+                const normDelta = Math.abs(dx) / scaledWidth;
+
+                // Multi-signal CUT / PAN / HOLD Decision Matrix:
+                // 1. Speaker Switch: Distinct active tracks -> HARD CUT even on modest (>= 10%) shift
+                const isSpeakerSwitch = typeof kfCurr.trackId === 'number' &&
+                                        typeof kfNext.trackId === 'number' &&
+                                        kfCurr.trackId !== kfNext.trackId &&
+                                        normDelta >= 0.10;
+
+                // 2. Continuous Motion Tracking: Same subject walking across frame
+                // Preserves smooth cinematic pan even on large (>20%) shifts if velocity direction is continuous
+                const prevDelta = i > 0 ? (kfCurr.pixelX - keyframes[i - 1].pixelX) : dx;
+                const isSameSubject = typeof kfCurr.trackId === 'number' && kfCurr.trackId === kfNext.trackId;
+                const isContinuousWalk = isSameSubject && (Math.sign(dx) === Math.sign(prevDelta)) && normDelta > 0.08;
+
+                // 3. Large Abrupt Discontinuity: Jump > 25% that is NOT part of a continuous tracking shot
+                const isAbruptDiscontinuity = normDelta > 0.25 && !isContinuousWalk;
+
+                const shouldHardCut = isSpeakerSwitch || isAbruptDiscontinuity;
+
+                if (shouldHardCut) {
+                  // Instant hard cut at transition midpoint to eliminate disorienting camera whip
+                  const splitTime = Number(((kfCurr.time + kfNext.time) / 2).toFixed(2));
+                  const cutInterp = `if(lt(t,${splitTime}),${kfCurr.pixelX},${kfNext.pixelX})`;
+                  expr = `if(lt(t,${kfNext.time.toFixed(2)}),${cutInterp},${expr})`;
+                } else {
+                  // Ponytail Closed-Form Cubic Easing (SmoothStep: 3u^2 - 2u^3 = u*u*(3-2u))
+                  // Smoothly pans for continuous walks, subtle reframing, and subject tracking
+                  const u = `(t-${kfCurr.time.toFixed(2)})/${dt.toFixed(2)}`;
+                  const smoothEase = `(${u})*(${u})*(3-2*(${u}))`;
+                  const easeInterp = `${kfCurr.pixelX}+(${dx})*${smoothEase}`;
+                  expr = `if(lt(t,${kfNext.time.toFixed(2)}),${easeInterp},${expr})`;
+                }
               }
               targetXExpression = `max(0,min(${maxOffset},${expr}))`;
             }
           }
 
-          // Position eye-line near the upper 35% of the 1920px frame
+          // Golden Eye-Line Anchor: Position eye pupils at 35% from the top of the 1080x1920 frame
+          // This keeps posture natural and leaves the lower 40% open for kinetic subtitles
           const idealY = Math.round(speakerNormY * scaledHeight - cropHeight * 0.35);
           const targetCropY = Math.round(Math.max(0, Math.min(maxVOffset, idealY)));
 
@@ -716,7 +769,7 @@ export class VideoProcessor {
             debug: `${framingMode}-speaker-crop (xNorm=${speakerNormX.toFixed(2)}, yNorm=${speakerNormY.toFixed(2)}, xExpr=${targetXExpression})`,
           };
 
-          cropFilter = `scale=${scaledWidth}:${scaledHeight}:flags=bicubic,crop=${cropWidth}:${cropHeight}:${targetXExpression}:${targetCropY},setsar=1`;
+          cropFilter = `scale=${scaledWidth}:${scaledHeight}:flags=bicubic,crop=w=${cropWidth}:h=${cropHeight}:x='${targetXExpression}':y='${targetCropY}',setsar=1`;
 
           // Pattern Interrupts (Deferred to Phase C Contextual DirectorPlan; disabled by default to avoid metronomic over-editing)
           const enablePatternInterrupts = process.env.EXCERPT_PATTERN_INTERRUPTS === 'true' && duration >= 8.0;
@@ -760,6 +813,16 @@ export class VideoProcessor {
             const preSeek = Math.max(0, start - 3);
             const fineSeek = Number((start - preSeek).toFixed(3));
 
+            const fadeDuration = 0.05;
+            const fadeStart = Math.max(0, duration - fadeDuration);
+            const audioFilter = [
+              'aresample=async=1',
+              'highpass=f=80',
+              `afade=t=in:st=0:d=${fadeDuration}`,
+              `afade=t=out:st=${fadeStart.toFixed(2)}:d=${fadeDuration}`,
+              'loudnorm=I=-16:TP=-1.5:LRA=11',
+            ].join(',');
+
             const args = [
               ...(preSeek > 0 ? ['-ss', String(preSeek)] : []),
               '-i', inputPath,
@@ -767,7 +830,7 @@ export class VideoProcessor {
               '-t', String(duration),
               '-vf', vf,
               ...highQualityEncodeArgs(),
-              '-af', 'aresample=async=1,loudnorm=I=-16:TP=-1.5:LRA=11',
+              '-af', audioFilter,
               '-y',
               outputPath
             ];
@@ -940,7 +1003,10 @@ export class VideoProcessor {
 
         baseFilters.push('setsar=1');
 
-        audioFilters.push('aresample=async=1', 'loudnorm=I=-16:TP=-1.5:LRA=11');
+        const hasAudioFilters = audioFilters.length > 0;
+        if (hasAudioFilters) {
+          audioFilters.push('aresample=async=1', 'loudnorm=I=-16:TP=-1.5:LRA=11');
+        }
 
         const videoFilterGraph = baseFilters.join(',');
         const audioFilterGraph = audioFilters.join(',');
@@ -954,8 +1020,8 @@ export class VideoProcessor {
           ...(fineSeek > 0 ? ['-ss', String(fineSeek)] : []),
           ...(duration ? ['-t', String(duration)] : []),
           '-vf', videoFilterGraph,
-          '-af', audioFilterGraph,
           ...highQualityEncodeArgs(),
+          ...(hasAudioFilters ? ['-af', audioFilterGraph] : ['-c:a', 'copy']),
           '-y',
           outputPath
         ];
@@ -983,6 +1049,102 @@ export class VideoProcessor {
       },
       validateOutput: (outPath) => fs.existsSync(outPath) && fs.statSync(outPath).size > 0,
     });
+  }
+
+  /**
+   * Streams a custom cut/styled clip directly through an FFmpeg pipe into a Node.js Readable stream.
+   * Utilizes fragmented MP4 flags (-f mp4 -movflags frag_keyframe+empty_moov+default_base_moof pipe:1)
+   * to write valid MP4 chunks sequentially without requiring an intermediate local file on disk.
+   */
+  exportCustomClipToStream(
+    inputPath: string,
+    options: {
+      startSec?: number;
+      endSec?: number;
+      cropOffsetPercent?: number;
+      aspectRatio?: '9:16' | '1:1' | '16:9';
+      quality?: 'high' | 'medium';
+      excludedIntervals?: Array<{ start: number; end: number }>;
+      subtitlePath?: string;
+    }
+  ): Readable {
+    const bin = getBinaryPath('ffmpeg');
+    const start = Math.max(0, options.startSec ?? 0);
+    const end = options.endSec;
+    const duration = end !== undefined && end > start ? end - start : undefined;
+    const targetAspect = options.aspectRatio || '9:16';
+    const isMediumQuality = options.quality === 'medium';
+
+    const targetW = targetAspect === '16:9' ? (isMediumQuality ? 1280 : 1920) : (isMediumQuality ? 720 : 1080);
+    const targetH = targetAspect === '16:9' ? (isMediumQuality ? 720 : 1080) : (isMediumQuality ? 1280 : 1920);
+
+    let baseFilters: string[] = [];
+    baseFilters.push(`scale=${targetW}:${targetH}:flags=lanczos`);
+
+    if (options.subtitlePath && fs.existsSync(options.subtitlePath)) {
+      const safeAssPath = path.resolve(options.subtitlePath).replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\\\'");
+      baseFilters.push(`ass='${safeAssPath}'`);
+    }
+    baseFilters.push('setsar=1');
+
+    const preSeek = Math.max(0, start - 2);
+    const fineSeek = Number((start - preSeek).toFixed(3));
+
+    const args = [
+      '-hide_banner',
+      '-loglevel', 'error',
+      ...(preSeek > 0 ? ['-ss', String(preSeek)] : []),
+      '-i', inputPath,
+      ...(fineSeek > 0 ? ['-ss', String(fineSeek)] : []),
+      ...(duration ? ['-t', String(duration)] : []),
+      '-vf', baseFilters.join(','),
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', isMediumQuality ? '24' : '20',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-ar', '48000',
+      '-f', 'mp4',
+      '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+      'pipe:1'
+    ];
+
+    console.log(`[VideoProcessor]: Launching FFmpeg pipe stream -> stdout (fragmented mp4)`);
+    const ffmpegProc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    ffmpegProc.stderr.on('data', (data) => {
+      const msg = data.toString().trim();
+      if (msg) console.warn(`[VideoProcessor:pipe_stderr]: ${msg}`);
+    });
+
+    ffmpegProc.on('error', (err) => {
+      console.error(`[VideoProcessor:pipe_error]:`, err);
+    });
+
+    return ffmpegProc.stdout;
+  }
+
+  /**
+   * Directly pipes an FFmpeg rendered clip into cloud storage (S3/B2) without creating
+   * any intermediate video files on local disk.
+   */
+  async streamClipToStorage(
+    inputPath: string,
+    storageKey: string,
+    options: {
+      startSec?: number;
+      endSec?: number;
+      cropOffsetPercent?: number;
+      aspectRatio?: '9:16' | '1:1' | '16:9';
+      quality?: 'high' | 'medium';
+      excludedIntervals?: Array<{ start: number; end: number }>;
+      subtitlePath?: string;
+    },
+    storageService: any
+  ): Promise<string> {
+    const stream = this.exportCustomClipToStream(inputPath, options);
+    return storageService.uploadStream(stream, storageKey, 'video/mp4');
   }
 
   /**

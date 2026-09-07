@@ -1,281 +1,386 @@
+import fs from 'fs';
+import path from 'path';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { DatabaseService } from './supabaseService';
 import { StorageService } from './storageService';
+import { firebaseDb } from './firebaseService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RetentionService
 //
-// Deletes expired clips and voiceovers from storage and the database.
-// Runs inside the existing maintenance cycle (ZombieSweeperService).
+// Enforces 24-Hour Ephemeral Storage policy across:
+// 1. Cloud Storage (Backblaze B2, S3, Supabase Storage, Firebase)
+// 2. Database Records (Supabase clips & voiceovers)
+// 3. Local Active Queue (temp/active_queue.json)
 //
-// Deletion order (storage-first, DB-second):
-//   Clip:      MP4 → Thumbnail → DB row
-//   Voiceover: MP3 → MP4 → Feedback rows → DB row
-//
-// If any storage deletion fails, the DB row is preserved and the failure
-// is logged. The next maintenance cycle will retry.
-//
-// RETENTION_DAYS env var controls expiry duration (default: 30).
+// Invariants:
+// - Expiration source of truth: expires_at = created_at + 24 hours
+// - Fallback predicate: created_at <= NOW() - 24 hours
+// - Storage deleted first, DB/queue records finalized second
+// - Safe with multiple workers via advisory file locking & status transitions
+// - Idempotent against already-deleted objects
 // ─────────────────────────────────────────────────────────────────────────────
 
-const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS ?? '30', 10);
-const BATCH_SIZE = 50; // max rows processed per run
+export const RETENTION_HOURS = parseInt(process.env.RETENTION_HOURS ?? '24', 10);
+const BATCH_SIZE = 50; // max rows processed per sweep cycle
+const LOCK_LEASE_MS = 5 * 60 * 1000; // 5-minute maximum lock hold
 
-interface RetentionSummary {
-  scanned:      number;
-  expired:      number;
-  deleted:      number;
-  failures:     number;
-  bytesFreed:   number; // best-effort; 0 when size unknown
+export interface RetentionTelemetry {
+  startedAt: string;
+  completedAt: string | null;
+  scanned: number;
+  expired: number;
+  deleted: number;
+  alreadyMissing: number;
+  failed: number;
+  keysRemoved: string[];
+  durationMs: number;
+  lastError: string | null;
 }
 
 export class RetentionService {
+  private static instance: RetentionService | null = null;
   private db: DatabaseService;
   private storage: StorageService;
+  private isSweepingLocally: boolean = false;
+  private static latestTelemetry: RetentionTelemetry | null = null;
+
+  static getInstance(): RetentionService {
+    if (!RetentionService.instance) {
+      RetentionService.instance = new RetentionService();
+    }
+    return RetentionService.instance;
+  }
 
   constructor() {
-    this.db      = new DatabaseService();
+    this.db = new DatabaseService();
     this.storage = StorageService.getInstance();
   }
 
-  /** Entry point — called by ZombieSweeperService once per hour. */
-  async run(): Promise<void> {
-    const supabase = this.db.getSupabase();
-    console.log(`[Retention]: Starting retention sweep (policy: ${RETENTION_DAYS} days)`);
-
-    const clipSummary      = await this.expireClips(supabase);
-    const voiceoverSummary = await this.expireVoiceovers(supabase);
-
-    const total: RetentionSummary = {
-      scanned:    clipSummary.scanned    + voiceoverSummary.scanned,
-      expired:    clipSummary.expired    + voiceoverSummary.expired,
-      deleted:    clipSummary.deleted    + voiceoverSummary.deleted,
-      failures:   clipSummary.failures   + voiceoverSummary.failures,
-      bytesFreed: clipSummary.bytesFreed + voiceoverSummary.bytesFreed,
-    };
-
-    console.log(
-      `[Retention]: Summary — ` +
-      `scanned=${total.scanned} expired=${total.expired} ` +
-      `deleted=${total.deleted} failures=${total.failures} ` +
-      `bytesFreed=${this.formatBytes(total.bytesFreed)}`
-    );
+  public static getLatestTelemetry(): RetentionTelemetry | null {
+    return RetentionService.latestTelemetry;
   }
 
-  // ─── Clips ─────────────────────────────────────────────────────────────────
+  /**
+   * Advisory lock to prevent multiple workers or concurrent sweeps
+   * from corrupting retention states or hammering storage APIs.
+   */
+  private acquireLock(): boolean {
+    if (this.isSweepingLocally) return false;
 
-  private async expireClips(supabase: SupabaseClient): Promise<RetentionSummary> {
-    const summary: RetentionSummary = { scanned: 0, expired: 0, deleted: 0, failures: 0, bytesFreed: 0 };
-
-    const { data: expiredClips, error } = await supabase
-      .from('clips')
-      .select('id, storage_path, thumbnail_url, metadata, status')
-      .lt('expires_at', new Date().toISOString())
-      .not('expires_at', 'is', null)
-      .limit(BATCH_SIZE);
-
-    if (error) {
-      console.error(`[Retention]: Failed to query expired clips: ${error.message}`);
-      return summary;
-    }
-
-    summary.scanned = expiredClips?.length ?? 0;
-    if (!expiredClips || expiredClips.length === 0) return summary;
-
-    summary.expired = expiredClips.length;
-    console.log(`[Retention]: Found ${expiredClips.length} expired clip(s).`);
-
-    for (const clip of expiredClips) {
-      const result = await this.deleteClip(supabase, clip);
-      if (result.success) {
-        summary.deleted++;
-        summary.bytesFreed += result.bytesFreed;
-      } else {
-        summary.failures++;
+    const lockPath = path.resolve(process.cwd(), 'temp', 'retention_sweep.lock');
+    try {
+      if (!fs.existsSync(path.dirname(lockPath))) {
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
       }
+
+      if (fs.existsSync(lockPath)) {
+        const stats = fs.statSync(lockPath);
+        const lockAge = Date.now() - stats.mtimeMs;
+        if (lockAge < LOCK_LEASE_MS) {
+          // Lock still actively held
+          return false;
+        }
+        // Stale lock — overwrite
+      }
+
+      fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, time: new Date().toISOString() }));
+      this.isSweepingLocally = true;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private releaseLock(): void {
+    this.isSweepingLocally = false;
+    const lockPath = path.resolve(process.cwd(), 'temp', 'retention_sweep.lock');
+    try {
+      if (fs.existsSync(lockPath)) {
+        fs.unlinkSync(lockPath);
+      }
+    } catch {}
+  }
+
+  /**
+   * Main entry point — called by ZombieSweeperService on startup and periodically.
+   */
+  async run(): Promise<RetentionTelemetry> {
+    if (!this.acquireLock()) {
+      console.log('[Retention]: Sweep skipped — another retention sweep is currently in progress.');
+      return RetentionService.latestTelemetry || {
+        startedAt: new Date().toISOString(),
+        completedAt: null,
+        scanned: 0,
+        expired: 0,
+        deleted: 0,
+        alreadyMissing: 0,
+        failed: 0,
+        keysRemoved: [],
+        durationMs: 0,
+        lastError: 'Sweep skipped: lock acquired by concurrent worker',
+      };
     }
 
-    return summary;
+    const startTime = Date.now();
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const cutoffDate = new Date(now.getTime() - RETENTION_HOURS * 60 * 60 * 1000);
+    const cutoffIso = cutoffDate.toISOString();
+
+    console.log(`[Retention]: 🧹 Starting 24h retention sweep (policy: ${RETENTION_HOURS}h, cutoff: ${cutoffIso})`);
+
+    const telemetry: RetentionTelemetry = {
+      startedAt: nowIso,
+      completedAt: null,
+      scanned: 0,
+      expired: 0,
+      deleted: 0,
+      alreadyMissing: 0,
+      failed: 0,
+      keysRemoved: [],
+      durationMs: 0,
+      lastError: null,
+    };
+
+    try {
+      const supabase = this.db.getSupabase();
+
+      // 1. Expire clips in Supabase
+      await this.expireSupabaseClips(supabase, nowIso, cutoffIso, telemetry);
+
+      // 2. Expire clips in Local Queue (active_queue.json)
+      await this.expireQueueClips(nowIso, cutoffIso, telemetry);
+
+      // 3. Expire Voiceovers in Supabase
+      await this.expireVoiceovers(supabase, nowIso, cutoffIso, telemetry);
+
+      telemetry.completedAt = new Date().toISOString();
+      telemetry.durationMs = Date.now() - startTime;
+      RetentionService.latestTelemetry = telemetry;
+
+      console.log(
+        `[Retention]: ✅ 24h retention sweep complete — ` +
+        `scanned=${telemetry.scanned} expired=${telemetry.expired} ` +
+        `deleted=${telemetry.deleted} missing=${telemetry.alreadyMissing} ` +
+        `failed=${telemetry.failed} keysRemoved=${telemetry.keysRemoved.length} (${telemetry.durationMs}ms)`
+      );
+    } catch (sweepErr: any) {
+      telemetry.lastError = sweepErr.message;
+      telemetry.completedAt = new Date().toISOString();
+      telemetry.durationMs = Date.now() - startTime;
+      RetentionService.latestTelemetry = telemetry;
+      console.error(`[Retention]: Error during retention sweep:`, sweepErr.message);
+    } finally {
+      this.releaseLock();
+    }
+
+    return telemetry;
+  }
+
+  // ─── 1. Supabase Clips ──────────────────────────────────────────────────────
+
+  private async expireSupabaseClips(
+    supabase: SupabaseClient,
+    nowIso: string,
+    cutoffIso: string,
+    telemetry: RetentionTelemetry
+  ): Promise<void> {
+    try {
+      // Find clips where expires_at < NOW() OR (expires_at IS NULL AND created_at < cutoff)
+      const { data: expiredClips, error } = await supabase
+        .from('clips')
+        .select('id, storage_path, thumbnail_url, thumbnail_storage_path, metadata, status, created_at, expires_at')
+        .or(`expires_at.lt.${nowIso},and(expires_at.is.null,created_at.lt.${cutoffIso})`)
+        .limit(BATCH_SIZE);
+
+      if (error) {
+        console.warn(`[Retention]: Supabase clips query warning: ${error.message}`);
+        return;
+      }
+
+      if (!expiredClips || expiredClips.length === 0) {
+        return;
+      }
+
+      telemetry.scanned += expiredClips.length;
+      telemetry.expired += expiredClips.length;
+      console.log(`[Retention]: Discovered ${expiredClips.length} expired clip(s) in Supabase.`);
+
+      for (const clip of expiredClips) {
+        await this.deleteClip(supabase, clip, telemetry);
+      }
+    } catch (err: any) {
+      console.warn(`[Retention]: Failed to process Supabase expired clips: ${err.message}`);
+    }
   }
 
   private async deleteClip(
     supabase: SupabaseClient,
-    clip: { id: string; storage_path: string | null; thumbnail_url: string | null; metadata: any, status: string }
-  ): Promise<{ success: boolean; bytesFreed: number }> {
-    const clipId    = clip.id;
-    const mp4Key    = clip.storage_path;
-    const thumbKey  = this.extractStorageKey(clip.thumbnail_url);
-    const captionedKey: string | null = clip.metadata?.video_captioned_storage_key ?? null;
+    clip: any,
+    telemetry: RetentionTelemetry
+  ): Promise<boolean> {
+    const clipId = clip.id;
+    const keysToDelete: string[] = [];
 
-    console.log(`[Retention]: Processing clip clip_id=${clipId} storage=${mp4Key ?? 'none'} expires_at=expired`);
+    if (clip.storage_path) keysToDelete.push(clip.storage_path);
+    if (clip.thumbnail_storage_path) keysToDelete.push(clip.thumbnail_storage_path);
+    if (clip.thumbnail_url) keysToDelete.push(clip.thumbnail_url);
+    if (clip.metadata?.video_clean_storage_key) keysToDelete.push(clip.metadata.video_clean_storage_key);
+    if (clip.metadata?.video_captioned_storage_key) keysToDelete.push(clip.metadata.video_captioned_storage_key);
 
-    // 0. Mark as deleting first (safe recovery if storage fails)
-    if (clip.status !== 'deleting') {
-      const { error: updateErr } = await supabase.from('clips').update({ status: 'deleting' }).eq('id', clipId);
-      if (updateErr) {
-        console.error(`[Retention]: Failed to mark clip ${clipId} as deleting: ${updateErr.message}`);
-        return { success: false, bytesFreed: 0 };
+    console.log(`[Retention]: Purging expired clip id=${clipId} keys=${keysToDelete.length}`);
+
+    // Step 1: Mark status as 'deleting' in DB (claim ownership)
+    try {
+      await supabase.from('clips').update({ status: 'deleting' }).eq('id', clipId);
+    } catch {}
+
+    // Step 2: Delete all physical storage assets (Backblaze B2, Firebase, Supabase Storage, local)
+    if (keysToDelete.length > 0) {
+      try {
+        const { deleted, errors } = await this.storage.deleteObjects(keysToDelete);
+        telemetry.keysRemoved.push(...deleted);
+        if (errors.length > 0) {
+          telemetry.failed += errors.length;
+        }
+      } catch (err: any) {
+        console.error(`[Retention]: Storage deletion failed for clip ${clipId}: ${err.message}`);
+        telemetry.failed++;
+        return false;
       }
     }
 
-    // 1. Delete MP4 (primary asset) — fail fast if this fails
-    if (mp4Key) {
-      const ok = await this.storage.deleteFile(mp4Key);
-      if (!ok) {
-        console.error(`[Retention]: result=failure clip_id=${clipId} asset=mp4 storage=${mp4Key}`);
-        return { success: false, bytesFreed: 0 };
-      }
-      console.log(`[Retention]: result=success clip_id=${clipId} asset=mp4 storage=${mp4Key}`);
-    }
-
-    // 2. Delete thumbnail (best-effort — don't block DB deletion if this fails)
-    if (thumbKey) {
-      const ok = await this.storage.deleteFile(thumbKey);
-      console.log(`[Retention]: result=${ok ? 'success' : 'failure'} clip_id=${clipId} asset=thumbnail storage=${thumbKey}`);
-    }
-
-    // 3. Delete captioned version if separate key exists
-    if (captionedKey && captionedKey !== mp4Key) {
-      const ok = await this.storage.deleteFile(captionedKey);
-      console.log(`[Retention]: result=${ok ? 'success' : 'failure'} clip_id=${clipId} asset=captioned storage=${captionedKey}`);
-    }
-
-    // 4. Delete DB row (only after primary storage deletion succeeded)
+    // Step 3: Delete database record after storage deletion
     const { error: dbError } = await supabase.from('clips').delete().eq('id', clipId);
     if (dbError) {
-      console.error(`[Retention]: result=failure clip_id=${clipId} asset=db_row reason=${dbError.message}`);
-      return { success: false, bytesFreed: 0 };
+      console.warn(`[Retention]: Database row deletion warning for ${clipId}: ${dbError.message}`);
+      telemetry.failed++;
+      return false;
     }
 
-    console.log(`[Retention]: result=success clip_id=${clipId} asset=db_row`);
-    return { success: true, bytesFreed: 0 }; // byte size not tracked (would need HEAD request)
+    telemetry.deleted++;
+    return true;
   }
 
-  // ─── Voiceovers ────────────────────────────────────────────────────────────
+  // ─── 2. Local Queue Sweeper ─────────────────────────────────────────────────
 
-  private async expireVoiceovers(supabase: SupabaseClient): Promise<RetentionSummary> {
-    const summary: RetentionSummary = { scanned: 0, expired: 0, deleted: 0, failures: 0, bytesFreed: 0 };
-
-    const { data: expiredVoiceovers, error } = await supabase
-      .from('voiceover_clips')
-      .select('id, source_clip_id, audio_path, video_path, status')
-      .lt('expires_at', new Date().toISOString())
-      .not('expires_at', 'is', null)
-      .limit(BATCH_SIZE);
-
-    if (error) {
-      console.error(`[Retention]: Failed to query expired voiceovers: ${error.message}`);
-      return summary;
-    }
-
-    summary.scanned = expiredVoiceovers?.length ?? 0;
-    if (!expiredVoiceovers || expiredVoiceovers.length === 0) return summary;
-
-    summary.expired = expiredVoiceovers.length;
-    console.log(`[Retention]: Found ${expiredVoiceovers.length} expired voiceover(s).`);
-
-    for (const vo of expiredVoiceovers) {
-      const result = await this.deleteVoiceover(supabase, vo);
-      if (result.success) {
-        summary.deleted++;
-        summary.bytesFreed += result.bytesFreed;
-      } else {
-        summary.failures++;
-      }
-    }
-
-    return summary;
-  }
-
-  private async deleteVoiceover(
-    supabase: SupabaseClient,
-    vo: { id: string; source_clip_id: string | null; audio_path: string | null; video_path: string | null, status: string }
-  ): Promise<{ success: boolean; bytesFreed: number }> {
-    const voId    = vo.id;
-    const clipId  = vo.source_clip_id;
-
-    // Reconstruct storage keys from the known key patterns:
-    //   voiceovers_audio/{clip_id}/{vo_id}.mp3
-    //   voiceovers/{clip_id}/{vo_id}.mp4
-    // audio_path/video_path may be full public URLs — extract key from path if needed
-    const mp3Key = this.extractStorageKey(vo.audio_path) ?? (clipId ? `voiceovers_audio/${clipId}/${voId}.mp3` : null);
-    const mp4Key = this.extractStorageKey(vo.video_path) ?? (clipId ? `voiceovers/${clipId}/${voId}.mp4` : null);
-
-    console.log(`[Retention]: Processing voiceover voiceover_id=${voId} storage_mp3=${mp3Key ?? 'none'} expires_at=expired`);
-
-    // 0. Mark as deleting first
-    if (vo.status !== 'deleting') {
-      const { error: updateErr } = await supabase.from('voiceover_clips').update({ status: 'deleting' }).eq('id', voId);
-      if (updateErr) {
-        console.error(`[Retention]: Failed to mark voiceover ${voId} as deleting: ${updateErr.message}`);
-        return { success: false, bytesFreed: 0 };
-      }
-    }
-
-    // 1. Delete MP3
-    if (mp3Key) {
-      const ok = await this.storage.deleteFile(mp3Key);
-      if (!ok) {
-        console.error(`[Retention]: result=failure voiceover_id=${voId} asset=mp3 storage=${mp3Key}`);
-        return { success: false, bytesFreed: 0 };
-      }
-      console.log(`[Retention]: result=success voiceover_id=${voId} asset=mp3 storage=${mp3Key}`);
-    }
-
-    // 2. Delete MP4 (best-effort after MP3 succeeds)
-    if (mp4Key) {
-      const ok = await this.storage.deleteFile(mp4Key);
-      console.log(`[Retention]: result=${ok ? 'success' : 'failure'} voiceover_id=${voId} asset=mp4 storage=${mp4Key}`);
-    }
-
-    // 3. Delete feedback rows first (FK constraint)
-    const { error: feedbackErr } = await supabase
-      .from('voiceover_feedback')
-      .delete()
-      .eq('voiceover_id', voId);
-
-    if (feedbackErr) {
-      console.warn(`[Retention]: Failed to delete feedback for voiceover_id=${voId}: ${feedbackErr.message}`);
-      // Non-fatal — proceed to delete voiceover row
-    }
-
-    // 4. Delete DB row (only after primary storage deletion succeeded)
-    const { error: dbError } = await supabase.from('voiceover_clips').delete().eq('id', voId);
-    if (dbError) {
-      console.error(`[Retention]: result=failure voiceover_id=${voId} asset=db_row reason=${dbError.message}`);
-      return { success: false, bytesFreed: 0 };
-    }
-
-    console.log(`[Retention]: result=success voiceover_id=${voId} asset=db_row`);
-    return { success: true, bytesFreed: 0 };
-  }
-
-  // ─── Utilities ─────────────────────────────────────────────────────────────
-
-  /**
-   * Extracts the storage key from either:
-   *   - A full public URL: https://bucket.s3.region.backblazeb2.com/voiceovers/...
-   *   - A Supabase signed URL
-   *   - An already-clean key like voiceovers/clip123/vo456.mp4
-   * Returns null if the input is null or cannot be parsed.
-   */
-  private extractStorageKey(urlOrKey: string | null): string | null {
-    if (!urlOrKey) return null;
-    // If it looks like a storage key already (no scheme), return as-is
-    if (!urlOrKey.startsWith('http')) return urlOrKey;
+  private async expireQueueClips(
+    nowIso: string,
+    cutoffIso: string,
+    telemetry: RetentionTelemetry
+  ): Promise<void> {
     try {
-      const url = new URL(urlOrKey);
-      // Strip leading slash from pathname
-      return url.pathname.replace(/^\//, '');
-    } catch {
-      return null;
+      const queue = firebaseDb.readQueue();
+      if (!queue.clips || Object.keys(queue.clips).length === 0) return;
+
+      const nowTime = new Date(nowIso).getTime();
+      const cutoffTime = new Date(cutoffIso).getTime();
+
+      const expiredClipIds: string[] = [];
+      const allKeysToDelete: string[] = [];
+
+      for (const [id, c] of Object.entries(queue.clips)) {
+        telemetry.scanned++;
+        const clip: any = c;
+        const expiresTime = clip.expires_at || clip.expiresAt ? new Date(clip.expires_at || clip.expiresAt).getTime() : null;
+        const createdTime = clip.createdAt || clip.created_at ? new Date(clip.createdAt || clip.created_at).getTime() : null;
+
+        const isExpired = (expiresTime !== null && expiresTime <= nowTime) ||
+                          (createdTime !== null && createdTime <= cutoffTime);
+
+        if (isExpired) {
+          expiredClipIds.push(id);
+          telemetry.expired++;
+
+          if (clip.storage_path) allKeysToDelete.push(clip.storage_path);
+          if (clip.videoUrl) allKeysToDelete.push(clip.videoUrl);
+          if (clip.video_url) allKeysToDelete.push(clip.video_url);
+          if (clip.thumbnail_url) allKeysToDelete.push(clip.thumbnail_url);
+          if (clip.thumbnailUrl) allKeysToDelete.push(clip.thumbnailUrl);
+          if (clip.metadata?.video_clean_storage_key) allKeysToDelete.push(clip.metadata.video_clean_storage_key);
+          if (clip.metadata?.video_captioned_storage_key) allKeysToDelete.push(clip.metadata.video_captioned_storage_key);
+        }
+      }
+
+      if (expiredClipIds.length === 0) return;
+
+      console.log(`[Retention]: Purging ${expiredClipIds.length} expired clip(s) from local active queue...`);
+
+      // 1. Delete physical storage assets
+      if (allKeysToDelete.length > 0) {
+        const { deleted } = await this.storage.deleteObjects(allKeysToDelete);
+        telemetry.keysRemoved.push(...deleted);
+      }
+
+      // 2. Remove from active queue
+      for (const id of expiredClipIds) {
+        delete queue.clips[id];
+        telemetry.deleted++;
+      }
+
+      // 3. Remove orphaned render jobs
+      if (queue.render_jobs) {
+        for (const [rjId, rj] of Object.entries(queue.render_jobs)) {
+          if (expiredClipIds.includes((rj as any).clip_id)) {
+            delete queue.render_jobs[rjId];
+          }
+        }
+      }
+
+      firebaseDb.writeQueue(queue);
+      console.log(`[Retention]: Cleaned ${expiredClipIds.length} clip(s) from local active_queue.json`);
+    } catch (queueErr: any) {
+      console.warn(`[Retention]: Queue cleanup error: ${queueErr.message}`);
     }
   }
 
-  private formatBytes(bytes: number): string {
-    if (bytes === 0) return 'unknown';
-    if (bytes < 1024) return `${bytes}B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-    return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+  // ─── 3. Voiceovers ──────────────────────────────────────────────────────────
+
+  private async expireVoiceovers(
+    supabase: SupabaseClient,
+    nowIso: string,
+    cutoffIso: string,
+    telemetry: RetentionTelemetry
+  ): Promise<void> {
+    try {
+      const { data: expiredVoiceovers, error } = await supabase
+        .from('voiceover_clips')
+        .select('id, source_clip_id, audio_path, video_path, status, created_at, expires_at')
+        .or(`expires_at.lt.${nowIso},and(expires_at.is.null,created_at.lt.${cutoffIso})`)
+        .limit(BATCH_SIZE);
+
+      if (error) return;
+      if (!expiredVoiceovers || expiredVoiceovers.length === 0) return;
+
+      telemetry.scanned += expiredVoiceovers.length;
+      telemetry.expired += expiredVoiceovers.length;
+
+      for (const vo of expiredVoiceovers) {
+        const keys: string[] = [];
+        if (vo.audio_path) keys.push(vo.audio_path);
+        if (vo.video_path) keys.push(vo.video_path);
+
+        if (keys.length > 0) {
+          const { deleted } = await this.storage.deleteObjects(keys);
+          telemetry.keysRemoved.push(...deleted);
+        }
+
+        try {
+          await supabase.from('voiceover_feedback').delete().eq('voiceover_id', vo.id);
+        } catch {}
+
+        const { error: dbErr } = await supabase.from('voiceover_clips').delete().eq('id', vo.id);
+        if (!dbErr) {
+          telemetry.deleted++;
+        } else {
+          telemetry.failed++;
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[Retention]: Voiceover retention error: ${err.message}`);
+    }
   }
 }
+
+export const retentionService = RetentionService.getInstance();
