@@ -28,6 +28,18 @@ export interface DeliveryPolicy {
   webhookUrl?: string;
 }
 
+export type GenerationMode = 'draft' | 'quality';
+
+export interface RenderEncodingPolicy {
+  generationMode: GenerationMode;
+  preset: string;
+  crf: number;
+  maxrate: string;
+  bufsize: string;
+  audioBitrate: string;
+  audioSampleRate: number;
+}
+
 export interface RenderPlan {
   jobId: string;
   schemaVersion: string;
@@ -42,4 +54,7 @@ export interface RenderPlan {
   deliveryPolicy: DeliveryPolicy;
   renderJobs: RankingRenderJob[];
   planHash: string; // sha256 of the plan's serialized content (excluding this field)
+  generationMode?: GenerationMode;
+  encodingPolicy?: RenderEncodingPolicy;
 }
+

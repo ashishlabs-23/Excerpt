@@ -1,6 +1,7 @@
 export type AspectRatio = '9:16' | '1:1' | '16:9';
 export type RenderFormat = 'mp4';
-export type RenderQuality = 'high' | 'draft';
+export type GenerationMode = 'draft' | 'quality';
+export type RenderQuality = 'high' | 'draft' | 'quality';
 
 export interface RenderJobPlan {
   id: string;
@@ -8,6 +9,7 @@ export interface RenderJobPlan {
   aspectRatio: AspectRatio;
   format: RenderFormat;
   quality: RenderQuality;
+  generationMode?: GenerationMode;
   expectedOutputs: {
     video: boolean;
     thumbnail: boolean;
@@ -48,6 +50,7 @@ export function createRenderPlan(params: {
   acceptedClips: Array<{ id: string }>;
   aspectRatio?: AspectRatio;
   quality?: RenderQuality;
+  generationMode?: GenerationMode;
   deliveryPolicy?: Partial<DeliveryPolicy>;
 }): RenderPlan {
   const {
@@ -55,9 +58,12 @@ export function createRenderPlan(params: {
     requestedClips,
     acceptedClips,
     aspectRatio = '9:16',
-    quality = 'high',
+    generationMode,
+    quality = generationMode === 'draft' ? 'draft' : 'high',
     deliveryPolicy = {},
   } = params;
+
+  const effectiveGenerationMode: GenerationMode = generationMode || (quality === 'draft' ? 'draft' : 'quality');
 
   const renderJobs: RenderJobPlan[] = acceptedClips.map((clip, index) => ({
     id: `render_job_${jobId}_${clip.id}_${index + 1}`,
@@ -65,6 +71,7 @@ export function createRenderPlan(params: {
     aspectRatio,
     format: 'mp4',
     quality,
+    generationMode: effectiveGenerationMode,
     expectedOutputs: {
       video: true,
       thumbnail: true,

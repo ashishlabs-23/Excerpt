@@ -20,7 +20,8 @@ import {
   CheckCircle2,
   RefreshCw,
   SlidersHorizontal,
-  ChevronDown
+  ChevronDown,
+  Subtitles
 } from 'lucide-react';
 import { RecentClips } from '@/components/RecentClips';
 
@@ -50,11 +51,21 @@ interface ClipOption {
 
 const REWRITE_MODES = [
   { id: 'football_commentary', name: 'Sports Commentary', desc: 'High energy play-by-play commentary' },
+  { id: 'duo_commentary', name: 'Duo Commentary (Co-Host)', desc: 'Play-by-play and color analyst dynamic' },
   { id: 'viral_shorts', name: 'Viral Hook', desc: 'Attention-grabbing short-form hook' },
   { id: 'documentary', name: 'Documentary', desc: 'Deep narrative storytelling tone' },
   { id: 'tactical_analysis', name: 'Tactical Analysis', desc: 'In-depth tactical breakdown' },
   { id: 'youtube_narrator', name: 'YouTube Narrator', desc: 'Engaging creator narration tone' },
   { id: 'custom_prompt', name: 'Custom Persona', desc: 'Custom instructions or personality' },
+];
+
+const CAPTION_PRESETS = [
+  { id: 'submagic', name: 'Submagic Pink', color: '#ec4899' },
+  { id: 'hormozi', name: 'Hormozi Gold', color: '#eab308' },
+  { id: 'tiktok', name: 'TikTok Yellow', color: '#facc15' },
+  { id: 'mrbeast', name: 'MrBeast Green', color: '#22c55e' },
+  { id: 'neon', name: 'Electric Cyan', color: '#06b6d4' },
+  { id: 'minimalist', name: 'Minimal White', color: '#ffffff' },
 ];
 
 const LANGUAGES = [
@@ -90,6 +101,10 @@ export default function VoiceoverStudio() {
   const [selectedLang, setSelectedLang] = useState<string>('English');
   const [customInstruction, setCustomInstruction] = useState('');
   const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+
+  // Kinetic Captions
+  const [enableCaptions, setEnableCaptions] = useState<boolean>(true);
+  const [captionPreset, setCaptionPreset] = useState<string>('submagic');
 
   // Voice Engine State
   const [voiceConfig, setVoiceConfig] = useState<LocalVoiceConfig>({
@@ -218,6 +233,7 @@ export default function VoiceoverStudio() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          clipId: selectedClip.id,
           style: rewriteMode,
           language: selectedLang,
           contextText: selectedClip.content || selectedClip.summary || selectedClip.title || '',
@@ -233,15 +249,75 @@ export default function VoiceoverStudio() {
       const data = await res.json();
       const clipDuration = Math.max(1, Math.round(selectedClip.end_time - selectedClip.start_time));
 
-      setSegments([
-        {
-          id: crypto.randomUUID(),
-          start_time: 0,
-          end_time: Math.min(clipDuration, 10),
-          narration_text: data.script,
-          clip_type: 'narration',
-        },
-      ]);
+      if (rewriteMode === 'duo_commentary') {
+        const lines = data.script
+          .split('\n')
+          .map((l: string) => l.trim())
+          .filter((l: string) => l.length > 0);
+
+        const turns: Array<{ speaker: 'A' | 'B'; text: string; wordCount: number }> = [];
+        let currentSpeaker: 'A' | 'B' = 'A';
+
+        for (const line of lines) {
+          let text = line;
+          let speaker = currentSpeaker;
+          if (/^\[?(Play-by-Play|Announcer|Speaker\s*1)\]?:?/i.test(line)) {
+            speaker = 'A';
+            text = line.replace(/^\[?(Play-by-Play|Announcer|Speaker\s*1)\]?:?\s*/i, '');
+          } else if (/^\[?(Analyst|Color|Speaker\s*2)\]?:?/i.test(line)) {
+            speaker = 'B';
+            text = line.replace(/^\[?(Analyst|Color|Speaker\s*2)\]?:?\s*/i, '');
+          } else {
+            speaker = currentSpeaker === 'A' ? 'B' : 'A';
+          }
+          text = text.trim();
+          if (text.length > 0) {
+            turns.push({ speaker, text, wordCount: text.split(/\s+/).length });
+            currentSpeaker = speaker === 'A' ? 'B' : 'A';
+          }
+        }
+
+        const totalWords = turns.reduce((acc, t) => acc + t.wordCount, 0) || 1;
+        const duoSegments: VoiceoverSegment[] = [];
+        let currentTime = 0;
+
+        for (let i = 0; i < turns.length; i++) {
+          const turn = turns[i];
+          const turnDur = Math.max(1.5, (turn.wordCount / totalWords) * clipDuration);
+          const startTime = Number(currentTime.toFixed(2));
+          const endTime = Number(Math.min(clipDuration, startTime + turnDur).toFixed(2));
+          const isA = turn.speaker === 'A';
+
+          duoSegments.push({
+            id: crypto.randomUUID(),
+            start_time: startTime,
+            end_time: endTime,
+            narration_text: turn.text,
+            clip_type: isA ? 'narration' : 'transition',
+          });
+          currentTime = endTime + 0.2;
+        }
+
+        setSegments(duoSegments.length > 0 ? duoSegments : [
+          {
+            id: crypto.randomUUID(),
+            start_time: 0,
+            end_time: Math.min(clipDuration, 10),
+            narration_text: data.script,
+            clip_type: 'narration',
+          }
+        ]);
+      } else {
+        setSegments([
+          {
+            id: crypto.randomUUID(),
+            start_time: 0,
+            end_time: Math.min(clipDuration, 10),
+            narration_text: data.script,
+            clip_type: 'narration',
+          },
+        ]);
+      }
     } catch (err: any) {
       alert(err.message || 'Error generating script');
     } finally {
@@ -260,10 +336,25 @@ export default function VoiceoverStudio() {
       return;
     }
 
-    const narrationText = segments
-      .map(s => s.narration_text.trim())
-      .filter(Boolean)
-      .join(' ');
+    const cleanSegments = segments
+      .map(s => ({
+        id: s.id,
+        type: s.clip_type || 'narration',
+        startTime: Number(s.start_time) || 0,
+        endTime: Number(s.end_time) || (Number(s.start_time) + 5),
+        text: s.narration_text.trim(),
+        voice: voiceConfig.voiceId,
+        provider: voiceConfig.provider || 'elevenlabs',
+        speakingRate: voiceConfig.speakingRate,
+        pitch: voiceConfig.pitch,
+        volumeGainDb: voiceConfig.volumeGainDb,
+        excitement: voiceConfig.excitement,
+        energy: voiceConfig.energy,
+        drama: voiceConfig.drama,
+      }))
+      .filter(s => s.text.length > 0);
+
+    const narrationText = cleanSegments.map(s => s.text).join(' ');
 
     if (narrationText.length < 10) {
       alert('Narration script is too short. Please enter at least 10 characters.');
@@ -284,7 +375,15 @@ export default function VoiceoverStudio() {
           provider: voiceConfig.provider || 'elevenlabs',
           voice: voiceConfig.voiceId,
           narrationText,
-          scriptMode: 'ai_generated',
+          segments: cleanSegments,
+          originalAudioPolicy: 'duck',
+          duckingPolicy: { duckLevelDb: -14, attackMs: 25, releaseMs: 250 },
+          captions: {
+            enabled: enableCaptions,
+            preset: captionPreset,
+            burn: true,
+          },
+          scriptMode: 'timeline_studio',
           style: rewriteMode,
           language: selectedLang,
           voiceConfig: {
@@ -566,6 +665,50 @@ export default function VoiceoverStudio() {
                         </>
                       )}
                     </button>
+
+                    {/* Kinetic Captions Engine Controls */}
+                    <div className="pt-3 border-t border-white/5 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <Subtitles size={13} className="text-primary" />
+                          <span className="text-[10px] font-black uppercase tracking-wider text-white/60">
+                            Kinetic Subtitles
+                          </span>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={enableCaptions}
+                            onChange={(e) => setEnableCaptions(e.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className="w-8 h-4 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-primary"></div>
+                        </label>
+                      </div>
+
+                      {enableCaptions && (
+                        <div className="grid grid-cols-3 gap-1.5 pt-0.5">
+                          {CAPTION_PRESETS.map((preset) => (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              onClick={() => setCaptionPreset(preset.id)}
+                              className={`px-2 py-1.5 rounded-lg text-[10px] font-bold tracking-wider border transition-all flex items-center justify-between ${
+                                captionPreset === preset.id
+                                  ? 'bg-primary/20 border-primary/50 text-white shadow-sm'
+                                  : 'bg-black/30 border-white/5 text-white/50 hover:bg-white/5 hover:text-white'
+                              }`}
+                            >
+                              <span className="truncate">{preset.name}</span>
+                              <span
+                                className="w-2 h-2 rounded-full shrink-0 ml-1"
+                                style={{ backgroundColor: preset.color }}
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 

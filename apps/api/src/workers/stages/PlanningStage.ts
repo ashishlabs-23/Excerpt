@@ -170,6 +170,9 @@ export class PlanningStage implements PipelineStage<PlanningInput, PlanningOutpu
             clipWords: rawClipWords,
             cropPlan: cropPlan,
             jumpCutPlan: jumpCutPlan,
+            hookText: hookText,
+            generationMode: generationMode,
+            generation_mode: generationMode,
           },
         };
 

@@ -3,15 +3,20 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import { execFile } from 'child_process';
 import { DatabaseService } from '../services/supabaseService';
-import { VoiceoverService, VoiceConfig } from '../services/VoiceoverService';
+import { VoiceoverService } from '../services/VoiceoverService';
 import { StorageService } from '../services/storageService';
 import { getBinaryPath } from '../services/videoProcessor';
+import { AudioMixer } from '../services/voiceover/AudioMixer';
+import { VoiceoverPlan, buildVoiceoverPlan } from '../services/voiceover/VoiceoverPlan';
+import { VoiceQualityEngine } from '../services/VoiceQualityEngine';
 
 dotenv.config();
 
 const db = new DatabaseService();
 const storage = StorageService.getInstance();
 const voiceoverService = VoiceoverService.getInstance();
+const audioMixer = AudioMixer.getInstance();
+const qualityEngine = VoiceQualityEngine.getInstance();
 
 let isPolling = false;
 let stopRequested = false;
@@ -20,7 +25,6 @@ async function processVoiceoverClip(vc: any) {
   const vcId = vc.id;
   console.log(`[VoiceoverWorker]: Processing voiceover_clip ${vcId}`);
   const startTime = Date.now();
-  const ffmpegBin = getBinaryPath('ffmpeg');
   const ffprobeBin = getBinaryPath('ffprobe');
 
   const updateStage = async (stage: string) => {
@@ -32,10 +36,10 @@ async function processVoiceoverClip(vc: any) {
   };
 
   try {
-    // 1. Fetch original clip to get the video url
+    // 1. Fetch original clip to get the video url and durations
     const { data: clipData, error: clipErr } = await db.getSupabase()
       .from('clips')
-      .select('video_url, storage_path')
+      .select('video_url, storage_path, start_time, end_time')
       .eq('id', vc.source_clip_id)
       .single();
 
@@ -44,14 +48,16 @@ async function processVoiceoverClip(vc: any) {
     }
 
     const sourceVideoUrl = clipData.storage_path || clipData.video_url;
+    let sourceDuration = 30;
+    if (clipData.end_time && clipData.start_time) {
+      sourceDuration = Math.max(1, Number(clipData.end_time) - Number(clipData.start_time));
+    }
     
     // 2. Setup paths
     const tempDir = path.join(process.cwd(), 'temp', `vo_${vcId}`);
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
     const inputVideoPath = path.join(tempDir, 'source.mp4');
-    const outputAudioPath = path.join(tempDir, 'tts.mp3');
-    const outputVideoPath = path.join(tempDir, 'final.mp4');
 
     // 3. Obtain source video (local disk or remote storage)
     if (sourceVideoUrl && fs.existsSync(sourceVideoUrl)) {
@@ -70,46 +76,80 @@ async function processVoiceoverClip(vc: any) {
       fs.writeFileSync(inputVideoPath, Buffer.from(buffer));
     }
 
-    // 4. Generate TTS Audio
-    await updateStage('generating_audio');
-    console.log(`[VoiceoverWorker]: Generating TTS via ${vc.provider}`);
-    const config: VoiceConfig = {
-      provider: vc.provider as any,
-      voiceId: vc.voice,
-      ...(vc.metadata?.voiceConfig || {}),
-    };
-    
-    await voiceoverService.synthesize(vc.narration_text, config, tempDir, vcId);
-    const generatedAudioPath = path.join(tempDir, `vo_${vcId}.mp3`);
-    fs.renameSync(generatedAudioPath, outputAudioPath);
-
-    // 5. FFmpeg Merge (Remove original audio, replace with new TTS, shortest duration)
-    await updateStage('merging');
-    console.log(`[VoiceoverWorker]: Merging TTS with Video using FFmpeg (${ffmpegBin})...`);
-    await new Promise<void>((resolve, reject) => {
-      execFile(ffmpegBin, [
-        '-y',
-        '-i', inputVideoPath,
-        '-i', outputAudioPath,
-        '-map', '0:v',
-        '-map', '1:a',
-        '-c:v', 'copy',
-        '-c:a', 'aac',
-        '-b:a', '192k',
-        '-shortest',
-        '-movflags', '+faststart',
-        outputVideoPath
-      ], (err, stdout, stderr) => {
-        if (err) {
-          console.error(`[VoiceoverWorker]: FFmpeg error: ${stderr}`);
-          reject(err);
-        } else {
-          resolve();
+    // Measure exact video duration from container
+    const exactVideoDuration: number = await new Promise((resolve) => {
+      execFile(ffprobeBin, [
+        '-v', 'error',
+        '-show_entries', 'format=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        inputVideoPath
+      ], (err, stdout) => {
+        if (err || !stdout) resolve(sourceDuration);
+        else {
+          const parsed = parseFloat(stdout.trim());
+          resolve(isNaN(parsed) || parsed <= 0 ? sourceDuration : parsed);
         }
       });
     });
 
-    // 6. Upload to Storage
+    // 4. Resolve or Construct VoiceoverPlan
+    let plan: VoiceoverPlan;
+    if (vc.metadata?.voiceoverPlan) {
+      plan = vc.metadata.voiceoverPlan;
+      // Ensure target duration is pinned to actual video duration
+      plan.targetDuration = exactVideoDuration;
+    } else {
+      const segments = vc.metadata?.timeline?.segments || [
+        {
+          id: `seg-1`,
+          startTime: 0,
+          endTime: exactVideoDuration,
+          text: vc.narration_text,
+          voice: vc.voice,
+          provider: vc.provider,
+          ...(vc.metadata?.voiceConfig || {})
+        }
+      ];
+
+      plan = buildVoiceoverPlan({
+        id: vcId,
+        sourceClipId: vc.source_clip_id,
+        sourceVideoUrl,
+        targetDuration: exactVideoDuration,
+        segments,
+        defaultVoice: vc.voice,
+        defaultProvider: vc.provider,
+        originalAudioPolicy: vc.metadata?.originalAudioPolicy || 'duck',
+        duckingPolicy: vc.metadata?.duckingPolicy,
+      });
+    }
+
+    // 5. Execute Plan via AudioMixer (TTS per segment + Sidechain Ducking + Explicit Duration)
+    await updateStage('generating_audio');
+    const mixResult = await audioMixer.executePlan(plan, inputVideoPath, tempDir);
+
+    const outputVideoPath = mixResult.outputVideoPath;
+    const outputAudioPath = mixResult.outputAudioPath;
+
+    // 6. Runtime Audio Quality Validation
+    await updateStage('validating_assets');
+    console.log(`[VoiceoverWorker]: Executing runtime audio quality inspection...`);
+
+    const fullScript = plan.timeline.segments.map(s => s.text).join(' ');
+    const qualityReport = await qualityEngine.analyze(outputAudioPath, fullScript);
+
+    console.log(
+      `[VoiceoverWorker]: Quality Engine Score: ${qualityReport.score}/100 ` +
+      `(passed=${qualityReport.passed}, issues=${qualityReport.issues.length})`
+    );
+
+    // If critical failure (e.g. silent audio or fatal clipping)
+    if (!qualityReport.passed && qualityReport.score < 40) {
+      const issueDetails = qualityReport.issues.map(i => `${i.severity.toUpperCase()}: ${i.detail}`).join('; ');
+      throw new Error(`Voice Quality Validation Failed (Score ${qualityReport.score}/100). Details: ${issueDetails}`);
+    }
+
+    // 7. Upload to Storage
     await updateStage('uploading');
     const s3VideoPath = `voiceovers/${vc.source_clip_id}/${vcId}.mp4`;
     const s3AudioPath = `voiceovers_audio/${vc.source_clip_id}/${vcId}.mp3`;
@@ -118,77 +158,30 @@ async function processVoiceoverClip(vc: any) {
     const publicVideoUrl = await storage.uploadFile(outputVideoPath, s3VideoPath);
     const publicAudioUrl = await storage.uploadFile(outputAudioPath, s3AudioPath);
 
-    // 7. Validate Assets
-    await updateStage('validating_assets');
-    console.log(`[VoiceoverWorker]: Validating assets...`);
-    
-    // 7a. Verify audio/video files exist locally & size > 0
-    if (!fs.existsSync(outputAudioPath) || fs.statSync(outputAudioPath).size === 0) {
-      throw new Error("Validation failed: Local audio file is missing or empty.");
-    }
-    if (!fs.existsSync(outputVideoPath) || fs.statSync(outputVideoPath).size === 0) {
-      throw new Error("Validation failed: Local video file is missing or empty.");
-    }
-
-    // 7b. Verify signed URLs / public URLs if external HTTP
-    if (publicVideoUrl.startsWith('http')) {
-      const videoHead = await fetch(publicVideoUrl, { method: 'HEAD' }).catch(() => null);
-      if (!videoHead || videoHead.status !== 200) {
-        const videoGet = await fetch(publicVideoUrl).catch(() => null);
-        if (!videoGet || videoGet.status !== 200) {
-          console.warn(`[VoiceoverWorker]: Public video URL verification non-fatal notice (${videoGet?.status || 'unreachable'}). File verified locally.`);
-        }
-      }
-    }
-
-    // 7c. Run ffprobe on output video container
-    await new Promise<void>((resolve, reject) => {
-      execFile(ffprobeBin, [
-        '-v', 'error',
-        '-select_streams', 'v:0',
-        '-show_entries', 'stream=codec_name',
-        '-of', 'default=noprint_wrappers=1',
-        outputVideoPath
-      ], (err, stdout, stderr) => {
-        if (err) {
-          reject(new Error(`ffprobe container check failed: ${stderr || err.message}`));
-        } else {
-          resolve();
-        }
-      });
-    });
-
-    const getDuration = async (filePath: string): Promise<number | null> => {
-      return new Promise((resolve) => {
-        execFile(ffprobeBin, [
-          '-v', 'error',
-          '-show_entries', 'format=duration',
-          '-of', 'default=noprint_wrappers=1:nokey=1',
-          filePath
-        ], (err, stdout) => {
-          if (err || !stdout) resolve(null);
-          else {
-            const parsed = parseFloat(stdout.trim());
-            resolve(isNaN(parsed) ? null : parsed);
-          }
-        });
-      });
-    };
-
-    const audioDuration = await getDuration(outputAudioPath);
-    const videoDuration = await getDuration(outputVideoPath);
-
     const generationTimeMs = Date.now() - startTime;
-
-    // 8. Update database as completed
     const finalVideoUrl = publicVideoUrl.replace(/host\.docker\.internal/g, 'localhost');
     const finalAudioUrl = publicAudioUrl.replace(/host\.docker\.internal/g, 'localhost');
+
+    // 8. Update database as completed with telemetry & quality report
+    const updatedMetadata = {
+      ...(vc.metadata || {}),
+      voiceoverPlan: plan,
+      captionPath: mixResult.captionPath ? path.basename(mixResult.captionPath) : undefined,
+      qualityReport: {
+        score: qualityReport.score,
+        passed: qualityReport.passed,
+        issues: qualityReport.issues,
+        metrics: qualityReport.metrics,
+      },
+      duration: mixResult.finalDuration,
+    };
 
     await db.getSupabase().from('voiceover_clips').update({
       status: 'completed',
       video_path: finalVideoUrl,
       audio_path: finalAudioUrl,
       generation_time_ms: generationTimeMs,
+      metadata: updatedMetadata,
       updated_at: new Date().toISOString()
     }).eq('id', vcId);
 
@@ -201,9 +194,9 @@ async function processVoiceoverClip(vc: any) {
         language: vc.metadata?.language || 'English',
         style: vc.metadata?.style || 'custom',
         script_mode: vc.script_mode || 'custom',
-        script_length: vc.narration_text?.length || 0,
-        audio_duration: audioDuration,
-        video_duration: videoDuration,
+        script_length: fullScript.length,
+        audio_duration: mixResult.finalDuration,
+        video_duration: mixResult.finalDuration,
         generation_time_ms: generationTimeMs
       });
       console.log(`[VoiceoverWorker]: Logged feedback metrics for ${vcId}.`);
@@ -211,7 +204,7 @@ async function processVoiceoverClip(vc: any) {
       console.warn(`[VoiceoverWorker]: Failed to log feedback data for ${vcId}:`, feedbackErr.message);
     }
 
-    console.log(`[VoiceoverWorker]: Voiceover ${vcId} completed successfully in ${generationTimeMs}ms.`);
+    console.log(`[VoiceoverWorker]: Voiceover ${vcId} completed successfully in ${generationTimeMs}ms with duration ${mixResult.finalDuration}s.`);
 
     // Cleanup
     try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
@@ -235,14 +228,14 @@ const pollForVoiceovers = async () => {
         .rpc('claim_next_voiceover_clip');
 
       if (error && error.code !== 'PGRST204') {
-        console.error(`[VoiceoverWorker]: Error claiming voiceover (RPC):`, error.message);
+        // RPC might not exist in some environments; will fallback to direct select below
       }
       
       if (data && data.length > 0) {
         const vc = data[0];
         await processVoiceoverClip(vc);
       } else {
-        // Fallback for simple fetching if RPC doesn't exist or returned nothing
+        // Fallback for simple fetching
         const { data: pending, error: fetchErr } = await db.getSupabase()
           .from('voiceover_clips')
           .select('*')
@@ -252,7 +245,7 @@ const pollForVoiceovers = async () => {
 
         if (pending && pending.length > 0) {
           const vc = pending[0];
-          // Simple optimistic locking
+          // Optimistic locking
           const { data: updated, error: updateErr } = await db.getSupabase()
             .from('voiceover_clips')
             .update({ status: 'processing', updated_at: new Date().toISOString() })
@@ -265,10 +258,10 @@ const pollForVoiceovers = async () => {
           }
         }
       }
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      await new Promise(resolve => setTimeout(resolve, 3000));
     } catch (err: any) {
       console.error(`[VoiceoverWorker]: ❌ Error in polling loop:`, err.message);
-      await new Promise(resolve => setTimeout(resolve, 10000));
+      await new Promise(resolve => setTimeout(resolve, 8000));
     }
   }
   console.log(`[VoiceoverWorker]: 🛑 Stopped.`);

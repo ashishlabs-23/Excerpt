@@ -108,8 +108,12 @@ export const getBinaryPath = (name: string) => {
   return name; // Fallback to system PATH
 };
 
-const highQualityEncodeArgs = () => {
-  const isDraft = process.env.RENDER_MODE === 'draft';
+export type GenerationMode = 'draft' | 'quality';
+
+export const highQualityEncodeArgs = (mode?: GenerationMode) => {
+  const defaultMode: GenerationMode = process.env.RENDER_MODE === 'draft' ? 'draft' : 'quality';
+  const effectiveMode: GenerationMode = (mode === 'draft' || mode === 'quality') ? mode : defaultMode;
+  const isDraft = effectiveMode === 'draft';
   const hwAccel = process.env.EXCERPT_HW_ACCEL;
 
   if (hwAccel === 'nvenc') {
@@ -119,7 +123,7 @@ const highQualityEncodeArgs = () => {
       '-cq', isDraft ? '22' : '19',
       '-pix_fmt', 'yuv420p',
       '-c:a', 'aac',
-      '-b:a', '320k',
+      '-b:a', isDraft ? '192k' : '320k',
       '-ar', '48000',
       '-movflags', '+faststart'
     ];
@@ -128,10 +132,10 @@ const highQualityEncodeArgs = () => {
   if (hwAccel === 'videotoolbox') {
     return [
       '-c:v', 'h264_videotoolbox',
-      '-b:v', '6M',
+      '-b:v', isDraft ? '4M' : '6M',
       '-pix_fmt', 'yuv420p',
       '-c:a', 'aac',
-      '-b:a', '320k',
+      '-b:a', isDraft ? '192k' : '320k',
       '-ar', '48000',
       '-movflags', '+faststart'
     ];
@@ -140,9 +144,9 @@ const highQualityEncodeArgs = () => {
   return [
     '-c:v', 'libx264',
     '-preset', isDraft ? 'veryfast' : 'fast',
-    '-crf', isDraft ? '20' : '18',
-    '-maxrate', '12M',
-    '-bufsize', '16M',
+    '-crf', isDraft ? '22' : '18',
+    '-maxrate', isDraft ? '8M' : '12M',
+    '-bufsize', isDraft ? '12M' : '16M',
     '-profile:v', 'high',
     '-level', '4.2',
     '-pix_fmt', 'yuv420p',
@@ -153,7 +157,7 @@ const highQualityEncodeArgs = () => {
     '-g', '60',
     '-keyint_min', '60',
     '-c:a', 'aac',
-    '-b:a', '320k',
+    '-b:a', isDraft ? '192k' : '320k',
     '-ar', '48000',
     '-movflags', '+faststart'
   ];
@@ -182,6 +186,19 @@ export interface SmartCropPlan {
   xExpression: string;
   yExpression: string;
   debug: string;
+}
+
+export interface SinglePassRenderOptions {
+  inputPath: string;
+  outputPath: string;
+  start: number;
+  duration: number;
+  cropPlan?: any;
+  subtitlePath?: string;
+  bRollClips?: { videoPath: string; startSec: number; durationSec: number; layout?: string }[];
+  hookText?: string;
+  totalDurationSec?: number;
+  generationMode?: GenerationMode;
 }
 
 
@@ -374,6 +391,26 @@ export class VideoProcessor {
     });
   }
 
+  private async hasAudioStream(inputPath: string): Promise<boolean> {
+    const bin = getBinaryPath('ffprobe');
+    return new Promise((resolve) => {
+      const args = [
+        '-v', 'error',
+        '-select_streams', 'a',
+        '-show_entries', 'stream=codec_type',
+        '-of', 'csv=p=0',
+        inputPath,
+      ];
+      execFile(bin, args, { timeout: 10000 }, (err, stdout) => {
+        if (err || !stdout || !stdout.trim()) {
+          resolve(false);
+        } else {
+          resolve(true);
+        }
+      });
+    });
+  }
+
   private smoothCropPoints(points: SmartCropPoint[]): SmartCropPoint[] {
     if (points.length <= 2) {
       return points;
@@ -545,9 +582,266 @@ export class VideoProcessor {
   }
 
   /**
-   * Cuts a video segment and applies 9:16 cropping, with optional single-pass subtitle burn-in.
+   * Constructs the 9:16 crop filtergraph and smart crop plan.
    */
-  async processClip(inputPath: string, outputPath: string, start: number, duration: number, nexusCropPlan?: any, subtitlePath?: string): Promise<string> {
+  async buildCropFilter(
+    inputPath: string,
+    start: number,
+    duration: number,
+    nexusCropPlan?: any
+  ): Promise<{ cropFilter: string; cropPlan: SmartCropPlan }> {
+    let cropPlan: SmartCropPlan;
+
+    const contentType = nexusCropPlan?.content_type || 'mixed';
+    const recommendedZoom = nexusCropPlan?.recommended_zoom;
+    // Lock neutral zoom factor (1.0) to preserve full vertical context and eliminate head/chin cutoffs
+    const zoomFactor = typeof recommendedZoom === 'number' && recommendedZoom > 0 && recommendedZoom <= 1.05
+      ? recommendedZoom
+      : 1.0;
+
+    const cropWidth = 1080;
+    const cropHeight = 1920;
+
+    let scaledWidth = Math.round(cropWidth * zoomFactor);
+    let scaledHeight = Math.round(cropHeight * zoomFactor);
+    let maxOffset = Math.max(0, scaledWidth - cropWidth);
+    let maxVOffset = Math.max(0, scaledHeight - cropHeight);
+
+    try {
+      const { width, height } = await this.getVideoDimensions(inputPath);
+      const widthRatio = (cropWidth * zoomFactor) / width;
+      const heightRatio = (cropHeight * zoomFactor) / height;
+      const uniformRatio = Math.max(widthRatio, heightRatio);
+
+      scaledWidth = roundEven(width * uniformRatio);
+      scaledHeight = roundEven(height * uniformRatio);
+      maxOffset = Math.max(0, scaledWidth - cropWidth);
+      maxVOffset = Math.max(0, scaledHeight - cropHeight);
+    } catch (e: any) {
+      console.warn(`[VideoProcessor]: Dimension lookup failed, forcing safe crop bounds: ${e.message}`);
+    }
+
+    let cropFilter = '';
+
+    if (contentType === 'dual_split' || contentType === 'podcast_split' || nexusCropPlan?.layout === 'dual_split') {
+      // SOTA Dual-Speaker Stacked Split Layout (Top: Host / Speaker A, Bottom: Guest / Speaker B)
+      console.log(`[VideoProcessor]: Applying SOTA Dual-Speaker Stacked Split Layout (1080x960 Top + 1080x960 Bottom)...`);
+      const s1X = nexusCropPlan?.speaker1_x ?? 0;
+      const s2X = nexusCropPlan?.speaker2_x ?? 0.5;
+      cropFilter = `split[s1][s2];[s1]crop=iw*0.5:ih:iw*${s1X}:0,scale=${cropWidth}:${cropHeight/2}:flags=lanczos[top];[s2]crop=iw*0.5:ih:iw*${s2X}:0,scale=${cropWidth}:${cropHeight/2}:flags=lanczos[bot];[top][bot]vstack=inputs=2,setsar=1`;
+      cropPlan = {
+        mode: 'static',
+        xExpression: '0',
+        yExpression: '0',
+        debug: 'dual-speaker stacked split (1080x1920)',
+      };
+    } else if (contentType === 'screen_recording' || contentType === 'presentation') {
+      // Content-Focused Screen Mode: Fit 16:9 screen/slides inside 9:16 frame with High-Speed Ambient Blurred Video Backdrop
+      console.log(`[VideoProcessor]: Content type is '${contentType}'. Applying High-Speed Ambient Blurred Video Backdrop filter...`);
+      cropFilter = `split[bg][fg];[bg]scale=108:-1,scale=${cropWidth}:${cropHeight}:flags=bicubic[blurred];[fg]scale=${cropWidth}:-2:flags=lanczos[scaled];[blurred][scaled]overlay=0:(H-h)/2,setsar=1`;
+      cropPlan = {
+        mode: 'center',
+        xExpression: '0',
+        yExpression: '0',
+        debug: `content-focused ambient blurred backdrop (${contentType})`,
+      };
+    } else {
+      // Face-Driven & Smart Composition Mode (Talking Head, Podcast, Gaming, Mixed)
+      let speakerNormX = 0.5; // default center of 16:9 source
+      let speakerNormY = 0.35; // default upper third
+
+      const clipEnd = start + duration;
+      const timedPointsInWindow: { time: number; x: number; y: number; weight: number; trackId?: number }[] = [];
+
+      if (nexusCropPlan && Array.isArray(nexusCropPlan.frames_data) && nexusCropPlan.frames_data.length > 0) {
+        // Filter frames strictly within the clip's timestamp window [start, clipEnd]
+        const windowFrames = nexusCropPlan.frames_data.filter((f: any) => {
+          const t = typeof f.time === 'number' ? f.time : 0;
+          return t >= (start - 0.5) && t <= (clipEnd + 0.5);
+        });
+
+        const candidateFrames = windowFrames.length > 0 ? windowFrames : nexusCropPlan.frames_data;
+
+        for (const f of candidateFrames) {
+          const frameTime = typeof f.time === 'number' ? f.time : start;
+          // Extract primary active region (from active speaker tracker)
+          if (Array.isArray(f.regions) && f.regions.length > 0) {
+            const r = f.regions[0];
+            if (typeof r.x === 'number' && r.x >= 0 && r.x <= 1) {
+              const weight = (typeof r.confidence === 'number' && r.confidence > 0) ? r.confidence : 1;
+              const ry = (typeof r.y === 'number' && r.y >= 0 && r.y <= 1) ? r.y : 0.35;
+              timedPointsInWindow.push({
+                time: frameTime,
+                x: r.x,
+                y: ry,
+                weight,
+                trackId: typeof r.track === 'number' ? r.track : undefined
+              });
+            }
+          } else if (typeof f.x === 'number' && f.x >= 0 && f.x <= 1) {
+            timedPointsInWindow.push({ time: frameTime, x: f.x, y: typeof f.y === 'number' ? f.y : 0.35, weight: 1 });
+          }
+        }
+      } else if (nexusCropPlan && Array.isArray(nexusCropPlan.points) && nexusCropPlan.points.length > 0) {
+        const windowPoints = nexusCropPlan.points.filter((p: any) => {
+          const t = typeof p.time === 'number' ? p.time : 0;
+          return t >= (start - 0.5) && t <= (clipEnd + 0.5);
+        });
+        const candPoints = windowPoints.length > 0 ? windowPoints : nexusCropPlan.points;
+        for (const p of candPoints) {
+          const pTime = typeof p.time === 'number' ? p.time : start;
+          if (typeof p.x === 'number' && p.x >= 0 && p.x <= 1) {
+            timedPointsInWindow.push({ time: pTime, x: p.x, y: typeof p.y === 'number' ? p.y : 0.35, weight: 1 });
+          }
+        }
+      }
+
+      if (timedPointsInWindow.length > 0) {
+        const totalWeight = timedPointsInWindow.reduce((s, p) => s + p.weight, 0);
+        speakerNormX = timedPointsInWindow.reduce((s, p) => s + p.x * p.weight, 0) / totalWeight;
+        speakerNormY = timedPointsInWindow.reduce((s, p) => s + p.y * p.weight, 0) / totalWeight;
+      }
+
+      // Compute horizontal framing: dynamic pan if speaker moves or speakers switch across the clip
+      const targetCropX = Math.round(Math.max(0, Math.min(maxOffset, speakerNormX * scaledWidth - cropWidth / 2)));
+      let targetXExpression = String(targetCropX);
+      let framingMode: 'static' | 'dynamic' = 'static';
+
+      // Group into temporal buckets to check for intentional movement vs camera noise
+      const bucketDuration = 2.5;
+      const buckets: { time: number; x: number; weight: number; trackId?: number }[] = [];
+      for (let t = 0; t < duration; t += bucketDuration) {
+        const segStart = start + t;
+        const segEnd = segStart + bucketDuration;
+        const ptsInSeg = timedPointsInWindow.filter(p => p.time >= segStart && p.time < segEnd);
+        if (ptsInSeg.length > 0) {
+          const wSum = ptsInSeg.reduce((s, p) => s + p.weight, 0);
+          const avgX = ptsInSeg.reduce((s, p) => s + p.x * p.weight, 0) / wSum;
+          // Determine dominant track ID in this segment
+          const trackCounts: Record<number, number> = {};
+          for (const p of ptsInSeg) {
+            if (typeof (p as any).trackId === 'number') {
+              const tid = (p as any).trackId as number;
+              trackCounts[tid] = (trackCounts[tid] || 0) + 1;
+            }
+          }
+          const dominantTrack = Object.entries(trackCounts).sort((a, b) => b[1] - a[1])[0];
+          const trackId = dominantTrack ? Number(dominantTrack[0]) : undefined;
+          buckets.push({ time: t + bucketDuration / 2, x: avgX, weight: wSum, trackId });
+        }
+      }
+
+      if (buckets.length >= 2) {
+        const minX = Math.min(...buckets.map(b => b.x));
+        const maxX = Math.max(...buckets.map(b => b.x));
+        const deltaNorm = maxX - minX;
+
+        // Only activate dynamic camera pan if movement exceeds 8% horizontal shift
+        if (deltaNorm >= 0.08) {
+          framingMode = 'dynamic';
+          const keyframes = buckets.map(b => ({
+            time: Number(b.time.toFixed(2)),
+            pixelX: Math.round(Math.max(0, Math.min(maxOffset, b.x * scaledWidth - cropWidth / 2))),
+            trackId: b.trackId,
+            normX: b.x,
+          }));
+
+          let expr = String(keyframes[keyframes.length - 1].pixelX);
+          for (let i = keyframes.length - 2; i >= 0; i--) {
+            const kfCurr = keyframes[i];
+            const kfNext = keyframes[i + 1];
+            const dt = Math.max(0.5, kfNext.time - kfCurr.time);
+            const dx = kfNext.pixelX - kfCurr.pixelX;
+            const normDelta = Math.abs(dx) / scaledWidth;
+
+            const isSpeakerSwitch = typeof kfCurr.trackId === 'number' &&
+                                    typeof kfNext.trackId === 'number' &&
+                                    kfCurr.trackId !== kfNext.trackId &&
+                                    normDelta >= 0.10;
+
+            const prevDelta = i > 0 ? (kfCurr.pixelX - keyframes[i - 1].pixelX) : dx;
+            const isSameSubject = typeof kfCurr.trackId === 'number' && kfCurr.trackId === kfNext.trackId;
+            const isContinuousWalk = isSameSubject && (Math.sign(dx) === Math.sign(prevDelta)) && normDelta > 0.08;
+            const isAbruptDiscontinuity = normDelta > 0.25 && !isContinuousWalk;
+
+            const shouldHardCut = isSpeakerSwitch || isAbruptDiscontinuity;
+
+            if (shouldHardCut) {
+              const splitTime = Number(((kfCurr.time + kfNext.time) / 2).toFixed(2));
+              const cutInterp = `if(lt(t,${splitTime}),${kfCurr.pixelX},${kfNext.pixelX})`;
+              expr = `if(lt(t,${kfNext.time.toFixed(2)}),${cutInterp},${expr})`;
+            } else {
+              const u = `(t-${kfCurr.time.toFixed(2)})/${dt.toFixed(2)}`;
+              const smoothEase = `(${u})*(${u})*(3-2*(${u}))`;
+              const easeInterp = `${kfCurr.pixelX}+(${dx})*${smoothEase}`;
+              expr = `if(lt(t,${kfNext.time.toFixed(2)}),${easeInterp},${expr})`;
+            }
+          }
+          targetXExpression = `max(0,min(${maxOffset},${expr}))`;
+        }
+      }
+
+      // Golden Eye-Line Anchor: Position eye pupils at 35% from the top of the 1080x1920 frame
+      const idealY = Math.round(speakerNormY * scaledHeight - cropHeight * 0.35);
+      const targetCropY = Math.round(Math.max(0, Math.min(maxVOffset, idealY)));
+
+      cropPlan = {
+        mode: framingMode === 'dynamic' ? 'dynamic' : 'center',
+        xExpression: targetXExpression,
+        yExpression: String(targetCropY),
+        debug: `${framingMode}-speaker-crop (xNorm=${speakerNormX.toFixed(2)}, yNorm=${speakerNormY.toFixed(2)}, xExpr=${targetXExpression})`,
+      };
+
+      cropFilter = `scale=${scaledWidth}:${scaledHeight}:flags=bicubic,crop=w=${cropWidth}:h=${cropHeight}:x='${targetXExpression}':y='${targetCropY}',setsar=1`;
+
+      const enablePatternInterrupts = process.env.EXCERPT_PATTERN_INTERRUPTS === 'true' && duration >= 8.0;
+      if (enablePatternInterrupts) {
+        try {
+          const { PatternInterruptDirector } = require('./intelligence/PatternInterruptDirector');
+          const interruptDirector = new PatternInterruptDirector();
+          const rawWords = Array.isArray(nexusCropPlan?.words) ? nexusCropPlan.words : [];
+          const interruptPlan = interruptDirector.planInterrupts(duration, rawWords, {
+            scaledWidth,
+            scaledHeight,
+            cropWidth,
+            cropHeight,
+            targetCropX,
+            targetCropY,
+            speakerNormX,
+            speakerNormY,
+            enabled: true,
+          });
+          if (interruptPlan.enabled) {
+            cropFilter = interruptPlan.filtergraph;
+            console.log(`[VideoProcessor]: Applied Dynamic Pattern Interrupts with ${interruptPlan.windows.length} punch-in windows for ${duration.toFixed(1)}s clip.`);
+          }
+        } catch (pErr: any) {
+          console.warn(`[VideoProcessor]: PatternInterruptDirector skipped: ${pErr.message}`);
+        }
+      }
+    }
+
+    return { cropFilter, cropPlan: cropPlan! };
+  }
+
+  /**
+   * Unified Single-Pass Render Engine:
+   * Consolidates Crop, B-Roll, Subtitles, Hook Card, Progress Bar, and Audio into a SINGLE FFmpeg encode pass.
+   */
+  async renderSinglePassClip(options: SinglePassRenderOptions): Promise<string> {
+    const {
+      inputPath,
+      outputPath,
+      start,
+      duration,
+      cropPlan: nexusCropPlan,
+      subtitlePath,
+      bRollClips,
+      hookText,
+      totalDurationSec,
+      generationMode,
+    } = options;
+
     return StageExecutor.run({ inputPath, outputPath, start, duration, subtitlePath }, {
       stage: 'video_clipping',
       component: 'VideoProcessor',
@@ -555,317 +849,160 @@ export class VideoProcessor {
       timeoutMs: 1000 * 60 * 10, // 10 minute timeout
       timeoutType: 'process_timeout',
       validateInput: ({ inputPath }) => fs.existsSync(inputPath),
-      execute: async ({ inputPath, outputPath, start, duration }) => {
+      execute: async () => {
         const bin = getBinaryPath('ffmpeg');
-        let cropPlan: SmartCropPlan;
+        const preSeek = Math.max(0, start - 3);
+        const fineSeek = Number((start - preSeek).toFixed(3));
 
-        const contentType = nexusCropPlan?.content_type || 'mixed';
-        const recommendedZoom = nexusCropPlan?.recommended_zoom;
-        // Lock neutral zoom factor (1.0) to preserve full vertical context and eliminate head/chin cutoffs
-        const zoomFactor = typeof recommendedZoom === 'number' && recommendedZoom > 0 && recommendedZoom <= 1.05
-          ? recommendedZoom
-          : 1.0;
+        const inputs: string[] = [];
+        if (preSeek > 0) inputs.push('-ss', String(preSeek));
+        inputs.push('-i', inputPath);
+        if (fineSeek > 0) inputs.push('-ss', String(fineSeek));
+        inputs.push('-t', String(duration));
 
-        const cropWidth = 1080;
-        const cropHeight = 1920;
-
-        let scaledWidth = Math.round(cropWidth * zoomFactor);
-        let scaledHeight = Math.round(cropHeight * zoomFactor);
-        let maxOffset = Math.max(0, scaledWidth - cropWidth);
-        let maxVOffset = Math.max(0, scaledHeight - cropHeight);
-
-        try {
-          const { width, height } = await this.getVideoDimensions(inputPath);
-          const widthRatio = (cropWidth * zoomFactor) / width;
-          const heightRatio = (cropHeight * zoomFactor) / height;
-          const uniformRatio = Math.max(widthRatio, heightRatio);
-
-          scaledWidth = roundEven(width * uniformRatio);
-          scaledHeight = roundEven(height * uniformRatio);
-          maxOffset = Math.max(0, scaledWidth - cropWidth);
-          maxVOffset = Math.max(0, scaledHeight - cropHeight);
-        } catch (e: any) {
-          console.warn(`[VideoProcessor]: Dimension lookup failed, forcing safe crop bounds: ${e.message}`);
-        }
-
-        let cropFilter = '';
-
-        if (contentType === 'dual_split' || contentType === 'podcast_split' || nexusCropPlan?.layout === 'dual_split') {
-          // SOTA Dual-Speaker Stacked Split Layout (Top: Host / Speaker A, Bottom: Guest / Speaker B)
-          console.log(`[VideoProcessor]: Applying SOTA Dual-Speaker Stacked Split Layout (1080x960 Top + 1080x960 Bottom)...`);
-          const s1X = nexusCropPlan?.speaker1_x ?? 0;
-          const s2X = nexusCropPlan?.speaker2_x ?? 0.5;
-          cropFilter = `split[s1][s2];[s1]crop=iw*0.5:ih:iw*${s1X}:0,scale=${cropWidth}:${cropHeight/2}:flags=lanczos[top];[s2]crop=iw*0.5:ih:iw*${s2X}:0,scale=${cropWidth}:${cropHeight/2}:flags=lanczos[bot];[top][bot]vstack=inputs=2,setsar=1`;
-          cropPlan = {
-            mode: 'static',
-            xExpression: '0',
-            yExpression: '0',
-            debug: 'dual-speaker stacked split (1080x1920)',
-          };
-        } else if (contentType === 'screen_recording' || contentType === 'presentation') {
-          // Content-Focused Screen Mode: Fit 16:9 screen/slides inside 9:16 frame with High-Speed Ambient Blurred Video Backdrop
-          console.log(`[VideoProcessor]: Content type is '${contentType}'. Applying High-Speed Ambient Blurred Video Backdrop filter...`);
-          cropFilter = `split[bg][fg];[bg]scale=108:-1,scale=${cropWidth}:${cropHeight}:flags=bicubic[blurred];[fg]scale=${cropWidth}:-2:flags=lanczos[scaled];[blurred][scaled]overlay=0:(H-h)/2,setsar=1`;
-          cropPlan = {
-            mode: 'center',
-            xExpression: '0',
-            yExpression: '0',
-            debug: `content-focused ambient blurred backdrop (${contentType})`,
-          };
-        } else {
-          // Face-Driven & Smart Composition Mode (Talking Head, Podcast, Gaming, Mixed)
-          let speakerNormX = 0.5; // default center of 16:9 source
-          let speakerNormY = 0.35; // default upper third
-
-          const clipEnd = start + duration;
-          const timedPointsInWindow: { time: number; x: number; y: number; weight: number; trackId?: number }[] = [];
-
-          if (nexusCropPlan && Array.isArray(nexusCropPlan.frames_data) && nexusCropPlan.frames_data.length > 0) {
-            // Filter frames strictly within the clip's timestamp window [start, clipEnd]
-            const windowFrames = nexusCropPlan.frames_data.filter((f: any) => {
-              const t = typeof f.time === 'number' ? f.time : 0;
-              return t >= (start - 0.5) && t <= (clipEnd + 0.5);
-            });
-
-            const candidateFrames = windowFrames.length > 0 ? windowFrames : nexusCropPlan.frames_data;
-
-            for (const f of candidateFrames) {
-              const frameTime = typeof f.time === 'number' ? f.time : start;
-              // Extract primary active region (from active speaker tracker)
-              if (Array.isArray(f.regions) && f.regions.length > 0) {
-                const r = f.regions[0];
-                if (typeof r.x === 'number' && r.x >= 0 && r.x <= 1) {
-                  const weight = (typeof r.confidence === 'number' && r.confidence > 0) ? r.confidence : 1;
-                  const ry = (typeof r.y === 'number' && r.y >= 0 && r.y <= 1) ? r.y : 0.35;
-                  timedPointsInWindow.push({
-                    time: frameTime,
-                    x: r.x,
-                    y: ry,
-                    weight,
-                    trackId: typeof r.track === 'number' ? r.track : undefined
-                  });
-                }
-              } else if (typeof f.x === 'number' && f.x >= 0 && f.x <= 1) {
-                timedPointsInWindow.push({ time: frameTime, x: f.x, y: typeof f.y === 'number' ? f.y : 0.35, weight: 1 });
-              }
-            }
-          } else if (nexusCropPlan && Array.isArray(nexusCropPlan.points) && nexusCropPlan.points.length > 0) {
-            const windowPoints = nexusCropPlan.points.filter((p: any) => {
-              const t = typeof p.time === 'number' ? p.time : 0;
-              return t >= (start - 0.5) && t <= (clipEnd + 0.5);
-            });
-            const candPoints = windowPoints.length > 0 ? windowPoints : nexusCropPlan.points;
-            for (const p of candPoints) {
-              const pTime = typeof p.time === 'number' ? p.time : start;
-              if (typeof p.x === 'number' && p.x >= 0 && p.x <= 1) {
-                timedPointsInWindow.push({ time: pTime, x: p.x, y: typeof p.y === 'number' ? p.y : 0.35, weight: 1 });
-              }
-            }
-          }
-
-          if (timedPointsInWindow.length > 0) {
-            const totalWeight = timedPointsInWindow.reduce((s, p) => s + p.weight, 0);
-            speakerNormX = timedPointsInWindow.reduce((s, p) => s + p.x * p.weight, 0) / totalWeight;
-            speakerNormY = timedPointsInWindow.reduce((s, p) => s + p.y * p.weight, 0) / totalWeight;
-          }
-
-          // Compute horizontal framing: dynamic pan if speaker moves or speakers switch across the clip
-          const targetCropX = Math.round(Math.max(0, Math.min(maxOffset, speakerNormX * scaledWidth - cropWidth / 2)));
-          let targetXExpression = String(targetCropX);
-          let framingMode: 'static' | 'dynamic' = 'static';
-
-          // Group into temporal buckets to check for intentional movement vs camera noise
-          const bucketDuration = 2.5;
-          const buckets: { time: number; x: number; weight: number; trackId?: number }[] = [];
-          for (let t = 0; t < duration; t += bucketDuration) {
-            const segStart = start + t;
-            const segEnd = segStart + bucketDuration;
-            const ptsInSeg = timedPointsInWindow.filter(p => p.time >= segStart && p.time < segEnd);
-            if (ptsInSeg.length > 0) {
-              const wSum = ptsInSeg.reduce((s, p) => s + p.weight, 0);
-              const avgX = ptsInSeg.reduce((s, p) => s + p.x * p.weight, 0) / wSum;
-              // Determine dominant track ID in this segment
-              const trackCounts: Record<number, number> = {};
-              for (const p of ptsInSeg) {
-                if (typeof (p as any).trackId === 'number') {
-                  const tid = (p as any).trackId as number;
-                  trackCounts[tid] = (trackCounts[tid] || 0) + 1;
-                }
-              }
-              const dominantTrack = Object.entries(trackCounts).sort((a, b) => b[1] - a[1])[0];
-              const trackId = dominantTrack ? Number(dominantTrack[0]) : undefined;
-              buckets.push({ time: t + bucketDuration / 2, x: avgX, weight: wSum, trackId });
-            }
-          }
-
-          if (buckets.length >= 2) {
-            const minX = Math.min(...buckets.map(b => b.x));
-            const maxX = Math.max(...buckets.map(b => b.x));
-            const deltaNorm = maxX - minX;
-
-            // Only activate dynamic camera pan if movement exceeds 8% horizontal shift
-            if (deltaNorm >= 0.08) {
-              framingMode = 'dynamic';
-              const keyframes = buckets.map(b => ({
-                time: Number(b.time.toFixed(2)),
-                pixelX: Math.round(Math.max(0, Math.min(maxOffset, b.x * scaledWidth - cropWidth / 2))),
-                trackId: b.trackId,
-                normX: b.x,
-              }));
-
-              let expr = String(keyframes[keyframes.length - 1].pixelX);
-              for (let i = keyframes.length - 2; i >= 0; i--) {
-                const kfCurr = keyframes[i];
-                const kfNext = keyframes[i + 1];
-                const dt = Math.max(0.5, kfNext.time - kfCurr.time);
-                const dx = kfNext.pixelX - kfCurr.pixelX;
-                const normDelta = Math.abs(dx) / scaledWidth;
-
-                // Multi-signal CUT / PAN / HOLD Decision Matrix:
-                // 1. Speaker Switch: Distinct active tracks -> HARD CUT even on modest (>= 10%) shift
-                const isSpeakerSwitch = typeof kfCurr.trackId === 'number' &&
-                                        typeof kfNext.trackId === 'number' &&
-                                        kfCurr.trackId !== kfNext.trackId &&
-                                        normDelta >= 0.10;
-
-                // 2. Continuous Motion Tracking: Same subject walking across frame
-                // Preserves smooth cinematic pan even on large (>20%) shifts if velocity direction is continuous
-                const prevDelta = i > 0 ? (kfCurr.pixelX - keyframes[i - 1].pixelX) : dx;
-                const isSameSubject = typeof kfCurr.trackId === 'number' && kfCurr.trackId === kfNext.trackId;
-                const isContinuousWalk = isSameSubject && (Math.sign(dx) === Math.sign(prevDelta)) && normDelta > 0.08;
-
-                // 3. Large Abrupt Discontinuity: Jump > 25% that is NOT part of a continuous tracking shot
-                const isAbruptDiscontinuity = normDelta > 0.25 && !isContinuousWalk;
-
-                const shouldHardCut = isSpeakerSwitch || isAbruptDiscontinuity;
-
-                if (shouldHardCut) {
-                  // Instant hard cut at transition midpoint to eliminate disorienting camera whip
-                  const splitTime = Number(((kfCurr.time + kfNext.time) / 2).toFixed(2));
-                  const cutInterp = `if(lt(t,${splitTime}),${kfCurr.pixelX},${kfNext.pixelX})`;
-                  expr = `if(lt(t,${kfNext.time.toFixed(2)}),${cutInterp},${expr})`;
-                } else {
-                  // Ponytail Closed-Form Cubic Easing (SmoothStep: 3u^2 - 2u^3 = u*u*(3-2u))
-                  // Smoothly pans for continuous walks, subtle reframing, and subject tracking
-                  const u = `(t-${kfCurr.time.toFixed(2)})/${dt.toFixed(2)}`;
-                  const smoothEase = `(${u})*(${u})*(3-2*(${u}))`;
-                  const easeInterp = `${kfCurr.pixelX}+(${dx})*${smoothEase}`;
-                  expr = `if(lt(t,${kfNext.time.toFixed(2)}),${easeInterp},${expr})`;
-                }
-              }
-              targetXExpression = `max(0,min(${maxOffset},${expr}))`;
-            }
-          }
-
-          // Golden Eye-Line Anchor: Position eye pupils at 35% from the top of the 1080x1920 frame
-          // This keeps posture natural and leaves the lower 40% open for kinetic subtitles
-          const idealY = Math.round(speakerNormY * scaledHeight - cropHeight * 0.35);
-          const targetCropY = Math.round(Math.max(0, Math.min(maxVOffset, idealY)));
-
-          cropPlan = {
-            mode: framingMode === 'dynamic' ? 'dynamic' : 'center',
-            xExpression: targetXExpression,
-            yExpression: String(targetCropY),
-            debug: `${framingMode}-speaker-crop (xNorm=${speakerNormX.toFixed(2)}, yNorm=${speakerNormY.toFixed(2)}, xExpr=${targetXExpression})`,
-          };
-
-          cropFilter = `scale=${scaledWidth}:${scaledHeight}:flags=bicubic,crop=w=${cropWidth}:h=${cropHeight}:x='${targetXExpression}':y='${targetCropY}',setsar=1`;
-
-          // Pattern Interrupts (Deferred to Phase C Contextual DirectorPlan; disabled by default to avoid metronomic over-editing)
-          const enablePatternInterrupts = process.env.EXCERPT_PATTERN_INTERRUPTS === 'true' && duration >= 8.0;
-          if (enablePatternInterrupts) {
-            try {
-              const { PatternInterruptDirector } = require('./intelligence/PatternInterruptDirector');
-              const interruptDirector = new PatternInterruptDirector();
-              const rawWords = Array.isArray(nexusCropPlan?.words) ? nexusCropPlan.words : [];
-              const interruptPlan = interruptDirector.planInterrupts(duration, rawWords, {
-                scaledWidth,
-                scaledHeight,
-                cropWidth,
-                cropHeight,
-                targetCropX,
-                targetCropY,
-                speakerNormX,
-                speakerNormY,
-                enabled: true,
-              });
-              if (interruptPlan.enabled) {
-                cropFilter = interruptPlan.filtergraph;
-                console.log(`[VideoProcessor]: Applied Dynamic Pattern Interrupts with ${interruptPlan.windows.length} punch-in windows for ${duration.toFixed(1)}s clip.`);
-              }
-            } catch (pErr: any) {
-              console.warn(`[VideoProcessor]: PatternInterruptDirector skipped: ${pErr.message}`);
-            }
+        if (bRollClips && bRollClips.length > 0) {
+          for (const clip of bRollClips) {
+            inputs.push('-i', clip.videoPath);
           }
         }
 
-        // Check if single-pass subtitle burn-in is requested
-        let finalVideoFilter = cropFilter;
+        const { cropFilter } = await this.buildCropFilter(inputPath, start, duration, nexusCropPlan);
+
+        const filterParts: string[] = [];
+        // Base cropped layer
+        filterParts.push(`[0:v]${cropFilter}[v_cropped]`);
+        let currentV = '[v_cropped]';
+
+        // 1. Contextual B-Roll Overlay
+        if (bRollClips && bRollClips.length > 0) {
+          for (let i = 0; i < bRollClips.length; i++) {
+            const clip = bRollClips[i];
+            const inputIdx = i + 1;
+            const overlayOut = `[bovl${i}]`;
+            const nextV = `[bv${i}]`;
+            const fadeDuration = 0.3;
+            const startSec = Math.max(0, clip.startSec);
+            const endSec = startSec + clip.durationSec;
+
+            let scaledBRoll = `[${inputIdx}:v]scale=960:540:force_original_aspect_ratio=decrease,format=yuva420p,setpts=PTS-STARTPTS+${startSec}/TB,fade=t=in:st=${startSec}:d=${fadeDuration}:alpha=1,fade=t=out:st=${endSec - fadeDuration}:d=${fadeDuration}:alpha=1${overlayOut}`;
+            let overlayX = '(W-w)/2';
+            let overlayY = clip.layout === 'picture_in_picture_top' ? '180' : '(H-h)/2';
+
+            if (clip.layout === 'full_cutaway') {
+              scaledBRoll = `[${inputIdx}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,format=yuva420p,setpts=PTS-STARTPTS+${startSec}/TB,fade=t=in:st=${startSec}:d=${fadeDuration}:alpha=1,fade=t=out:st=${endSec - fadeDuration}:d=${fadeDuration}:alpha=1${overlayOut}`;
+              overlayX = '0';
+              overlayY = '0';
+            }
+
+            filterParts.push(scaledBRoll);
+            filterParts.push(`${currentV}${overlayOut}overlay=${overlayX}:${overlayY}:enable='between(t,${startSec},${endSec})':eof_action=pass${nextV}`);
+            currentV = nextV;
+          }
+        }
+
+        // 2. ASS Subtitle Burn-in
         if (subtitlePath && fs.existsSync(subtitlePath)) {
           const safeAssPath = path.resolve(subtitlePath).replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\\\'");
-          finalVideoFilter = `${cropFilter},ass='${safeAssPath}'`;
-          console.log(`[VideoProcessor]: Fusing ASS caption filter into single-pass crop graph for ${outputPath}`);
+          const nextV = '[v_caps]';
+          filterParts.push(`${currentV}ass='${safeAssPath}'${nextV}`);
+          currentV = nextV;
         }
 
-        const runFfmpeg = (vf: string): Promise<string> => {
-          return new Promise<string>((resolve, reject) => {
-            console.log(`[VideoProcessor]: Cutting clip with ${bin} at ${start}s -> ${outputPath}`);
-            const preSeek = Math.max(0, start - 3);
-            const fineSeek = Number((start - preSeek).toFixed(3));
+        // 3. Editorial Hook Card + Animated Progress Bar
+        if (hookText && hookText.length > 0) {
+          const safeHook = hookText.replace(/'/g, '').replace(/:/g, ' - ');
+          const fontPath = 'C\\:/Windows/Fonts/arial.ttf';
+          const fontOption = fs.existsSync('C:/Windows/Fonts/arial.ttf') ? `:fontfile='${fontPath}'` : '';
+          const dur = Math.max(0.1, totalDurationSec || duration);
+          const hookFilters = [
+            `drawbox=x=60:y=80:w=960:h=85:color=black@0.8:t=fill:enable='lt(t,4.5)'`,
+            `drawbox=x=60:y=80:w=12:h=85:color=red@1.0:t=fill:enable='lt(t,4.5)'`,
+            `drawtext=text='${safeHook}'${fontOption}:fontsize=34:fontcolor=white:x=(w-text_w)/2+10:y=105:enable='lt(t,4.5)'`,
+            `drawbox=x=0:y=1905:w=1080:h=15:color=white@0.2:t=fill`,
+            `drawbox=x=0:y=1905:w='1080*(t/${dur})':h=15:color=yellow@0.95:t=fill`
+          ].join(',');
+          const nextV = '[v_hook]';
+          filterParts.push(`${currentV}${hookFilters}${nextV}`);
+          currentV = nextV;
+        }
 
-            const fadeDuration = 0.05;
-            const fadeStart = Math.max(0, duration - fadeDuration);
-            const audioFilter = [
-              'aresample=async=1',
-              'highpass=f=80',
-              `afade=t=in:st=0:d=${fadeDuration}`,
-              `afade=t=out:st=${fadeStart.toFixed(2)}:d=${fadeDuration}`,
-              'loudnorm=I=-16:TP=-1.5:LRA=11',
-            ].join(',');
+        // 4. Audio Dynamic Range & Loudness Normalization
+        const fadeDuration = 0.05;
+        const fadeStart = Math.max(0, duration - fadeDuration);
+        const audioFilter = [
+          'aresample=async=1',
+          'highpass=f=80',
+          `afade=t=in:st=0:d=${fadeDuration}`,
+          `afade=t=out:st=${fadeStart.toFixed(2)}:d=${fadeDuration}`,
+          'loudnorm=I=-16:TP=-1.5:LRA=11',
+        ].join(',');
 
-            const args = [
-              ...(preSeek > 0 ? ['-ss', String(preSeek)] : []),
-              '-i', inputPath,
-              ...(fineSeek > 0 ? ['-ss', String(fineSeek)] : []),
-              '-t', String(duration),
-              '-vf', vf,
-              ...highQualityEncodeArgs(),
-              '-af', audioFilter,
-              '-y',
-              outputPath
-            ];
+        const hasAudio = await this.hasAudioStream(inputPath);
+        let audioMap = '[outa]';
+        if (hasAudio) {
+          filterParts.push(`[0:a]${audioFilter}[outa]`);
+        } else {
+          filterParts.push(`anullsrc=r=48000:cl=stereo,atrim=0:${duration}[outa]`);
+        }
 
-            execFile(bin, args, { maxBuffer: 1024 * 1024 * 500 }, (error, stdout, stderr) => {
-              if (error) {
-                console.error('[VideoProcessor]: ffmpeg clip error:', stderr);
-                reject(new PipelineError({
-                  message: `ffmpeg clip failed: ${error.message}`,
-                  category: ErrorCategory.FFMPEG,
-                  stage: 'video_clipping',
-                  component: 'VideoProcessor',
-                  provider: 'FFmpeg',
-                  exitCode: error.code ? Number(error.code) : undefined,
-                  rootCause: stderr || error.message,
-                }));
-                return;
-              }
-              console.log('[VideoProcessor]: Clip processing complete');
-              resolve(outputPath);
-            });
+        const filterGraph = filterParts.join(';');
+
+        const args = [
+          ...inputs,
+          '-filter_complex', filterGraph,
+          '-map', currentV,
+          '-map', audioMap,
+          '-t', String(duration),
+          ...highQualityEncodeArgs(generationMode),
+          '-y',
+          outputPath
+        ];
+
+        return new Promise<string>((resolve, reject) => {
+          console.log(`[VideoProcessor]: Executing unified single-pass render (${generationMode || 'draft'}) -> ${outputPath}`);
+          execFile(bin, args, { maxBuffer: 1024 * 1024 * 500 }, (error, _stdout, stderr) => {
+            if (error) {
+              console.error('[VideoProcessor]: ffmpeg single-pass error:', stderr);
+              return reject(new PipelineError({
+                message: `ffmpeg single-pass failed: ${error.message}`,
+                category: ErrorCategory.FFMPEG,
+                stage: 'video_clipping',
+                component: 'VideoProcessor',
+                provider: 'FFmpeg',
+                exitCode: error.code ? Number(error.code) : undefined,
+                rootCause: stderr || error.message,
+              }));
+            }
+            console.log('[VideoProcessor]: Unified single-pass render complete');
+            resolve(outputPath);
           });
-        };
-
-        try {
-          return await runFfmpeg(finalVideoFilter);
-        } catch (filterErr: any) {
-          if (finalVideoFilter !== cropFilter) {
-            console.warn(`[VideoProcessor]: Subtitle filter failed (${filterErr.message}). Retrying with base crop filter...`);
-            return await runFfmpeg(cropFilter);
-          }
-          throw filterErr;
-        }
+        });
       },
       validateOutput: (outPath) => fs.existsSync(outPath) && fs.statSync(outPath).size > 0,
+    });
+  }
+
+  /**
+   * Cuts a video segment and applies 9:16 cropping, with optional single-pass subtitle burn-in.
+   * Delegates directly to unified renderSinglePassClip engine.
+   */
+  async processClip(
+    inputPath: string,
+    outputPath: string,
+    start: number,
+    duration: number,
+    nexusCropPlan?: any,
+    subtitlePath?: string,
+    generationMode?: GenerationMode
+  ): Promise<string> {
+    return this.renderSinglePassClip({
+      inputPath,
+      outputPath,
+      start,
+      duration,
+      cropPlan: nexusCropPlan,
+      subtitlePath,
+      generationMode,
     });
   }
 

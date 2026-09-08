@@ -423,7 +423,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
                     Processing Mode
                   </span>
                   <p className="text-xs text-white/50 leading-relaxed max-w-lg">
-                    Choose <strong>⚡ Draft Mode (1-2 min)</strong> for rapid turnaround, or <strong>🏆 Quality Mode (3-5 min)</strong> for maximum context analysis, smart cropping, and custom templates.
+                    Choose <strong>⚡ Draft Mode (1-2 min)</strong> for rapid turnaround, or <strong>🏆 Quality Mode (3-5 min)</strong> for deep contextual analysis and production master encoding.
                   </p>
                 </div>
                 <div className="flex items-center bg-black/40 p-1 rounded-xl border border-white/5 shrink-0 self-start sm:self-center">

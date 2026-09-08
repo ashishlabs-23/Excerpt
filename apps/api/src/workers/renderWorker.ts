@@ -44,7 +44,7 @@ async function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function claimNextRenderJob() {
+export async function claimNextRenderJob() {
   const workerEnv = (process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development'));
   
   // 1. Fast local / Firebase Queue Claim
@@ -95,7 +95,7 @@ async function claimNextRenderJob() {
   return null;
 }
 
-async function processRenderJob(renderJob: any) {
+export async function processRenderJob(renderJob: any) {
   return withLogContext({ renderJobId: renderJob.id, jobId: renderJob.job_id }, async () => {
     console.log(`[RenderWorker]: Processing render job ${renderJob.id} for job ${renderJob.job_id}`);
     
@@ -117,6 +117,7 @@ async function processRenderJob(renderJob: any) {
     const clipId = renderJob.clip_id;
     const { clipStart, clipEnd, clipWords, cropPlan } = payload;
     const hookText: string = payload.hookText || '';
+    const generationMode = (payload.generationMode as 'draft' | 'quality') || (payload.generation_mode as 'draft' | 'quality') || (process.env.RENDER_MODE === 'draft' ? 'draft' : 'quality');
     
     // Path Normalization: Reconstruct absolute paths dynamically
     const tempDir = path.join(process.cwd(), 'temp', renderJob.job_id);
@@ -193,58 +194,16 @@ async function processRenderJob(renderJob: any) {
         }
       }
 
-      const cleanOutputPath = path.join(tempDir, `clip-${clipId}-clean.mp4`);
-      console.log(`[RenderWorker]: Executing Single-Pass Render for clean clip ${clipId}...`);
-      const renderStart = Date.now();
-      await processor.processClip(
-        videoPath,
-        cleanOutputPath,
-        clipStart,
-        clipEnd - clipStart,
-        cropPlan,
-        undefined
-      );
+      const clipDurationSec = clipEnd - clipStart;
+      const jumpCutPlan = payload.jumpCutPlan as { total_new_duration_sec?: number } | null | undefined;
+      const actualRenderedDurationSec = jumpCutPlan?.total_new_duration_sec ?? clipDurationSec;
 
-      if (hasCaptions) {
-        console.log(`[RenderWorker]: Burning ASS captions onto clip ${clipId}...`);
-        await processor.exportCustomClip(
-          cleanOutputPath,
-          outputPath,
-          {
-            subtitlePath: assFilePath,
-          }
-        );
-      } else {
-        fs.copyFileSync(cleanOutputPath, outputPath);
-      }
-      cropMs = Date.now() - renderStart;
-      captionMs = hasCaptions ? 1 : 0;
+      let renderedClips: { videoPath: string; startSec: number; durationSec: number; layout?: string }[] = [];
+      let bRollDir: string | undefined;
 
-      // ── Phase E: Contextual B-Roll + Hook Card ──────────────────────────
-      // Gate: ENABLE_PHASE_E_BROLL=true (off by default — non-breaking)
-      //
-      // FIX-Bug2: B-Roll clips are synthesised with concurrency=2 to prevent
-      //   spawning N concurrent FFmpeg processes that can exhaust memory on
-      //   low-memory servers when multiple unique keywords are detected.
-      //
-      // FIX-Bug3: File promotion uses fs.renameSync (atomic on the same
-      //   filesystem) instead of copyFileSync+unlink. This eliminates the
-      //   window where outputPath is partially written on a disk-full error.
-      //   The temp file is only cleaned up AFTER ffprobe confirms outputPath.
-      //
-      // FIX-Bug4: Hook Card progress bar duration uses the actual rendered
-      //   clip length from jumpCutPlan (dead-air removed) rather than the
-      //   raw source window (clipEnd - clipStart) which was always longer.
+      // ── Phase E: Contextual B-Roll Preparation (Gate: ENABLE_PHASE_E_BROLL=true) ──
       if (PHASE_E_BROLL_ENABLED) {
         try {
-          const clipDurationSec = clipEnd - clipStart;
-          // Actual rendered duration may be shorter when jump-cuts removed dead air.
-          // FIX-Bug4: Use total_new_duration_sec from jumpCutPlan if available.
-          const jumpCutPlan = payload.jumpCutPlan as { total_new_duration_sec?: number } | null | undefined;
-          const actualRenderedDurationSec = jumpCutPlan?.total_new_duration_sec ?? clipDurationSec;
-
-          // Words arrive from videoWorker in source-absolute timestamps.
-          // We pre-normalise here so planBRollMoments receives 0-based times.
           const isWordsAbsolute = clipStart > 2.0 && (clipWords || []).some((w: any) => typeof w.start === 'number' && w.start >= clipStart * 0.5);
           const relWordsForBRoll = (clipWords || []).map((w: any) => ({
             word: w.word || '',
@@ -254,46 +213,47 @@ async function processRenderJob(renderJob: any) {
 
           const bRollMoments = generativeVisualEngine.planBRollMoments(
             relWordsForBRoll,
-            0,                   // words are already 0-based
-            clipDurationSec      // plan against original window; overlay times are relative
+            0,
+            clipDurationSec
           );
 
           if (bRollMoments.length > 0) {
-            const bRollDir = path.join(tempDir, `broll-${clipId}`);
-            // FIX-Bug2: Concurrency cap prevents OOM from parallel FFmpeg processes.
+            bRollDir = path.join(tempDir, `broll-${clipId}`);
             const synthesisLimit = pLimit(2);
-            const renderedClips = await Promise.all(
+            renderedClips = await Promise.all(
               bRollMoments.map((moment) =>
                 synthesisLimit(async () => {
-                  const bRollPath = await generativeVisualEngine.generateLocalBRollClip(moment, bRollDir);
+                  const bRollPath = await generativeVisualEngine.generateLocalBRollClip(moment, bRollDir!);
                   return { videoPath: bRollPath, startSec: moment.startSec, durationSec: moment.durationSec, layout: moment.layout };
                 })
               )
             );
-
-            const bRollOutputPath = path.join(tempDir, `clip-${clipId}-broll.mp4`);
-            await processor.overlayBRoll(outputPath, renderedClips, bRollOutputPath);
-            // FIX-Bug3: Atomic rename instead of copy+delete.
-            // renameSync is guaranteed atomic on the same filesystem partition.
-            // outputPath is only replaced after bRollOutputPath is fully written.
-            fs.renameSync(bRollOutputPath, outputPath);
-            try { fs.rmSync(bRollDir, { recursive: true, force: true }); } catch {}
-            console.log(`[RenderWorker]: Phase E — ${bRollMoments.length} B-Roll overlays applied to clip ${clipId}`);
-          }
-
-          // Hook Card + Progress Bar (always on when Phase E is active)
-          if (hookText && hookText.length > 0) {
-            const hookOutputPath = path.join(tempDir, `clip-${clipId}-hook.mp4`);
-            // FIX-Bug4: actualRenderedDurationSec reflects jump-cut removal;
-            // the progress bar will now correctly reach 100% at the end of the clip.
-            await processor.addHookAndProgressBar(outputPath, hookOutputPath, hookText, actualRenderedDurationSec);
-            // FIX-Bug3: Atomic rename.
-            fs.renameSync(hookOutputPath, outputPath);
-            console.log(`[RenderWorker]: Phase E — Hook Card applied to clip ${clipId} (dur=${actualRenderedDurationSec.toFixed(2)}s)`);
+            console.log(`[RenderWorker]: Phase E — ${renderedClips.length} B-Roll clips prepared for unified render.`);
           }
         } catch (phaseEErr: any) {
-          console.warn(`[RenderWorker]: Phase E non-fatal error (clip will continue without B-Roll): ${phaseEErr.message}`);
+          console.warn(`[RenderWorker]: Phase E non-fatal B-Roll prep warning: ${phaseEErr.message}`);
         }
+      }
+
+      console.log(`[RenderWorker]: Executing unified single-pass render (${generationMode}) for clip ${clipId}...`);
+      const renderStart = Date.now();
+      await processor.renderSinglePassClip({
+        inputPath: videoPath,
+        outputPath,
+        start: clipStart,
+        duration: clipDurationSec,
+        cropPlan,
+        subtitlePath: hasCaptions ? assFilePath : undefined,
+        bRollClips: renderedClips.length > 0 ? renderedClips : undefined,
+        hookText: (PHASE_E_BROLL_ENABLED && hookText) ? hookText : undefined,
+        totalDurationSec: actualRenderedDurationSec,
+        generationMode,
+      });
+      cropMs = Date.now() - renderStart;
+      captionMs = hasCaptions ? 1 : 0;
+
+      if (bRollDir) {
+        try { fs.rmSync(bRollDir, { recursive: true, force: true }); } catch {}
       }
 
       // 2. Local FFprobe Stream Verification Gate (Verifies local MP4 health before upload)
@@ -529,4 +489,6 @@ async function startPolling() {
   }
 }
 
-startPolling();
+if (require.main === module) {
+  startPolling();
+}

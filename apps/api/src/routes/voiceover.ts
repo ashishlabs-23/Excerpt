@@ -7,6 +7,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import { buildVoiceoverPlan, validateVoiceoverPlan } from '../services/voiceover/VoiceoverPlan';
 
 const router = Router();
 const db = new DatabaseService();
@@ -117,28 +118,61 @@ router.post('/project/:id/render', requireUserJWT, async (req: Request, res: Res
       return;
     }
 
-    // Queue job in the main jobs table, but set job_type to 'voiceover'
-    const jobId = crypto.randomUUID();
-    await db.createJob({
-      id: jobId,
-      user_id: userId,
-      video_url: project.source_url,
-      job_type: 'voiceover',
-      status: 'queued',
-      progress: 0,
-      payload: {
-        voiceover_project_id: projectId,
-        voice_config: voiceConfig,
-        title: project.title,
-      },
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+    // Fetch existing segments for this project
+    const segments = await db.getVoiceoverSegments(projectId);
+    const duration = project.source_duration || 30;
+
+    const plan = buildVoiceoverPlan({
+      sourceClipId: projectId,
+      sourceVideoUrl: project.source_url,
+      targetDuration: duration,
+      segments: segments && segments.length > 0 ? segments : [
+        {
+          startTime: 0,
+          endTime: duration,
+          text: project.title || 'Voiceover narration',
+          voice: voiceConfig.voiceId,
+          provider: voiceConfig.provider || 'elevenlabs',
+          ...voiceConfig,
+        }
+      ],
+      defaultVoice: voiceConfig.voiceId,
+      defaultProvider: voiceConfig.provider || 'elevenlabs',
+      originalAudioPolicy: req.body.originalAudioPolicy || 'duck',
+      duckingPolicy: req.body.duckingPolicy,
+      captions: req.body.captions,
+      metadata: { projectId }
     });
 
-    // Update project status
-    await db.updateVoiceoverProject(projectId, { status: 'processing', source_job_id: jobId });
+    const validation = validateVoiceoverPlan(plan);
+    if (!validation.valid) {
+      return res.status(400).json({ error: 'Invalid VoiceoverPlan', details: validation.errors });
+    }
 
-    res.status(202).json({ jobId, message: 'Voiceover render job queued' });
+    // Queue DIRECTLY to voiceover_clips table so VoiceoverWorker exclusively owns and executes it
+    const vcData = {
+      source_clip_id: projectId,
+      user_id: userId,
+      provider: voiceConfig.provider || 'elevenlabs',
+      voice: voiceConfig.voiceId || 'pNInz6obpgDQGcFmaJgB',
+      narration_text: plan.timeline.segments.map(s => s.text).join(' '),
+      status: 'pending',
+      script_mode: 'project_timeline',
+      metadata: {
+        voiceoverPlan: plan,
+        projectId,
+        voiceConfig,
+      }
+    };
+
+    const voiceoverClip = await db.createVoiceoverClip(vcData);
+    await db.updateVoiceoverProject(projectId, { status: 'processing', source_job_id: voiceoverClip.id });
+
+    res.status(202).json({
+      voiceoverClipId: voiceoverClip.id,
+      message: 'Voiceover render job queued for VoiceoverWorker',
+      plan
+    });
   } catch (error: any) {
     console.error('[Voiceover API]: Error queueing render:', error.message);
     res.status(500).json({ error: error.message });
@@ -266,10 +300,7 @@ router.post('/clip/:clipId', requireUserJWT, async (req: Request, res: Response)
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    const { provider, voice, narrationText, scriptMode } = req.body;
-    if (!provider || !voice || !narrationText) {
-      return res.status(400).json({ error: 'provider, voice, and narrationText are required' });
-    }
+    const { provider, voice, narrationText, scriptMode, timeline, segments, originalAudioPolicy, duckingPolicy, voiceConfig, captions } = req.body;
 
     // Verify clip ownership
     const clip = await db.getClip(clipId);
@@ -277,18 +308,66 @@ router.post('/clip/:clipId', requireUserJWT, async (req: Request, res: Response)
        return;
     }
 
-    const vcData = {
-      source_clip_id: clipId,
-      user_id: userId,
-      provider,
-      voice,
-      narration_text: narrationText,
-      status: 'pending',
-      script_mode: scriptMode || 'custom',
+    const rawSegments = Array.isArray(segments) && segments.length > 0
+      ? segments
+      : (timeline?.segments && Array.isArray(timeline.segments) && timeline.segments.length > 0)
+        ? timeline.segments
+        : null;
+
+    const sourceDuration = (clip.end_time && clip.start_time)
+      ? Math.max(1, Number(clip.end_time) - Number(clip.start_time))
+      : 30;
+
+    const planSegments = rawSegments || [
+      {
+        startTime: 0,
+        endTime: sourceDuration,
+        text: narrationText || 'Untitled voiceover',
+        voice,
+        provider,
+        ...(voiceConfig || {})
+      }
+    ];
+
+    const plan = buildVoiceoverPlan({
+      sourceClipId: clipId,
+      sourceVideoUrl: clip.storage_path || clip.video_url,
+      targetDuration: sourceDuration,
+      segments: planSegments,
+      defaultVoice: voice,
+      defaultProvider: provider,
+      originalAudioPolicy: originalAudioPolicy || 'duck',
+      duckingPolicy: duckingPolicy || { duckLevelDb: -14, attackMs: 25, releaseMs: 250 },
+      captions,
       metadata: {
         style: req.body.style,
         language: req.body.language,
-        voiceConfig: req.body.voiceConfig || null,
+        voiceConfig: voiceConfig || null,
+      }
+    });
+
+    const validation = validateVoiceoverPlan(plan);
+    if (!validation.valid) {
+      return res.status(400).json({ error: 'Invalid VoiceoverPlan', details: validation.errors });
+    }
+
+    const fullNarrationText = plan.timeline.segments.map(s => s.text).join(' ');
+
+    const vcData = {
+      source_clip_id: clipId,
+      user_id: userId,
+      provider: provider || plan.timeline.segments[0]?.provider || 'elevenlabs',
+      voice: voice || plan.timeline.segments[0]?.voice || 'pNInz6obpgDQGcFmaJgB',
+      narration_text: fullNarrationText,
+      status: 'pending',
+      script_mode: scriptMode || 'timeline',
+      metadata: {
+        voiceoverPlan: plan,
+        timeline: plan.timeline,
+        originalAudioPolicy: plan.originalAudioPolicy,
+        style: req.body.style,
+        language: req.body.language,
+        voiceConfig: voiceConfig || null,
       }
     };
 
@@ -340,20 +419,33 @@ router.post('/voice/preview', requireUserJWT, async (req: Request, res: Response
     const service = VoiceoverService.getInstance();
     
     const previewText = text || "Welcome to Excerpt Neural Voiceover Studio.";
+    const config = {
+      provider: provider as any,
+      voiceId,
+      ...(voiceConfig || {})
+    };
+
+    // Fast-path: Check disk cache
+    const cachePath = service.getCacheFilePath(previewText, config, provider as any);
+    if (fs.existsSync(cachePath) && fs.statSync(cachePath).size > 0) {
+      console.log(`[Voiceover API]: ⚡ Serving voice preview from disk cache.`);
+      const cachedBuffer = fs.readFileSync(cachePath);
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('X-Cache', 'HIT');
+      return res.send(cachedBuffer);
+    }
+
     const tempDir = path.join(process.cwd(), 'temp', 'previews');
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
     
     const previewId = crypto.randomUUID();
-    const result = await service.synthesize(previewText, {
-      provider: provider as any,
-      voiceId,
-      ...(voiceConfig || {})
-    }, tempDir, previewId);
+    const result = await service.synthesize(previewText, config, tempDir, previewId);
     
     const audioBuffer = fs.readFileSync(result.audioPath);
     try { fs.unlinkSync(result.audioPath); } catch {}
     
     res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('X-Cache', 'MISS');
     res.send(audioBuffer);
   } catch (error: any) {
     console.error('[Voiceover API]: Error generating voice preview:', error.message);
@@ -364,14 +456,32 @@ router.post('/voice/preview', requireUserJWT, async (req: Request, res: Response
 // POST /api/voiceover/generate-script
 router.post('/generate-script', requireUserJWT, async (req: Request, res: Response) => {
   try {
-    const { style, language, contextText, customInstruction } = req.body;
+    const { style, language, contextText, customInstruction, clipId, visualContext: inputVisualContext } = req.body;
     if (!style || !language) {
       return res.status(400).json({ error: 'style and language are required' });
     }
 
+    let visualContext = inputVisualContext;
+    if (!visualContext && clipId) {
+      try {
+        const clip = await db.getClip(clipId);
+        if (clip) {
+          visualContext = {
+            clipTitle: clip.title,
+            clipSummary: clip.summary,
+            visualEvents: clip.visual_events || clip.metadata?.visual_events,
+            facesDetected: clip.metadata?.faces_detected,
+            ocrText: clip.metadata?.ocr_text,
+          };
+        }
+      } catch (err: any) {
+        console.warn(`[Voiceover API]: Could not fetch clip context for ${clipId}:`, err.message);
+      }
+    }
+
     const { ScriptGenerationService } = await import('../services/ScriptGenerationService');
     const service = ScriptGenerationService.getInstance();
-    const script = await service.generateScript(style, language, contextText, customInstruction);
+    const script = await service.generateScript(style, language, contextText, customInstruction, visualContext);
     res.json({ script });
   } catch (error: any) {
     console.error('[Voiceover API]: Error generating script:', error.message);

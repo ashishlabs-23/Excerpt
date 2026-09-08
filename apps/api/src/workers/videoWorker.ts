@@ -1805,7 +1805,8 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           virality_score: clip.virality_score,
           clip_score: clipScore,
           score_breakdown: clip.score_breakdown,
-          generation_mode: generationMode,
+          generation_mode: userRequestedMode,
+          candidate_strategy: generationMode,
           nexus: (clip as any).nexus_metadata,
           scale_type: (clip as any).scale_type,
           recommended_platform: (clip as any).recommended_platform,
@@ -1854,6 +1855,9 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           clipWords: rawClipWords,
           cropPlan: cropPlan,
           jumpCutPlan: jumpCutPlan,
+          hookText: hookText,
+          generationMode: userRequestedMode,
+          generation_mode: userRequestedMode,
         }
       };
       
@@ -2565,6 +2569,8 @@ export async function awaitRenderJobsAndFinalize(
 }
 
 // Start polling immediately when worker process is spawned
-startWorker().catch(err => {
-  console.error('[Worker]: Fatal startup error:', err);
-});
+if (require.main === module) {
+  startWorker().catch(err => {
+    console.error('[Worker]: Fatal startup error:', err);
+  });
+}

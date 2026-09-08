@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import https from 'https';
 import { execFile } from 'child_process';
 import { getBinaryPath } from './videoProcessor';
@@ -46,7 +47,7 @@ export interface ProviderStatus {
 
 const CIRCUIT_BREAKER_THRESHOLD = 3;         // failures before degraded
 const CIRCUIT_BREAKER_COOLDOWN_MS = 5 * 60000; // 5 minutes
-const MAX_NARRATION_CHARS = 500;
+const MAX_NARRATION_CHARS = 5000;
 
 // Google Neural2 voices — best quality per gender
 const GOOGLE_DEFAULT_VOICES: Record<VoiceGender, string> = {
@@ -101,18 +102,27 @@ function recordProviderSuccess(provider: VoiceProvider): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Sanitizes narration text to prevent prompt injection and malformed TTS input.
- * - Strips XML/HTML tags (SSML injection prevention)
- * - Truncates to MAX_NARRATION_CHARS
- * - Collapses excessive whitespace
+ * Whitelisted safe SSML tags for expressive human and AI speech direction:
+ * - <break time="..." strength="..."/> (dramatic pauses)
+ * - <emphasis level="...">...</emphasis> (vocal emphasis)
+ * - <prosody rate="..." pitch="..." volume="...">...</prosody> (pacing and pitch)
+ * - <phoneme alphabet="..." ph="...">...</phoneme> (pronunciation)
+ * - <say-as interpret-as="...">...</say-as> (digits, dates, acronyms)
+ * - <sub alias="...">...</sub> (abbreviations)
  */
+const SAFE_SSML_REGEX = /^<\/?(break|emphasis|prosody|phoneme|say-as|sub)(\s+[^>]*?)?\/?>$/i;
+
 export function sanitizeNarrationText(text: string): string {
   if (typeof text !== 'string') throw new Error('Narration text must be a string.');
 
+  // Strip dangerous injection chars while preserving SSML angle brackets and quotes
   let sanitized = text
-    .replace(/<[^>]*>/g, '')           // strip any XML/HTML tags
-    .replace(/[{}[\]\\]/g, '')         // strip injection-prone chars
-    .replace(/\s+/g, ' ')             // collapse whitespace
+    .replace(/[{}[\]\\]/g, '')
+    // Replace any tag NOT in the safe SSML whitelist
+    .replace(/<[^>]+>/g, (tag) => {
+      return SAFE_SSML_REGEX.test(tag) ? tag : '';
+    })
+    .replace(/\s+/g, ' ')
     .trim();
 
   if (sanitized.length === 0) throw new Error('Narration text is empty after sanitization.');
@@ -136,68 +146,51 @@ async function synthesizeWithGoogle(
   const apiKey = process.env.GOOGLE_TTS_API_KEY;
   const isKeyValidFormat = apiKey && apiKey.startsWith('AIzaSy');
 
-  if (isKeyValidFormat) {
-    try {
-      const gender = config.gender || 'NEUTRAL';
-      const voiceName = config.voiceId || GOOGLE_DEFAULT_VOICES[gender];
-      const languageCode = config.languageCode || 'en-US';
-
-      const requestBody = {
-        input: { text },
-        voice: {
-          languageCode,
-          name: voiceName,
-          ssmlGender: gender,
-        },
-        audioConfig: {
-          audioEncoding: 'MP3' as AudioEncoding,
-          speakingRate: config.speakingRate ?? 1.0,
-          pitch: config.pitch ?? (config.excitement !== undefined ? (config.excitement - 0.5) * 8.0 : 0),
-          volumeGainDb: config.volumeGainDb ?? 0,
-          sampleRateHertz: config.sampleRateHz ?? 44100,
-          effectsProfileId: ['headphone-class-device'],
-        },
-      };
-
-      const endpoint = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`;
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (response.ok) {
-        const data = (await response.json()) as { audioContent: string };
-        if (data.audioContent) {
-          const audioBuffer = Buffer.from(data.audioContent, 'base64');
-          fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-          fs.writeFileSync(outputPath, audioBuffer);
-          return;
-        }
-      }
-
-      const errBody = await response.text().catch(() => 'unknown error');
-      console.warn(`[VoiceoverService]: Google Cloud TTS REST API failed (status ${response.status}: ${errBody}). Falling back to unofficial google-tts-api package.`);
-    } catch (e: any) {
-      console.warn(`[VoiceoverService]: Google Cloud TTS REST API error: ${e.message}. Falling back to unofficial google-tts-api package.`);
-    }
-  } else {
-    console.warn('[VoiceoverService]: GOOGLE_TTS_API_KEY is missing or invalid format (expected AIzaSy...). Using unofficial google-tts-api package.');
+  if (!isKeyValidFormat) {
+    throw new Error('GOOGLE_TTS_API_KEY is missing or invalid format (expected AIzaSy...). Google Cloud TTS unavailable.');
   }
 
-  // Fallback to unofficial google-tts-api
-  const googleTTS = require('google-tts-api');
-  const results = await googleTTS.getAllAudioBase64(text, {
-    lang: config.languageCode?.split('-')[0] || 'en',
-    slow: config.speakingRate && config.speakingRate < 1 ? true : false,
-    host: 'https://translate.google.com',
-    splitPunct: ',.?',
+  const gender = config.gender || 'NEUTRAL';
+  const voiceName = config.voiceId || GOOGLE_DEFAULT_VOICES[gender];
+  const languageCode = config.languageCode || 'en-US';
+
+  const requestBody = {
+    input: { text },
+    voice: {
+      languageCode,
+      name: voiceName,
+      ssmlGender: gender,
+    },
+    audioConfig: {
+      audioEncoding: 'MP3' as AudioEncoding,
+      speakingRate: config.speakingRate ?? 1.0,
+      pitch: config.pitch ?? (config.excitement !== undefined ? (config.excitement - 0.5) * 8.0 : 0),
+      volumeGainDb: config.volumeGainDb ?? 0,
+      sampleRateHertz: config.sampleRateHz ?? 44100,
+      effectsProfileId: ['headphone-class-device'],
+    },
+  };
+
+  const endpoint = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`;
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
   });
 
-  const buffers = results.map((r: any) => Buffer.from(r.base64, 'base64'));
-  const finalBuffer = Buffer.concat(buffers);
+  if (!response.ok) {
+    const errBody = await response.text().catch(() => 'unknown error');
+    throw new Error(`Google Cloud TTS REST API failed (status ${response.status}: ${errBody}).`);
+  }
+
+  const data = (await response.json()) as { audioContent: string };
+  if (!data.audioContent) {
+    throw new Error('Google Cloud TTS returned empty audio payload.');
+  }
+
+  const audioBuffer = Buffer.from(data.audioContent, 'base64');
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  fs.writeFileSync(outputPath, finalBuffer);
+  fs.writeFileSync(outputPath, audioBuffer);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -332,7 +325,33 @@ export class VoiceoverService {
   }
 
   /**
-   * Main synthesis entry point. Tries providers in cascade order.
+   * Computes a deterministic SHA-256 cache file path for TTS synthesis.
+   */
+  getCacheFilePath(text: string, config: VoiceConfig, provider: VoiceProvider): string {
+    const cacheDir = path.resolve(process.cwd(), 'temp', 'tts_cache');
+    if (!fs.existsSync(cacheDir)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
+    }
+    const hash = crypto
+      .createHash('sha256')
+      .update(JSON.stringify({
+        text,
+        provider,
+        voiceId: config.voiceId,
+        gender: config.gender,
+        speakingRate: config.speakingRate ?? 1.0,
+        pitch: config.pitch ?? 0,
+        volumeGainDb: config.volumeGainDb ?? 0,
+        excitement: config.excitement ?? 0.5,
+        energy: config.energy ?? 0.5,
+        drama: config.drama ?? 0.0,
+      }))
+      .digest('hex');
+    return path.join(cacheDir, `${provider}_${hash}.mp3`);
+  }
+
+  /**
+   * Main synthesis entry point. Tries providers in cascade order with disk caching.
    * Returns the path of the generated MP3 audio file.
    */
   async synthesize(
@@ -357,6 +376,20 @@ export class VoiceoverService {
         continue;
       }
 
+      // Check SHA-256 synthesis cache
+      const cachePath = this.getCacheFilePath(text, config, provider);
+      if (fs.existsSync(cachePath) && fs.statSync(cachePath).size > 0) {
+        console.log(`[VoiceoverService]: ⚡ Cache HIT for segment ${segmentId} via ${provider}`);
+        fs.mkdirSync(outputDir, { recursive: true });
+        fs.copyFileSync(cachePath, outputPath);
+        return {
+          audioPath: outputPath,
+          provider,
+          durationMs: 0,
+          charsUsed: text.length,
+        };
+      }
+
       console.log(`[VoiceoverService]: Trying provider ${provider} for segment ${segmentId}...`);
       const startMs = Date.now();
 
@@ -376,6 +409,13 @@ export class VoiceoverService {
         recordProviderSuccess(provider);
         const elapsed = Date.now() - startMs;
         console.log(`[VoiceoverService]: Synthesis SUCCESS via ${provider} in ${elapsed}ms`);
+
+        // Save into cache for future identical requests & previews
+        try {
+          fs.copyFileSync(outputPath, cachePath);
+        } catch (cacheErr: any) {
+          console.warn(`[VoiceoverService]: Failed to write TTS cache:`, cacheErr.message);
+        }
 
         return {
           audioPath: outputPath,
