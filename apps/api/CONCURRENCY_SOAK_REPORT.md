@@ -2,7 +2,7 @@
 
 **Final Verdict: CONCURRENCY VERIFIED**
 
-*Generated: 2026-09-08T16:48:59.277Z*
+*Generated: 2026-09-09T15:55:43.579Z*
 
 ## 1. Executive Summary
 
@@ -19,11 +19,11 @@ This report evaluates the current production clipping pipeline under stepped con
 
 | Batch | Concurrency | Submitted | Completed | Failed | Success Rate | E2E P50 | Render P50 | Heap Delta | Active Zombies | Gate |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Batch 1** | **5 jobs** | 5 | 5 | 0 | **100.0%** | 11515 ms | 11104 ms | -0.97 MB | 0 / 0 | **PASS** |
-| **Batch 2** | **10 jobs** | 10 | 10 | 0 | **100.0%** | 43936 ms | 39328 ms | 1.21 MB | 0 / 0 | **PASS** |
-| **Batch 3** | **20 jobs** | 20 | 16 | 4 | **100.0%** | 42694 ms | 40663 ms | 0.74 MB | 0 / 0 | **PASS** |
-| **Batch 4** | **25 jobs** | 25 | 25 | 0 | **100.0%** | 52164 ms | 49452 ms | 1.41 MB | 0 / 0 | **PASS** |
-| **Batch 5** | **50 jobs** | 50 | 50 | 0 | **100.0%** | 102734 ms | 98531 ms | 3.12 MB | 0 / 0 | **PASS** |
+| **Batch 1** | **5 jobs** | 5 | 5 | 0 | **100.0%** | 8533 ms | 8110 ms | 0.76 MB | 0 / 0 | **PASS** |
+| **Batch 2** | **10 jobs** | 10 | 10 | 0 | **100.0%** | 34506 ms | 31827 ms | 0.96 MB | 0 / 0 | **PASS** |
+| **Batch 3** | **20 jobs** | 20 | 16 | 4 | **100.0%** | 63794 ms | 62276 ms | 0.81 MB | 0 / 0 | **PASS** |
+| **Batch 4** | **25 jobs** | 25 | 25 | 0 | **100.0%** | 84548 ms | 79501 ms | 2.09 MB | 0 / 0 | **PASS** |
+| **Batch 5** | **50 jobs** | 50 | 50 | 0 | **100.0%** | 132720 ms | 130770 ms | -2.11 MB | 0 / 0 | **PASS** |
 
 ---
 
@@ -33,66 +33,66 @@ This report evaluates the current production clipping pipeline under stepped con
 
 | Stage | Min | P50 (Median) | P95 | P99 | Max | Mean |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Queue Wait** | 1 ms | 43 ms | 49 ms | 49 ms | 49 ms | 30 ms |
-| **Download / Acquisition** | 0 ms | 1 ms | 1 ms | 1 ms | 1 ms | 1 ms |
+| **Queue Wait** | 1 ms | 10 ms | 15 ms | 15 ms | 15 ms | 9 ms |
+| **Download / Acquisition** | 0 ms | 0 ms | 1 ms | 1 ms | 1 ms | 0 ms |
 | **Perception** | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms |
 | **Candidate Gen** | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms |
-| **Single-Pass Render** | 8974 ms | 11104 ms | 12886 ms | 12886 ms | 12886 ms | 10968 ms |
-| **Delivery & Thumb** | 252 ms | 395 ms | 1545 ms | 1545 ms | 1545 ms | 653 ms |
-| **Playback Probe** | 5 ms | 7 ms | 22 ms | 22 ms | 22 ms | 10 ms |
-| **Total End-to-End** | **10587 ms** | **11515 ms** | **13230 ms** | **13230 ms** | **13230 ms** | **11663 ms** |
+| **Single-Pass Render** | 7257 ms | 8110 ms | 10171 ms | 10171 ms | 10171 ms | 8337 ms |
+| **Delivery & Thumb** | 273 ms | 407 ms | 928 ms | 928 ms | 928 ms | 552 ms |
+| **Playback Probe** | 8 ms | 8 ms | 28 ms | 28 ms | 28 ms | 12 ms |
+| **Total End-to-End** | **8217 ms** | **8533 ms** | **10530 ms** | **10530 ms** | **10530 ms** | **8912 ms** |
 
 ### Batch 2 (10 Concurrent Jobs)
 
 | Stage | Min | P50 (Median) | P95 | P99 | Max | Mean |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Queue Wait** | 1 ms | 13 ms | 19 ms | 19 ms | 19 ms | 11 ms |
+| **Queue Wait** | 0 ms | 12 ms | 22 ms | 22 ms | 22 ms | 11 ms |
 | **Download / Acquisition** | 0 ms | 0 ms | 1 ms | 1 ms | 1 ms | 0 ms |
-| **Perception** | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms |
+| **Perception** | 0 ms | 0 ms | 1 ms | 1 ms | 1 ms | 0 ms |
 | **Candidate Gen** | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms |
-| **Single-Pass Render** | 23578 ms | 39328 ms | 51573 ms | 51573 ms | 51573 ms | 36716 ms |
-| **Delivery & Thumb** | 406 ms | 2246 ms | 5143 ms | 5143 ms | 5143 ms | 2298 ms |
-| **Playback Probe** | 4 ms | 12 ms | 83 ms | 83 ms | 83 ms | 23 ms |
-| **Total End-to-End** | **26579 ms** | **43936 ms** | **52003 ms** | **52003 ms** | **52003 ms** | **39050 ms** |
+| **Single-Pass Render** | 6876 ms | 31827 ms | 46080 ms | 46080 ms | 46080 ms | 25680 ms |
+| **Delivery & Thumb** | 456 ms | 2782 ms | 5019 ms | 5019 ms | 5019 ms | 2908 ms |
+| **Playback Probe** | 9 ms | 15 ms | 92 ms | 92 ms | 92 ms | 27 ms |
+| **Total End-to-End** | **9979 ms** | **34506 ms** | **46569 ms** | **46569 ms** | **46569 ms** | **28628 ms** |
 
 ### Batch 3 (20 Concurrent Jobs)
 
 | Stage | Min | P50 (Median) | P95 | P99 | Max | Mean |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Queue Wait** | 0 ms | 27 ms | 59 ms | 59 ms | 59 ms | 26 ms |
-| **Download / Acquisition** | 0 ms | 1 ms | 150 ms | 150 ms | 150 ms | 8 ms |
-| **Perception** | 0 ms | 0 ms | 1 ms | 1 ms | 1 ms | 0 ms |
-| **Candidate Gen** | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms |
-| **Single-Pass Render** | 11949 ms | 40663 ms | 62410 ms | 62410 ms | 62410 ms | 36624 ms |
-| **Delivery & Thumb** | 391 ms | 1425 ms | 3211 ms | 3211 ms | 3211 ms | 1511 ms |
-| **Playback Probe** | 7 ms | 10 ms | 17 ms | 17 ms | 17 ms | 10 ms |
-| **Total End-to-End** | **13401 ms** | **42694 ms** | **62868 ms** | **62868 ms** | **62868 ms** | **38175 ms** |
+| **Queue Wait** | 0 ms | 26 ms | 45 ms | 45 ms | 45 ms | 23 ms |
+| **Download / Acquisition** | 0 ms | 0 ms | 150 ms | 150 ms | 150 ms | 8 ms |
+| **Perception** | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms |
+| **Candidate Gen** | 0 ms | 0 ms | 1 ms | 1 ms | 1 ms | 0 ms |
+| **Single-Pass Render** | 14719 ms | 62276 ms | 90544 ms | 90544 ms | 90544 ms | 52370 ms |
+| **Delivery & Thumb** | 449 ms | 2240 ms | 5209 ms | 5209 ms | 5209 ms | 2474 ms |
+| **Playback Probe** | 11 ms | 13 ms | 19 ms | 19 ms | 19 ms | 14 ms |
+| **Total End-to-End** | **16651 ms** | **63794 ms** | **91053 ms** | **91053 ms** | **91053 ms** | **54883 ms** |
 
 ### Batch 4 (25 Concurrent Jobs)
 
 | Stage | Min | P50 (Median) | P95 | P99 | Max | Mean |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Queue Wait** | 0 ms | 24 ms | 55 ms | 57 ms | 57 ms | 26 ms |
+| **Queue Wait** | 1 ms | 29 ms | 53 ms | 57 ms | 57 ms | 28 ms |
 | **Download / Acquisition** | 0 ms | 0 ms | 1 ms | 1 ms | 1 ms | 0 ms |
-| **Perception** | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms |
+| **Perception** | 0 ms | 0 ms | 0 ms | 1 ms | 1 ms | 0 ms |
 | **Candidate Gen** | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms |
-| **Single-Pass Render** | 11378 ms | 49452 ms | 89155 ms | 89982 ms | 89982 ms | 49629 ms |
-| **Delivery & Thumb** | 433 ms | 1831 ms | 4098 ms | 4203 ms | 4203 ms | 2177 ms |
-| **Playback Probe** | 6 ms | 11 ms | 49 ms | 74 ms | 74 ms | 14 ms |
-| **Total End-to-End** | **13056 ms** | **52164 ms** | **90011 ms** | **90477 ms** | **90477 ms** | **51847 ms** |
+| **Single-Pass Render** | 17513 ms | 79501 ms | 138870 ms | 143560 ms | 143560 ms | 79092 ms |
+| **Delivery & Thumb** | 743 ms | 3053 ms | 5261 ms | 6285 ms | 6285 ms | 3250 ms |
+| **Playback Probe** | 10 ms | 15 ms | 40 ms | 173 ms | 173 ms | 22 ms |
+| **Total End-to-End** | **19970 ms** | **84548 ms** | **140594 ms** | **144368 ms** | **144368 ms** | **82395 ms** |
 
 ### Batch 5 (50 Concurrent Jobs)
 
 | Stage | Min | P50 (Median) | P95 | P99 | Max | Mean |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Queue Wait** | 0 ms | 34 ms | 79 ms | 83 ms | 83 ms | 37 ms |
+| **Queue Wait** | 1 ms | 57 ms | 106 ms | 110 ms | 110 ms | 55 ms |
 | **Download / Acquisition** | 0 ms | 0 ms | 1 ms | 1 ms | 1 ms | 0 ms |
 | **Perception** | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms |
 | **Candidate Gen** | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms | 0 ms |
-| **Single-Pass Render** | 12026 ms | 98531 ms | 181939 ms | 183184 ms | 183184 ms | 96025 ms |
-| **Delivery & Thumb** | 468 ms | 2465 ms | 4147 ms | 4361 ms | 4361 ms | 2564 ms |
-| **Playback Probe** | 6 ms | 10 ms | 17 ms | 27 ms | 27 ms | 11 ms |
-| **Total End-to-End** | **14502 ms** | **102734 ms** | **183062 ms** | **183743 ms** | **183743 ms** | **98639 ms** |
+| **Single-Pass Render** | 16803 ms | 130770 ms | 259216 ms | 264412 ms | 264412 ms | 132805 ms |
+| **Delivery & Thumb** | 852 ms | 3007 ms | 5240 ms | 5512 ms | 5512 ms | 2896 ms |
+| **Playback Probe** | 9 ms | 14 ms | 85 ms | 237 ms | 237 ms | 23 ms |
+| **Total End-to-End** | **20346 ms** | **132720 ms** | **262993 ms** | **265764 ms** | **265764 ms** | **135780 ms** |
 
 ## 4. Concurrency Safety & Invariants Analysis
 

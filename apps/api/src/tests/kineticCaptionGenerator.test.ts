@@ -86,8 +86,8 @@ describe('KineticCaptionGenerator', () => {
 
         // Check header safety attributes
         expect(content).toContain('WrapStyle: 0');
-        expect(content).toContain('ScaledBorderAndShadow: yes');
-        expect(content).toContain('80,80,360');
+        // Check MarginL, MarginR, MarginV (MarginV was intentionally raised to 380px for TikTok/Reels UI clearance)
+        expect(content).toContain('80,80,380');
 
         // Verify that long phrases are chunked safely rather than cramming all 3 into one line
         const dialogueLines = content.split('\n').filter(l => l.startsWith('Dialogue:'));

@@ -776,6 +776,16 @@ export class DatabaseService {
     return data;
   }
 
+  async getVoiceoverSegments(projectId: string) {
+    const { data, error } = await this.db
+      .from('voiceover_segments')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('start_time', { ascending: true });
+    if (error) throw error;
+    return data || [];
+  }
+
   async deleteVoiceoverSegment(id: string) {
     const { error } = await this.db
       .from('voiceover_segments')

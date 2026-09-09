@@ -4,9 +4,13 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 export interface VisualScriptContext {
-  visualEvents?: string[];
+  clipTitle?: string;
+  clipSummary?: string;
+  visualEvents?: any[];
   entities?: string[];
   keyframeDescriptions?: string[];
+  facesDetected?: number;
+  ocrText?: string[];
   actionScore?: number;
 }
 

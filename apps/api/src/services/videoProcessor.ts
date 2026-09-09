@@ -360,7 +360,7 @@ export class VideoProcessor {
     });
   }
 
-  private async getVideoDimensions(inputPath: string): Promise<VideoDimensions> {
+  public async getVideoDimensions(inputPath: string): Promise<VideoDimensions> {
     const bin = getBinaryPath('ffprobe');
     return new Promise((resolve, reject) => {
       const args = [

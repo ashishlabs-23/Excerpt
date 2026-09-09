@@ -151,6 +151,7 @@ export async function processRenderJob(renderJob: any) {
     let uploadMs = 0;
 
     let outputPath = path.join(tempDir, `clip-${clipId}.mp4`);
+    const cleanOutputPath = path.join(tempDir, `clip-${clipId}-clean.mp4`);
     const assFilePath = path.join(tempDir, `subs-${clipId}.ass`);
 
     try {
@@ -293,11 +294,15 @@ export async function processRenderJob(renderJob: any) {
       const cleanStorageKey = `jobs/${renderJob.job_id}/${clipId}-clean.mp4`;
       const thumbStorageKey = `jobs/${renderJob.job_id}/${clipId}.jpg`;
 
-      const [videoUrl, cleanVideoUrl, thumbUrl] = await Promise.all([
+      const uploadTasks: [Promise<string>, Promise<string | undefined>, Promise<string>] = [
         storage.uploadFile(outputPath, storageKey),
-        storage.uploadFile(cleanOutputPath, cleanStorageKey),
+        fs.existsSync(cleanOutputPath)
+          ? storage.uploadFile(cleanOutputPath, cleanStorageKey)
+          : Promise.resolve(undefined),
         storage.uploadFile(thumbnailPath, thumbStorageKey)
-      ]);
+      ];
+
+      const [videoUrl, cleanVideoUrl, thumbUrl] = await Promise.all(uploadTasks);
       uploadMs = Date.now() - uploadStart;
 
       // 5. Update Clip in Local Queue & DB
@@ -312,8 +317,10 @@ export async function processRenderJob(renderJob: any) {
             status: 'uploaded',
             metadata: {
               ...(queue.clips[clipId].metadata || {}),
-              video_clean_storage_key: cleanStorageKey,
-              video_clean_url: cleanVideoUrl,
+              ...(cleanVideoUrl ? {
+                video_clean_storage_key: cleanStorageKey,
+                video_clean_url: cleanVideoUrl,
+              } : {}),
               video_captioned_storage_key: storageKey,
               video_captioned_url: videoUrl,
             },

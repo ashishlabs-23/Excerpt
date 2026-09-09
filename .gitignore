@@ -18,11 +18,16 @@ dist/
 render.env
 netlify.env
 
-# Media Artifacts
+# Media Artifacts & Temporary Pipeline State
 public/clips/
 *.mp4
 *.webm
+*.mov
+*.avi
+*.mkv
 test_out.mp4
+*.tmp
+*.lock
 
 # Logs — all runtime logs (never commit these)
 *.log
@@ -35,9 +40,11 @@ render_v*.log
 worker_v*.log
 error.log
 
-# Temp runtime state (never commit — cross-process queue lives here)
+# Temp & Scratch runtime state (never commit)
+/temp/
 temp/
 apps/api/temp/
+/scratch/
 scratch/
 
 # One-off test/debug scripts in root & apps/api/scripts

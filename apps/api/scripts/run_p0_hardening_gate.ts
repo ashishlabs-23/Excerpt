@@ -126,12 +126,17 @@ async function runHardeningGate() {
 
   const processor = new VideoProcessor();
   const captionService = new CaptionService();
-  const sourcePath = path.resolve('temp/cache/224480538532/input.mp4');
+  const candidatePaths = [
+    path.resolve('temp/cache/224480538532/input.mp4'),
+    path.resolve('temp/local_clips/source_test_1080p.mp4'),
+    path.resolve('temp/p0_tests/source_10s.mp4')
+  ];
+  const sourcePath = candidatePaths.find(p => fs.existsSync(p));
   const outDir = path.resolve('temp/p0_hardening_suite');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-  if (!fs.existsSync(sourcePath)) {
-    throw new Error(`Source test video not found at ${sourcePath}`);
+  if (!sourcePath) {
+    throw new Error(`Source test video not found. Checked: ${candidatePaths.join(', ')}`);
   }
 
   const words = [

@@ -17,10 +17,10 @@ ENV OPENCV_FACE_CASCADE=/opt/opencv-data/haarcascade_frontalface_default.xml
 FROM base AS api-builder
 COPY package*.json ./
 COPY apps/api/package*.json ./apps/api/
-COPY packages/types/package*.json ./packages/types/
+COPY packages/clipping-core/package*.json ./packages/clipping-core/
 RUN npm install
 COPY apps/api ./apps/api
-COPY packages/types ./packages/types
+COPY packages/clipping-core ./packages/clipping-core
 RUN npm run build -w apps/api
 
 # Frontend Build
@@ -37,10 +37,10 @@ ENV NEXT_PUBLIC_EXCERPT_API_TOKEN=$NEXT_PUBLIC_EXCERPT_API_TOKEN
 
 COPY package*.json ./
 COPY apps/web/package*.json ./apps/web/
-COPY packages/types/package*.json ./packages/types/
+COPY packages/clipping-core/package*.json ./packages/clipping-core/
 RUN npm install
 COPY apps/web ./apps/web
-COPY packages/types ./packages/types
+COPY packages/clipping-core ./packages/clipping-core
 RUN npm run build -w apps/web
 
 # API Production Image

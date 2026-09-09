@@ -1,7 +1,6 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/clipping-core" },
-    { "path": "./packages/shared" }
+    { "path": "./packages/clipping-core" }
   ]
 }

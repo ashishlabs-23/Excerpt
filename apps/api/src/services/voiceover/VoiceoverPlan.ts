@@ -151,7 +151,11 @@ export function buildVoiceoverPlan(params: BuildPlanParams): VoiceoverPlan {
       truePeakDb: params.normalizationPolicy?.truePeakDb ?? -1.5,
     },
     durationPolicy: params.durationPolicy || 'clamp_to_video',
-    captions: params.captions || { enabled: false, preset: 'submagic' },
+    captions: params.captions ? {
+      enabled: params.captions.enabled ?? false,
+      preset: params.captions.preset ?? 'submagic',
+      burn: params.captions.burn ?? true,
+    } : { enabled: false, preset: 'submagic', burn: true },
     outputFormat: {
       audioCodec: 'aac',
       audioBitrate: '192k',
@@ -220,7 +224,7 @@ export function parseDuoCommentary(
 
   for (const line of lines) {
     let text = line;
-    let speaker = currentSpeaker;
+    let speaker: 'A' | 'B' = currentSpeaker;
 
     if (/^\[?(Play-by-Play|Announcer|Speaker\s*1)\]?:?/i.test(line)) {
       speaker = 'A';

@@ -1,6 +1,6 @@
 # Phase B: Real-Video Editorial Benchmark & Human Preference Scorecard
 
-**Benchmark Date**: 2026-09-05T18:26:37.140Z  
+**Benchmark Date**: 2026-09-09T15:36:33.478Z  
 **Target Video Corpus**: 10 Real-World Content Genres  
 **Evaluator Architecture**: Phase A Editorial Decision Plan vs. Legacy Heuristic Baseline  
 

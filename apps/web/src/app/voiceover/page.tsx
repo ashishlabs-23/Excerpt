@@ -260,7 +260,7 @@ export default function VoiceoverStudio() {
 
         for (const line of lines) {
           let text = line;
-          let speaker = currentSpeaker;
+          let speaker: 'A' | 'B' = currentSpeaker;
           if (/^\[?(Play-by-Play|Announcer|Speaker\s*1)\]?:?/i.test(line)) {
             speaker = 'A';
             text = line.replace(/^\[?(Play-by-Play|Announcer|Speaker\s*1)\]?:?\s*/i, '');
