@@ -60,6 +60,7 @@ export class VideoIntelligenceGraph {
   public transcript: GraphTranscriptSentence[] = [];
   public visual: GraphVisualNode[] = [];
   public audio: GraphAudioNode[] = [];
+  public audioEvents: Array<{ type: 'silence' | 'loudness_peak'; startSec: number; endSec: number; durationSec: number; value?: number }> = [];
   public semanticEvents: GraphSemanticEvent[] = [];
 
   constructor(videoId: string, totalDuration: number) {

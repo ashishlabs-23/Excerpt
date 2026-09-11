@@ -116,9 +116,25 @@ export class SmartBoundaryEngine {
       renderEnd += 5;
     }
 
-    // Clamp to 0
+    // Clamp to 0 and upper source duration if available
     renderStart = Math.max(0, renderStart);
-    if (shadowBounds) shadowBounds.candidateStart = Math.max(0, shadowBounds.candidateStart);
+    const maxSourceDur = (context as any)?.sourceDuration ?? (context as any)?.duration;
+    if (typeof maxSourceDur === 'number' && maxSourceDur > 0) {
+      renderEnd = Math.min(maxSourceDur, renderEnd);
+      if (renderStart >= renderEnd) {
+        renderStart = Math.max(0, renderEnd - 15);
+      }
+    }
+    if (renderEnd - renderStart < 5.0) {
+      renderEnd = renderStart + 5.0;
+    }
+
+    if (shadowBounds) {
+      shadowBounds.candidateStart = Math.max(0, shadowBounds.candidateStart);
+      if (typeof maxSourceDur === 'number' && maxSourceDur > 0) {
+        shadowBounds.candidateEnd = Math.min(maxSourceDur, shadowBounds.candidateEnd);
+      }
+    }
 
     return {
       start: Number(renderStart.toFixed(2)),

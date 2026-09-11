@@ -1,144 +1,133 @@
 import fs from 'fs';
 import path from 'path';
-import { DownloadIntelligenceEngine } from './DownloadEngine';
+import { SourceArtifactManager } from '../storage/SourceArtifactManager';
+import { PipelineError, ErrorCategory } from '@excerpt/clipping-core';
 
 /**
- * Ensures the source video is available locally on the machine.
- * If the file is missing (e.g. wiped by ephemeral storage or distributed workers),
- * it restores it by re-downloading from the source URL or shared storage.
+ * Ensures the source video is available locally on the machine for renderWorker.
+ * Conforms to P4.2 Media Locality Invariant:
+ * 1. Checks local fast-cache candidate paths.
+ * 2. If missing, fetches the immutable source artifact from Object Storage (sources/<contentHash>/source.mp4).
+ * 3. Render workers NEVER call external YouTube / HTTP download engines.
  */
 export interface SourceVideoTelemetry {
-  strategy: 'local_cache' | 'redownload';
+  strategy: 'local_cache' | 'storage_artifact';
   downloaded: boolean;
   durationMs: number;
+  contentHash?: string;
   reason?: 'local_missing' | 'zero_byte_file' | 'ffprobe_failed';
 }
 
 export async function ensureSourceVideo(
   jobId: string,
-  videoUrl: string | undefined,
-  tempDir: string
+  videoUrlOrStorageKey: string | undefined,
+  tempDir: string,
+  contentHash?: string
 ): Promise<{ videoPath: string; telemetry: SourceVideoTelemetry }> {
   const startMs = Date.now();
+  const sourceManager = SourceArtifactManager.getInstance();
 
-  const validateMedia = async (filePath: string): Promise<{ valid: boolean, reason?: 'local_missing' | 'zero_byte_file' | 'ffprobe_failed' }> => {
-    if (!fs.existsSync(filePath)) return { valid: false, reason: 'local_missing' };
-    const stats = fs.statSync(filePath);
-    if (stats.size === 0) return { valid: false, reason: 'zero_byte_file' };
-    try {
-      const { execFile } = require('child_process');
-      const util = require('util');
-      const execFileAsync = util.promisify(execFile);
-      const { stdout } = await execFileAsync('ffprobe', [
-        '-v', 'error',
-        '-show_entries', 'stream=codec_type',
-        '-of', 'default=noprint_wrappers=1:nokey=1',
-        filePath
-      ]);
-      if (stdout.includes('video')) return { valid: true };
-      return { valid: false, reason: 'ffprobe_failed' };
-    } catch {
-      return { valid: false, reason: 'ffprobe_failed' };
-    }
-  };
-
-  // Check multiple possible candidate paths
-  const candidatePaths = [
-    path.join(tempDir, 'input.mp4'),
-    path.resolve(process.cwd(), 'apps/api/temp', jobId, 'input.mp4'),
-    path.resolve(process.cwd(), 'temp', jobId, 'input.mp4'),
-    path.resolve(__dirname, '../../../../temp', jobId, 'input.mp4'),
-    path.resolve(__dirname, '../../../../../temp', jobId, 'input.mp4'),
-  ];
-
-  if (videoUrl) {
-    try {
-      const crypto = require('crypto');
-      const cacheKey = crypto.createHash('md5').update(videoUrl).digest('hex').substring(0, 12);
-      candidatePaths.push(
-        path.resolve(process.cwd(), 'temp/cache', cacheKey, 'input.mp4'),
-        path.resolve(process.cwd(), 'apps/api/temp/cache', cacheKey, 'input.mp4'),
-        path.resolve(__dirname, '../../../../temp/cache', cacheKey, 'input.mp4'),
-        path.resolve(__dirname, '../../../../../temp/cache', cacheKey, 'input.mp4')
-      );
-    } catch {}
-  }
-
-  for (const candidate of candidatePaths) {
-    if (fs.existsSync(candidate)) {
-      const check = await validateMedia(candidate);
-      if (check.valid) {
-        console.log(`[ensureSourceVideo]: Found valid local video at ${candidate}`);
-        const targetInTemp = path.join(tempDir, 'input.mp4');
-        if (!fs.existsSync(targetInTemp)) {
-          try {
-            if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-            fs.copyFileSync(candidate, targetInTemp);
-            console.log(`[ensureSourceVideo]: Copied cached video to ${targetInTemp}`);
-            return {
-              videoPath: targetInTemp,
-              telemetry: { strategy: 'local_cache', downloaded: false, durationMs: Date.now() - startMs }
-            };
-          } catch {}
-        }
-        return {
-          videoPath: candidate,
-          telemetry: { strategy: 'local_cache', downloaded: false, durationMs: Date.now() - startMs }
-        };
-      }
-    }
-  }
-
-  const videoPath = path.join(tempDir, 'input.mp4');
-  const initialCheck = await validateMedia(videoPath);
-  if (initialCheck.valid) {
-    return {
-      videoPath,
-      telemetry: { strategy: 'local_cache', downloaded: false, durationMs: Date.now() - startMs }
-    };
-  }
-
-  if (!videoUrl) {
-    throw new Error(`[ensureSourceVideo]: Missing input.mp4 for job ${jobId} and no videoUrl provided in payload to recover it.`);
-  }
-
-  console.log(`[ensureSourceVideo]: input.mp4 invalid (${initialCheck.reason}) for job ${jobId}. Downloading from ${videoUrl}...`);
   if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir, { recursive: true });
   }
 
-  const downloader = new DownloadIntelligenceEngine();
-  await downloader.executeDownload(videoUrl, videoPath, (percent, speed, eta, strategy) => {});
+  const localVideoPath = path.join(tempDir, 'input.mp4');
 
-  const postCheck = await validateMedia(videoPath);
-  if (!postCheck.valid) {
-    throw new Error(`[ensureSourceVideo]: Failed to recover valid input.mp4 for job ${jobId} after download attempt. Reason: ${postCheck.reason}`);
+  // 1. Fast path: check if valid file already exists in local tempDir
+  if (fs.existsSync(localVideoPath)) {
+    try {
+      const validation = await sourceManager.validateSourceFile(localVideoPath);
+      if (validation.valid && (!contentHash || validation.contentHash === contentHash)) {
+        return {
+          videoPath: localVideoPath,
+          telemetry: {
+            strategy: 'local_cache',
+            downloaded: false,
+            durationMs: Date.now() - startMs,
+            contentHash: validation.contentHash,
+          },
+        };
+      }
+    } catch {}
   }
 
-  const telemetry: SourceVideoTelemetry = { 
-    strategy: 'redownload', 
-    downloaded: true, 
-    durationMs: Date.now() - startMs,
-    reason: initialCheck.reason 
-  };
-  
-  const stats = fs.statSync(videoPath);
-  
-  const eventLog = {
-    event: "SOURCE_VIDEO_RECOVERY",
-    jobId: jobId,
-    renderJobId: "unknown",
-    strategy: telemetry.strategy,
-    reason: telemetry.reason,
-    validated: true,
-    durationMs: telemetry.durationMs,
-    fileSize: stats.size
-  };
-  
-  console.log(JSON.stringify(eventLog));
+  // 2. Determine storage key: prefer sources/<contentHash>/source.mp4
+  let storageKey = '';
+  if (videoUrlOrStorageKey && videoUrlOrStorageKey.startsWith('sources/')) {
+    storageKey = videoUrlOrStorageKey;
+  } else if (contentHash) {
+    storageKey = `sources/${contentHash}/source.mp4`;
+  }
 
-  return {
-    videoPath,
-    telemetry
-  };
+  // 3. Acquire from Object Storage via SourceArtifactManager
+  try {
+    const keyToFetch = storageKey || (contentHash ? `sources/${contentHash}/source.mp4` : '');
+    if (keyToFetch) {
+      if (contentHash) {
+        const manifest = await sourceManager.getManifest(contentHash);
+        if (manifest) {
+          console.log(`[ensureSourceVideo]: Found verified source manifest for hash ${contentHash} (${manifest.durationSec}s, ${manifest.width}x${manifest.height})`);
+        }
+      }
+      console.log(`[ensureSourceVideo]: Acquiring source media from storage: ${keyToFetch} for job ${jobId}`);
+      const acquired = await sourceManager.acquireLocalSource(keyToFetch, tempDir);
+      return {
+        videoPath: acquired.localPath,
+        telemetry: {
+          strategy: acquired.cacheHit ? 'local_cache' : 'storage_artifact',
+          downloaded: !acquired.cacheHit,
+          durationMs: Date.now() - startMs,
+          contentHash,
+        },
+      };
+    }
+  } catch (storageErr: any) {
+    console.warn(`[ensureSourceVideo]: Storage acquisition warning: ${storageErr.message}`);
+  }
+
+  // 4. Candidate directory fallback (local container volumes)
+  const candidatePaths = [
+    path.resolve(process.cwd(), 'temp', jobId, 'input.mp4'),
+    path.resolve(process.cwd(), 'apps/api/temp', jobId, 'input.mp4'),
+    path.resolve(__dirname, '../../../../temp', jobId, 'input.mp4'),
+  ];
+
+  if (contentHash) {
+    candidatePaths.push(
+      path.resolve(process.cwd(), 'temp/cache', contentHash, 'source.mp4'),
+      path.resolve(process.cwd(), 'temp/cache', contentHash, 'input.mp4')
+    );
+  }
+
+  for (const candidate of candidatePaths) {
+    if (fs.existsSync(candidate)) {
+      try {
+        const validation = await sourceManager.validateSourceFile(candidate);
+        if (validation.valid) {
+          console.log(`[ensureSourceVideo]: Found valid local source at ${candidate}`);
+          fs.copyFileSync(candidate, localVideoPath);
+          return {
+            videoPath: localVideoPath,
+            telemetry: {
+              strategy: 'local_cache',
+              downloaded: false,
+              durationMs: Date.now() - startMs,
+              contentHash: validation.contentHash,
+            },
+          };
+        }
+      } catch {}
+    }
+  }
+
+  // If source is missing from both local disk and object storage: fail fast!
+  // RENDER WORKERS MUST NEVER CALL YOUTUBE DIRECTLY.
+  throw new PipelineError({
+    category: ErrorCategory.DOWNLOAD,
+    stage: 'source_acquisition',
+    component: 'ensureSourceVideo',
+    message: `[ensureSourceVideo]: Source media missing for job ${jobId}. Artifact not found in local cache or storage at ${storageKey || 'sources/<contentHash>/source.mp4'}`,
+    retryable: false,
+    rootCause: 'IMMUTABLE_SOURCE_MISSING',
+  });
 }

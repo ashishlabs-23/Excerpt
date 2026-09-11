@@ -15,6 +15,9 @@ interface VideoPlayerProps {
   words?: Array<{ word: string; start: number; end: number }>;
   excludedWordIndices?: Set<number>;
   captionStyle?: string;
+  captionFontSize?: number;
+  captionPosition?: 'bottom' | 'middle' | 'top';
+  captionColor?: string;
   cropOffset?: number;
   socialPreviewMode?: 'tiktok' | 'youtube' | 'instagram' | 'none';
   aspectRatio?: '9:16' | '1:1' | '16:9';
@@ -63,6 +66,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   words = [],
   excludedWordIndices = new Set(),
   captionStyle = 'Submagic',
+  captionFontSize = 28,
+  captionPosition = 'bottom',
+  captionColor,
   cropOffset = 0,
   socialPreviewMode = 'none',
   aspectRatio = '9:16',
@@ -71,7 +77,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const progressRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [currentSrc, setCurrentSrc] = useState(src);
   const [currentTime, setCurrentTime] = useState(0);
+
+  useEffect(() => {
+    setCurrentSrc(src);
+  }, [src]);
+
+  const handleVideoError = () => {
+    if (currentSrc && currentSrc.includes('captions=0')) {
+      console.warn('[VideoPlayer]: Clean stream encountered error, falling back to base clip stream');
+      const fallback = currentSrc.replace(/([?&])captions=0(&|$)/, (_, p1, p2) => (p1 === '?' && p2 ? '?' : ''));
+      setCurrentSrc(fallback);
+    }
+  };
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
@@ -347,41 +366,52 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       transition: 'transform 100ms cubic-bezier(0.34, 1.56, 0.64, 1), color 100ms ease-out',
     };
 
+    if (captionFontSize) {
+      base.fontSize = `${captionFontSize}px`;
+    }
+
+    let styleObj: React.CSSProperties;
     switch (styleKey) {
       case 'tiktok':
-        return {
+        styleObj = {
           ...base,
-          color: isActive ? '#facc15' : '#ffffff',
+          color: isActive ? (captionColor || '#facc15') : '#ffffff',
           transform: isActive ? 'scale(1.08)' : 'scale(1)',
         };
+        break;
       case 'hormozi':
-        return {
+        styleObj = {
           ...base,
           fontStyle: 'italic',
-          color: isActive ? '#eab308' : '#ffffff',
+          color: isActive ? (captionColor || '#eab308') : '#ffffff',
           transform: isActive ? 'scale(1.08) rotate(-2.5deg)' : 'rotate(-2.5deg)',
         };
+        break;
       case 'mrbeast':
-        return {
+        styleObj = {
           ...base,
-          color: isActive ? '#22c55e' : '#ffffff',
+          color: isActive ? (captionColor || '#22c55e') : '#ffffff',
           transform: isActive ? 'scale(1.08)' : 'scale(1)',
         };
+        break;
       case 'minimal':
-        return {
+        styleObj = {
           ...base,
           fontWeight: 700,
-          color: isActive ? '#ffffff' : 'rgba(255,255,255,0.45)',
+          color: isActive ? (captionColor || '#ffffff') : 'rgba(255,255,255,0.45)',
           transform: 'none',
         };
+        break;
       case 'submagic':
       default:
-        return {
+        styleObj = {
           ...base,
-          color: isActive ? '#ec4899' : '#ffffff',
+          color: isActive ? (captionColor || '#ec4899') : '#ffffff',
           transform: isActive ? 'scale(1.08)' : 'scale(1)',
         };
+        break;
     }
+    return styleObj;
   };
 
   const VolumeIcon = isMuted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
@@ -398,6 +428,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     ? 'bottom-[12%]'
     : 'bottom-[20%]';
 
+  const captionPosClass = captionPosition === 'top'
+    ? 'top-[12%]'
+    : captionPosition === 'middle'
+    ? 'top-1/2 -translate-y-1/2'
+    : captionBottomClass;
+
   return (
     <div
       ref={containerRef}
@@ -408,7 +444,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {/* Video */}
       <video
         ref={videoRef}
-        src={src}
+        src={currentSrc}
+        onError={handleVideoError}
         className="w-full h-full object-cover"
         style={{ objectPosition: `${50 + cropOffset}% 50%` }}
         playsInline
@@ -417,7 +454,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* ── Captions Overlay (Matches burned ASS pipeline layout) ── */}
       {showCaptions && activePhrase && activeWord && (
-        <div className={`absolute ${captionBottomClass} left-0 right-0 flex justify-center pointer-events-none z-20 px-4`}>
+        <div className={`absolute ${captionPosClass} left-0 right-0 flex justify-center pointer-events-none z-20 px-4`}>
           <div className="flex flex-wrap justify-center items-center gap-x-2.5 max-w-[88%] text-center select-none">
             {activePhrase.words.map((w, idx) => {
               const isActive = w.start === activeWord.start;
@@ -427,7 +464,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               return (
                 <span
                   key={idx}
-                  className="text-2xl sm:text-3xl font-black uppercase tracking-tight py-1"
+                  className="font-black uppercase tracking-tight py-1"
                   style={getWordStyle(isActive)}
                 >
                   {formatted}

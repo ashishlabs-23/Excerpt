@@ -18,6 +18,10 @@ export enum PipelineErrorCode {
   
   // Pipeline stages
   DownloadFailed = 'DOWNLOAD_FAILED',
+  DownloadRateLimit = 'DOWNLOAD_RATE_LIMIT',
+  DownloadBotChallenge = 'DOWNLOAD_BOT_CHALLENGE',
+  PoTokenRequired = 'PO_TOKEN_REQUIRED',
+  DownloadPrivateVideo = 'DOWNLOAD_PRIVATE_VIDEO',
   TranscriptionFailed = 'TRANSCRIPTION_FAILED',
   PerceptionFailed = 'PERCEPTION_FAILED',
   CandidateGenerationFailed = 'CANDIDATE_GENERATION_FAILED',

@@ -111,7 +111,7 @@ function getLocalClipRelativePath(videoUrl: string) {
     .replace(/^\/?(?:temp\/|clips\/)?/, '');
 }
 
-function resolveLocalClipPath(videoUrl: string, jobId?: string, showCaptions = true) {
+function resolveLocalClipPath(videoUrl: string, jobId?: string, showCaptions = true, allowFallback = false) {
   if (!videoUrl) return null;
 
   let adjustedUrl = videoUrl;
@@ -157,8 +157,17 @@ function resolveLocalClipPath(videoUrl: string, jobId?: string, showCaptions = t
 
   for (const candidate of candidatePaths) {
     if (fs.existsSync(candidate)) {
-      return candidate;
+      try {
+        const stats = fs.statSync(candidate);
+        if (stats.size > 1024) {
+          return candidate;
+        }
+      } catch {}
     }
+  }
+
+  if (!showCaptions && allowFallback) {
+    return resolveLocalClipPath(videoUrl, jobId, true, false);
   }
 
   return null;
@@ -299,49 +308,51 @@ async function streamClipResponse(
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 
-  const localClipPath = resolveLocalClipPath(videoUrl, clip.job_id, showCaptions);
+  const localClipPath = resolveLocalClipPath(videoUrl, clip.job_id, showCaptions, !showCaptions);
   if (localClipPath && fs.existsSync(localClipPath)) {
     const stats = fs.statSync(localClipPath);
-    const range = req.headers.range;
+    if (stats.size > 1024) {
+      const range = req.headers.range;
 
-    if (range) {
-      const parts = range.replace(/bytes=/, '').split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1;
-      const chunksize = end - start + 1;
-      res.writeHead(206, {
-        'Content-Range': `bytes ${start}-${end}/${stats.size}`,
-        'Accept-Ranges': 'bytes',
-        'Content-Length': chunksize,
-        'Content-Type': 'video/mp4',
-        'Content-Disposition': `${disposition}; filename="${fileName}"`,
+      if (range) {
+        const parts = range.replace(/bytes=/, '').split('-');
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1;
+        const chunksize = end - start + 1;
+        res.writeHead(206, {
+          'Content-Range': `bytes ${start}-${end}/${stats.size}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': chunksize,
+          'Content-Type': 'video/mp4',
+          'Content-Disposition': `${disposition}; filename="${fileName}"`,
+        });
+        const stream = fs.createReadStream(localClipPath, { start, end });
+        req.on('close', () => { if (!stream.destroyed) stream.destroy(); });
+        stream.pipe(res);
+        return;
+      }
+
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Content-Length', stats.size.toString());
+
+      const stream = fs.createReadStream(localClipPath);
+      stream.on('error', (streamError) => {
+        console.error(`[VideoRoute]: Local clip stream failed for ${clipId}:`, streamError);
+        stream.destroy();
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Failed to stream local clip' });
+          return;
+        }
+        res.end();
       });
-      const stream = fs.createReadStream(localClipPath, { start, end });
-      req.on('close', () => { if (!stream.destroyed) stream.destroy(); });
+
+      req.on('close', () => {
+        if (!stream.destroyed) stream.destroy();
+      });
+
       stream.pipe(res);
       return;
     }
-
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Content-Length', stats.size.toString());
-
-    const stream = fs.createReadStream(localClipPath);
-    stream.on('error', (streamError) => {
-      console.error(`[VideoRoute]: Local clip stream failed for ${clipId}:`, streamError);
-      stream.destroy();
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Failed to stream local clip' });
-        return;
-      }
-      res.end();
-    });
-
-    req.on('close', () => {
-      if (!stream.destroyed) stream.destroy();
-    });
-
-    stream.pipe(res);
-    return;
   }
 
   // If clean clip requested but no local clean clip exists and no clean key in metadata, check if source video exists to render clean clip on the fly
@@ -350,22 +361,17 @@ async function streamClipResponse(
       path.join(process.cwd(), 'temp', 'jobs', clip.job_id || '', 'video.mp4'),
       path.join(process.cwd(), 'temp', clip.job_id || '', 'video.mp4'),
     ];
-    try {
-      const cacheDir = path.join(process.cwd(), 'temp', 'cache');
-      if (fs.existsSync(cacheDir)) {
-        for (const d of fs.readdirSync(cacheDir)) {
-          candidateSourcePaths.push(path.join(cacheDir, d, 'input.mp4'));
-        }
-      }
-    } catch {}
 
-    const sourceVideoPath = candidateSourcePaths.find(p => fs.existsSync(p));
+    const sourceVideoPath = candidateSourcePaths.find(p => {
+      try { return fs.existsSync(p) && fs.statSync(p).size > 1024; } catch { return false; }
+    });
+
     if (sourceVideoPath) {
       const targetCleanDir = path.join(process.cwd(), 'temp', 'jobs', clip.job_id || '');
       if (!fs.existsSync(targetCleanDir)) fs.mkdirSync(targetCleanDir, { recursive: true });
       const targetCleanPath = path.join(targetCleanDir, `clip-${clipId}-clean.mp4`);
 
-      if (!fs.existsSync(targetCleanPath)) {
+      if (!fs.existsSync(targetCleanPath) || fs.statSync(targetCleanPath).size <= 1024) {
         const clipStart = typeof clip.start_time === 'number' ? clip.start_time : (clip.startTime || 0);
         const clipEnd = typeof clip.end_time === 'number' ? clip.end_time : (clip.endTime || 60);
         try {
@@ -380,10 +386,11 @@ async function streamClipResponse(
           );
         } catch (e: any) {
           console.warn(`[VideoRoute]: Auto-generate clean clip stream failed:`, e.message);
+          try { if (fs.existsSync(targetCleanPath)) fs.unlinkSync(targetCleanPath); } catch {}
         }
       }
 
-      if (fs.existsSync(targetCleanPath)) {
+      if (fs.existsSync(targetCleanPath) && fs.statSync(targetCleanPath).size > 1024) {
         const stats = fs.statSync(targetCleanPath);
         const range = req.headers.range;
         if (range) {
@@ -440,12 +447,24 @@ async function streamClipResponse(
           return res.redirect(302, freshSignedUrl);
         }
       } catch (redirectErr: any) {
-        console.warn(`[VideoRoute]: Direct signed redirect failed, falling back to proxy stream:`, redirectErr?.message);
+        console.warn(`[VideoRoute]: Direct signed redirect failed for ${storageKey}:`, redirectErr?.message);
+        if (!showCaptions && storageKey !== baseStorageKey && baseStorageKey) {
+          try {
+            const fallbackUrl = await storageService.createSignedUrl(baseStorageKey);
+            if (fallbackUrl && /^https?:\/\//i.test(fallbackUrl)) {
+              return res.redirect(302, fallbackUrl);
+            }
+          } catch {}
+        }
       }
     }
 
     const rangeHeader = req.headers.range as string | undefined;
-    const fileResult = await storageService.getFileStream(storageKey, rangeHeader);
+    let fileResult = await storageService.getFileStream(storageKey, rangeHeader);
+    if (!fileResult && !showCaptions && storageKey !== baseStorageKey && baseStorageKey) {
+      fileResult = await storageService.getFileStream(baseStorageKey, rangeHeader);
+    }
+
     if (fileResult) {
       res.status(fileResult.statusCode || 200);
       res.setHeader('Content-Type', fileResult.contentType || 'video/mp4');
@@ -482,6 +501,14 @@ async function streamClipResponse(
         console.warn(`[VideoRoute]: Captioned clip not found for ${clipId}, falling back to clean clip.`);
         storageKey = cleanStorageKey;
         remoteClipUrl = await storageService.createSignedUrl(storageKey);
+      } else if (!showCaptions) {
+        console.warn(`[VideoRoute]: Clean clip not found for ${clipId}, falling back to base captioned clip.`);
+        storageKey = captionedStorageKey || baseStorageKey;
+        try {
+          remoteClipUrl = await storageService.createSignedUrl(storageKey);
+        } catch {
+          throw e;
+        }
       } else {
         throw e;
       }
@@ -689,7 +716,7 @@ router.post(
       return res.status(400).json({ errors: errors.array() });
     }
 
-      const { videoUrl, numClips, purge, intent, avoidSimilarClips, generationMode } = req.body;
+      const { videoUrl, numClips, purge, intent, avoidSimilarClips, generationMode, targetDuration, minDuration, maxDuration, durationPolicy: incomingPolicy } = req.body;
       
       try {
         const db = new DatabaseService();
@@ -698,14 +725,39 @@ router.post(
         if (purge === true) {
           await db.clearUserContent(req.user.id);
         }
+
+        const effectiveIntent = intent || 'viral';
+        
+        // Defensive duration policy normalization
+        let rawMin = typeof incomingPolicy?.minSec === 'number' ? incomingPolicy.minSec : (typeof minDuration === 'number' ? minDuration : (effectiveIntent === 'storyteller' ? 30 : 15));
+        let rawMax = typeof incomingPolicy?.maxSec === 'number' ? incomingPolicy.maxSec : (typeof maxDuration === 'number' ? maxDuration : (effectiveIntent === 'storyteller' ? 75 : 65));
+        let rawTarget = typeof incomingPolicy?.targetSec === 'number' ? incomingPolicy.targetSec : (typeof targetDuration === 'number' ? targetDuration : undefined);
+        
+        const safeMinSec = Math.max(5, Number.isFinite(rawMin) ? rawMin : 15);
+        const safeMaxSec = Math.max(safeMinSec, Number.isFinite(rawMax) ? rawMax : Math.max(safeMinSec + 10, 60));
+        const safeTargetSec = (typeof rawTarget === 'number' && Number.isFinite(rawTarget))
+          ? Math.max(safeMinSec, Math.min(safeMaxSec, rawTarget))
+          : undefined;
+
+        const durationPolicy = {
+          targetSec: safeTargetSec,
+          minSec: safeMinSec,
+          maxSec: safeMaxSec,
+          toleranceSec: (typeof incomingPolicy?.toleranceSec === 'number' && incomingPolicy.toleranceSec > 0) ? incomingPolicy.toleranceSec : 4.0,
+          priority: incomingPolicy?.priority || (effectiveIntent === 'storyteller' ? 'story' : effectiveIntent === 'educational' ? 'insight' : 'hook'),
+        };
   
         const jobId = await queueService.addJob({ 
           videoUrl, 
           numClips: numClips || 2,
-          intent: intent || 'viral',
+          intent: effectiveIntent,
           avoidSimilarClips: avoidSimilarClips || 'balanced',
           generationMode: generationMode || 'draft',
-          userId: req.user.id
+          userId: req.user.id,
+          targetDuration: durationPolicy.targetSec,
+          minDuration: durationPolicy.minSec,
+          maxDuration: durationPolicy.maxSec,
+          durationPolicy,
         });
 
         // Fire-and-forget title extraction so the UI updates faster
@@ -1308,47 +1360,73 @@ async function handleCustomClipExport(
   let cleanupDownloadedFile: string | null = null;
   const videoUrl = clip.storage_path || clip.video_url || '';
 
-  // 1. Try local clean clip first
-  let localVideo = resolveLocalClipPath(videoUrl, clip.job_id, false);
+  // Determine if clean (un-captioned) video is strictly required.
+  // We only need clean video if:
+  // - Captions are explicitly turned off (captions === false)
+  // - Caption style is changed from default ('Submagic' / 'hormozi')
+  // - Words were customized/edited
+  const origWords = clip.metadata?.words || [];
+  const hasEditedWords = Boolean(
+    params.words &&
+    params.words.length > 0 &&
+    origWords.length > 0 &&
+    (params.words.length !== origWords.length || params.words.some((w: any, i: number) => origWords[i]?.text !== w.text))
+  );
 
-  // 2. If no local clean clip, try clean storage key
-  if (!localVideo || !fs.existsSync(localVideo)) {
+  const needsCleanVideo = (params.captions === false) ||
+    (Boolean(params.captionStyle) && params.captionStyle !== 'Submagic' && params.captionStyle !== 'hormozi') ||
+    hasEditedWords;
+
+  let localVideo: string | null = null;
+
+  // 1. If we don't need clean video, prefer existing captioned local clip directly!
+  if (!needsCleanVideo) {
+    localVideo = resolveLocalClipPath(videoUrl, clip.job_id, true);
+  }
+
+  // 2. If clean video is required, try local clean clip first
+  if (needsCleanVideo && (!localVideo || !fs.existsSync(localVideo))) {
+    localVideo = resolveLocalClipPath(videoUrl, clip.job_id, false);
+  }
+
+  // 3. If still needed, check clean storage key in cloud storage
+  if (needsCleanVideo && (!localVideo || !fs.existsSync(localVideo))) {
     let cleanKey = clip.metadata?.video_clean_storage_key || '';
     if (cleanKey.startsWith('clips/')) cleanKey = cleanKey.slice('clips/'.length);
     if (cleanKey) {
       const tempCleanPath = path.join(exportDir, `base-clean-${clipId}-${Date.now()}.mp4`);
-      const streamResult = await storageService.getFileStream(cleanKey);
-      if (streamResult) {
-        await new Promise<void>((resolve, reject) => {
-          const ws = fs.createWriteStream(tempCleanPath);
-          streamResult.stream.pipe(ws);
-          ws.on('finish', resolve);
-          ws.on('error', reject);
-        });
-        localVideo = tempCleanPath;
-        cleanupDownloadedFile = tempCleanPath;
+      try {
+        const streamResult = await storageService.getFileStream(cleanKey);
+        if (streamResult) {
+          await new Promise<void>((resolve, reject) => {
+            const ws = fs.createWriteStream(tempCleanPath);
+            streamResult.stream.pipe(ws);
+            ws.on('finish', resolve);
+            ws.on('error', reject);
+          });
+          if (fs.existsSync(tempCleanPath) && fs.statSync(tempCleanPath).size > 1024) {
+            localVideo = tempCleanPath;
+            cleanupDownloadedFile = tempCleanPath;
+          }
+        }
+      } catch (cleanFetchErr: any) {
+        console.warn(`[VideoRoute]: Fetching clean video from storage failed:`, cleanFetchErr.message);
       }
     }
   }
 
-  // 3. If still no clean video, check if source video exists to cut clean clip on the fly
-  if (!localVideo || !fs.existsSync(localVideo)) {
+  // 4. If clean video is required and not in storage, check if source video exists to render clean clip
+  if (needsCleanVideo && (!localVideo || !fs.existsSync(localVideo))) {
     const clipStart = typeof clip.start_time === 'number' ? clip.start_time : (clip.startTime || 0);
     const clipEnd = typeof clip.end_time === 'number' ? clip.end_time : (clip.endTime || 60);
     const candidateSourcePaths = [
       path.join(process.cwd(), 'temp', 'jobs', clip.job_id || '', 'video.mp4'),
       path.join(process.cwd(), 'temp', clip.job_id || '', 'video.mp4'),
     ];
-    try {
-      const cacheDir = path.join(process.cwd(), 'temp', 'cache');
-      if (fs.existsSync(cacheDir)) {
-        for (const d of fs.readdirSync(cacheDir)) {
-          candidateSourcePaths.push(path.join(cacheDir, d, 'input.mp4'));
-        }
-      }
-    } catch {}
 
-    const sourceVideoPath = candidateSourcePaths.find(p => fs.existsSync(p));
+    const sourceVideoPath = candidateSourcePaths.find(p => {
+      try { return fs.existsSync(p) && fs.statSync(p).size > 1024; } catch { return false; }
+    });
     if (sourceVideoPath) {
       console.log(`[VideoRoute]: Found source video at ${sourceVideoPath}, cutting clean clip for export.`);
       const tempCleanPath = path.join(exportDir, `rendered-clean-${clipId}-${Date.now()}.mp4`);
@@ -1369,32 +1447,39 @@ async function handleCustomClipExport(
     }
   }
 
-  // 4. Fallback to captioned local clip or captioned storage key
+  // 5. Fallback to captioned local clip
   if (!localVideo || !fs.existsSync(localVideo)) {
     localVideo = resolveLocalClipPath(videoUrl, clip.job_id, true);
   }
 
+  // 6. Fallback to downloading captioned clip from cloud storage
   if (!localVideo || !fs.existsSync(localVideo)) {
     let storageKey = clip.storage_path || clip?.metadata?.video_storage_key || extractStorageKey(videoUrl) || '';
     if (storageKey.startsWith('clips/')) storageKey = storageKey.slice('clips/'.length);
     if (storageKey) {
       const tempDownloadPath = path.join(exportDir, `base-${clipId}-${Date.now()}.mp4`);
-      const fileStreamResult = await storageService.getFileStream(storageKey);
-      if (fileStreamResult) {
-        await new Promise<void>((resolve, reject) => {
-          const ws = fs.createWriteStream(tempDownloadPath);
-          fileStreamResult.stream.pipe(ws);
-          ws.on('finish', resolve);
-          ws.on('error', reject);
-        });
-        localVideo = tempDownloadPath;
-        cleanupDownloadedFile = tempDownloadPath;
+      try {
+        const fileStreamResult = await storageService.getFileStream(storageKey);
+        if (fileStreamResult) {
+          await new Promise<void>((resolve, reject) => {
+            const ws = fs.createWriteStream(tempDownloadPath);
+            fileStreamResult.stream.pipe(ws);
+            ws.on('finish', resolve);
+            ws.on('error', reject);
+          });
+          if (fs.existsSync(tempDownloadPath) && fs.statSync(tempDownloadPath).size > 1024) {
+            localVideo = tempDownloadPath;
+            cleanupDownloadedFile = tempDownloadPath;
+          }
+        }
+      } catch (dlErr: any) {
+        console.warn(`[VideoRoute]: Downloading base clip from storage failed:`, dlErr.message);
       }
     }
   }
 
   if (!localVideo || !fs.existsSync(localVideo)) {
-    console.warn(`[VideoRoute]: Base clip not found locally for custom export, falling back to standard stream.`);
+    console.warn(`[VideoRoute]: Base clip not found for custom export, falling back to standard stream.`);
     await streamClipResponse(clipId, clip, req, res);
     return;
   }
@@ -1432,9 +1517,13 @@ async function handleCustomClipExport(
 
   let subtitlePath: string | undefined = undefined;
   if (params.captions !== false) {
-    const rawWords = (params.words && params.words.length > 0) ? params.words : (clip.metadata?.words || []);
+    const rawWords = (params.words && params.words.length > 0)
+      ? params.words
+      : (clip.metadata?.words || clip.words || []);
+
     if (rawWords.length > 0) {
-      const isWordsAbsolute = clipStart > 2.0 && rawWords.some((w: any) => typeof w.start === 'number' && w.start >= (clipStart * 0.5));
+      const isWordsAbsolute = (clipStart > 0.5 && rawWords.some((w: any) => typeof w.start === 'number' && w.start >= (clipStart * 0.5))) ||
+        rawWords.some((w: any) => typeof w.start === 'number' && w.start >= clipDuration);
 
       const relativeWords = rawWords
         .map((w: any) => {
@@ -1442,16 +1531,18 @@ async function handleCustomClipExport(
           const rawEnd = typeof w.end === 'number' ? w.end : (rawStart + 0.3);
           const baseStart = isWordsAbsolute ? rawStart - clipStart : rawStart;
           const baseEnd = isWordsAbsolute ? rawEnd - clipStart : rawEnd;
+          const wordText = String(w.word || w.text || '').trim();
           return {
             ...w,
+            word: wordText,
             start: Math.max(0, Number((baseStart - relStart).toFixed(3))),
             end: Math.max(0.05, Number((baseEnd - relStart).toFixed(3))),
           };
         })
-        .filter((w: any) => w.end > 0 && w.start < (relEnd - relStart + 0.5));
+        .filter((w: any) => w.word.length > 0 && w.end > 0 && w.start < (relEnd - relStart + 0.5));
 
       if (relativeWords.length > 0) {
-        captionService.generateASS(relativeWords, assPath, params.captionStyle || 'hormozi');
+        captionService.generateASS(relativeWords, assPath, params.captionStyle || 'submagic', relEnd - relStart);
         subtitlePath = assPath;
       }
     }
@@ -1597,6 +1688,22 @@ router.post('/export-clip/:clipId', requireUserJWT, async (req: Request, res: Re
       captions,
       words,
     } = req.body;
+
+    const clipStart = typeof clip.start_time === 'number' ? clip.start_time : (clip.startTime || 0);
+    const clipEnd = typeof clip.end_time === 'number' ? clip.end_time : (clip.endTime || 60);
+
+    const hasCustomTrim = (typeof trimIn === 'number' && Math.abs(trimIn - clipStart) > 0.25) ||
+      (typeof trimOut === 'number' && Math.abs(trimOut - clipEnd) > 0.25);
+
+    const hasCuts = Array.isArray(cuts) && cuts.length > 0;
+    const hasCropOffset = typeof cropOffset === 'number' && Math.abs(cropOffset) > 1;
+    const hasCustomAspect = Boolean(aspectRatio && aspectRatio !== '9:16');
+    const hasCaptionStyle = Boolean(captionStyle && captionStyle !== 'Submagic' && captionStyle !== 'hormozi');
+    const hasCaptionsDisabled = captions === false;
+
+    const origWords = clip.metadata?.words || [];
+    const hasCustomWords = Array.isArray(words) && words.length > 0 && origWords.length > 0 &&
+      (words.length !== origWords.length || words.some((w: any, i: number) => origWords[i]?.text !== w.text));
 
     await handleCustomClipExport(clipId, clip, {
       trimIn: typeof trimIn === 'number' ? trimIn : undefined,

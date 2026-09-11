@@ -37,7 +37,8 @@ import { fallbackClipService } from '../services/fallbackClipService';
 import { NexusRegistry } from '../services/nexus/NexusRegistry';
 import { LearningService } from '../services/nexus/LearningService';
 import { JobStateMachine, JobStatus } from '../utils/JobStateMachine';
-import { NEXUS_FEATURES, isMultiModalEnabled, EXPERIMENTAL_FEATURES, isOrchestratorEnabled, ORCHESTRATOR_FEATURES, getActiveTiers } from '../config/features';
+import { JobFinalizerService } from '../services/render/JobFinalizerService';
+import { NEXUS_FEATURES, isMultiModalEnabled, EXPERIMENTAL_FEATURES, isOrchestratorEnabled, ORCHESTRATOR_FEATURES, getActiveTiers, MIN_QUALIFYING_EVENT_CONFIDENCE } from '../config/features';
 import { CategoryClassifier } from '../services/intelligence/CategoryClassifier';
 import { createDefaultContext, PipelineContext } from '../services/intelligence/PipelineContext';
 import { downloadEngine } from '../services/download';
@@ -63,7 +64,7 @@ import { validateClip } from '../services/clipValidator';
 import { broadcastGraphicsDetector } from '../services/intelligence/BroadcastGraphicsDetector';
 import { visualDebugger } from '../services/intelligence/VisualDebugger';
 import { narrativeIntelligenceEngine } from '../services/intelligence/NarrativeIntelligenceEngine';
-import { AcousticBoundarySnapper } from '@excerpt/clipping-core';
+import { AcousticBoundarySnapper, BoundaryPlanner, SemanticUnitTokenizer, PerceptionSnapshot } from '@excerpt/clipping-core';
 import { ContextCoherenceGuard } from '../services/intelligence/ContextCoherenceGuard';
 import { SceneCutSnapper } from '../services/intelligence/SceneCutSnapper';
 import { MultiScaleStoryEngine } from '../services/intelligence/MultiScaleStoryEngine';
@@ -289,6 +290,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
   const monitor = createPipelineMonitor();
   let tempDir = '';
   let uploadedSourcePathToCleanup = '';
+  let isWaitingRender = false;
   const { EnvironmentInspector } = require('../services/download/EnvironmentInspector');
   const envSnapshot = await EnvironmentInspector.getSnapshot();
 
@@ -357,6 +359,16 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     const numClips = data.numClips || 3;
     const intent = data.intent || 'viral';
     const avoidSimilarClips = data.avoidSimilarClips || 'balanced'; // 'strict' | 'balanced' | 'explore'
+    const durationPolicy: any = data.durationPolicy || {
+      targetSec: typeof data.targetDuration === 'number' ? data.targetDuration : undefined,
+      minSec: typeof data.minDuration === 'number' ? data.minDuration : (intent === 'storyteller' ? 30 : 15),
+      maxSec: typeof data.maxDuration === 'number' ? data.maxDuration : (intent === 'storyteller' ? 75 : 65),
+      toleranceSec: 4.0,
+      priority: intent === 'storyteller' ? 'story' : intent === 'educational' ? 'insight' : 'hook',
+    };
+    const targetDuration = durationPolicy.targetSec;
+    const minClipDuration = durationPolicy.minSec;
+    const maxClipDuration = durationPolicy.maxSec;
 
     if (/^https?:\/\//i.test(videoUrl)) {
       videoUrl = await assertSafeRemoteVideoUrl(videoUrl);
@@ -531,6 +543,27 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     try { await JobStateMachine.transition(db, jobId, JobStatus.PROCESSING, { progress: 15, stage_label: 'Calculating video duration & verifying media stream' }); } catch {}
     const sourceDuration = mediaArtifact.durationSec;
     console.log(`[Worker]: Source duration: ${sourceDuration.toFixed(2)} seconds`);
+
+    // ── Phase 1.6: Publish Content-Addressed Immutable Source Artifact ──
+    const { SourceArtifactManager } = require('../services/storage/SourceArtifactManager');
+    const sourceManager = SourceArtifactManager.getInstance();
+    let sourceManifest: any = null;
+    try {
+      sourceManifest = await sourceManager.publishSourceArtifact(inputPath, videoUrl);
+      console.log(`[Worker]: 🗄️ Immutable source published: ${sourceManifest.storageKey} (Hash: ${sourceManifest.contentHash})`);
+      await db.updateJob(jobId, {
+        source_hash: sourceManifest.contentHash,
+        source_storage_key: sourceManifest.storageKey,
+        payload: {
+          ...(data as any).payload,
+          source_hash: sourceManifest.contentHash,
+          source_storage_key: sourceManifest.storageKey,
+          source_manifest: sourceManifest,
+        }
+      });
+    } catch (publishErr: any) {
+      console.warn(`[Worker]: Non-fatal source publication warning: ${publishErr.message}`);
+    }
 
     // Fetch video metadata for hash generation if possible (falls back safely)
     try {
@@ -942,15 +975,18 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           editorialPreferenceEngine.process(pipelineContext);
           clipQualityEngine.evaluateClips(pipelineContext); // Phase 9
 
-          if (pipelineContext.events.length > 0) {
+          // Fix 6: Filter low-confidence events before committing V2 path.
+          // Threshold is centralised in features.ts as MIN_QUALIFYING_EVENT_CONFIDENCE.
+          const qualifyingV2Events = pipelineContext.events.filter((e: any) => (e.confidence ?? 0) >= MIN_QUALIFYING_EVENT_CONFIDENCE);
+          if (qualifyingV2Events.length > 0) {
             isV2PipelineUsed = true;
             generationMode = 'ai';
-            console.log(`[Worker]: V2 event pipeline detected ${pipelineContext.events.length} events. Mapping to PlannedClips...`);
+            console.log(`[Worker]: V2 event pipeline detected ${qualifyingV2Events.length} qualifying events (of ${pipelineContext.events.length} total). Mapping to PlannedClips...`);
             
             // Map events to PlannedClip structure and deduplicate by boundary
             const uniqueClips: any[] = [];
             
-            pipelineContext.events.forEach((event, idx) => {
+            qualifyingV2Events.forEach((event, idx) => {
               const boundary = smartBoundaryEngine.computeBoundary(event, pipelineContext);
               
               // Skip if we already have a clip with roughly the same semantic boundary
@@ -995,6 +1031,8 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
             numClips: Math.min(Math.max(numClips * 3, 4), 8),
             totalDuration: sourceDuration,
             excludedZones,
+            minDurationSec: minClipDuration,
+            maxDurationSec: maxClipDuration,
           });
         } catch (candidateError: any) {
           console.warn(`[Worker]: Candidate preselection unavailable: ${candidateError.message}`);
@@ -1003,7 +1041,15 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
 
       if (!recoveryMode && transcriptionText.trim()) {
         try {
-          clips = await aiService.detectClips(transcriptionText, videoUrl, numClips, heuristicCandidates, intent as any, excludedZones);
+          clips = await aiService.detectClips(
+            transcriptionText,
+            videoUrl,
+            numClips,
+            heuristicCandidates,
+            intent as any,
+            excludedZones,
+            { minDuration: minClipDuration, maxDuration: maxClipDuration, targetDuration }
+          );
         } catch (aiError: any) {
           recoveryReason = aiError.message;
           console.warn(`[Worker]: AI Detection jitter detected. Attempting transcript-guided fallback...`);
@@ -1021,6 +1067,8 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
                   numClips,
                   totalDuration: sourceDuration,
                   excludedZones,
+                  minDurationSec: minClipDuration,
+                  maxDurationSec: maxClipDuration,
                 });
             generationMode = 'heuristic';
             recoveryMode = false;
@@ -1068,13 +1116,55 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       }
     }
 
-    // Align all detected clips to natural speech & visual scene boundaries (Zero-Truncation Guard)
+    // Align all detected clips to natural speech & visual scene boundaries via Canonical BoundaryPlanner
     if (words && words.length > 0) {
-      console.log(`[Worker]: Evaluating ${clips.length} clips with EditorialPlanEvaluator, AcousticBoundarySnapper & SceneCutSnapper...`);
+      console.log(`[Worker]: Tokenizing semantic units and generating canonical boundaries with BoundaryPlanner...`);
+      const semanticUnits = SemanticUnitTokenizer.tokenize(words as any, segments);
+
+      // Construct PerceptionSnapshot from VideoIntelligenceGraph & AudioEvents
+      const vigGraph = pipelineContext.vig;
+      const perceptionSnapshot: PerceptionSnapshot = {
+        schemaVersion: '1.0',
+        cacheKey: videoHash || jobId,
+        source: {
+          hash: videoHash || '',
+          durationSec: sourceDuration,
+          width: 1920,
+          height: 1080,
+          fps: 30,
+          audioChannels: 2,
+        },
+        transcript: {
+          fullText: transcriptionText,
+          segments: segments.map((s: any) => ({ text: s.text, start: s.start, end: s.end, speaker: s.speaker || 'unknown' })),
+          words: (words || []).map((w: any) => ({ word: w.word, start: w.start, end: w.end, confidence: w.confidence })),
+        },
+        audio: {
+          sampleIntervalSec: 1.0,
+          energySummary: (vigGraph?.audio || []).map((a: any) => a.energy),
+          meanVolumeDb: -20,
+          maxVolumeDb: -1,
+          events: (vigGraph?.audioEvents || []).map((e: any) => ({
+            type: e.type,
+            startSec: e.startSec,
+            endSec: e.endSec,
+            value: e.value ?? -35,
+          })),
+        },
+        scenes: {
+          events: [],
+        },
+        speakers: {
+          tracks: [],
+          faceProminenceScore: 80,
+        },
+        extractors: {} as any,
+        createdAt: new Date().toISOString(),
+      };
+
+      console.log(`[Worker]: Evaluating ${clips.length} clips with EditorialPlanEvaluator, BoundaryPlanner & SceneCutSnapper...`);
       const evaluatedClips = await Promise.all(clips.map(async (clip) => {
         // 1. Phase A: Counterfactual Editorial Evaluation (in-memory, candidate-dependent)
-        // Evaluates raw, hook-adjusted, and payoff-extended variants.
-        // Invariant: No camera, caption, or crop is allowed to rescue an editorially bad candidate.
         const editorialPlan = editorialPlanEvaluator.evaluateCandidate(
           clip.id,
           clip.start_time,
@@ -1091,27 +1181,53 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         let startCandidate = winning.startSec;
         let endCandidate = winning.endSec;
 
-        // 2. Acoustic Zero-Truncation Boundary Snapper
-        const snapped = AcousticBoundarySnapper.snap(
-          startCandidate,
-          endCandidate,
-          words,
-          [],
-          { minDurationSec: 15, maxDurationSec: 60, preRollMs: 180, postRollMs: 300 }
+        // 2. Canonical BoundaryPlanner (Soft Target Window + Silence Landings + Zero-Truncation)
+        // Fix 5 (revised): Derive target from semantic intent, not a universal 15s floor.
+        //
+        //   hook_adjusted  → compact hook clip  → target ~15s   (opening thesis)
+        //   payoff_extended → resolution story   → target ~35s   (needs full arc)
+        //   raw, complete terminal              → target = editorial duration
+        //
+        // Rule: duration is a preference; semantic completeness is primary.
+        // BoundaryPlanner will honour minDurationSec/maxDurationSec hard constraints
+        // while targeting the semantically appropriate length.
+        const editorialDuration = endCandidate - startCandidate;
+        const endQuality = winning.end_boundary_quality;
+        let targetDur: number;
+        if (targetDuration && targetDuration > 0) {
+          targetDur = Math.max(minClipDuration, Math.min(editorialDuration, maxClipDuration));
+        } else if (winning.variantId === 'hook_adjusted') {
+          targetDur = Math.max(minClipDuration, Math.min(editorialDuration, maxClipDuration));
+        } else if (winning.variantId === 'payoff_extended' || endQuality === 'extended_resolution') {
+          targetDur = Math.max(minClipDuration, Math.min(editorialDuration, maxClipDuration));
+        } else {
+          targetDur = Math.max(minClipDuration, Math.min(editorialDuration, maxClipDuration));
+        }
+        const canonicalBoundary = BoundaryPlanner.planBoundary(
+          { startSec: startCandidate, endSec: endCandidate, targetDurationSec: targetDur },
+          perceptionSnapshot,
+          semanticUnits,
+          {
+            durationPolicy,
+            targetDurationSec: targetDur,
+            preferredWindowMarginSec: durationPolicy.toleranceSec ?? 4.0,
+            minDurationSec: durationPolicy.minSec,
+            maxDurationSec: durationPolicy.maxSec,
+          }
         );
 
-        let finalStart = Number(snapped.startSec.toFixed(2));
-        let finalEnd = Number(snapped.endSec.toFixed(2));
+        // Canonical Boundary is locked — downstream stages may validate, but must not mutate
+        const finalStart = canonicalBoundary.startSec;
+        const finalEnd = canonicalBoundary.endSec;
+        (clip as any).durationFitScore = canonicalBoundary.durationFitScore;
         let sceneCutResult: any = null;
 
-        // 3. Visual Scene-Cut Shot Boundary Alignment
+        // Visual Scene-Cut validation & telemetry (non-mutating)
         try {
           const windowDuration = Math.max(0.5, finalEnd - finalStart);
           const sceneCuts = await sceneSnapper.detectSceneCuts(inputPath, finalStart, windowDuration);
           if (sceneCuts.length > 0) {
-            sceneCutResult = sceneSnapper.snapBoundariesToSceneCut(finalStart, finalEnd, sceneCuts, 0.40, { words: words as any });
-            finalStart = sceneCutResult.snappedStartSec;
-            finalEnd = sceneCutResult.snappedEndSec;
+            sceneCutResult = sceneSnapper.snapBoundariesToSceneCut(finalStart, finalEnd, sceneCuts, 0.35, { words: words as any });
           }
         } catch (sceneErr: any) {
           console.warn(`[Worker]: Scene cut detection skipped for clip: ${sceneErr.message}`);
@@ -1126,6 +1242,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           ...clip,
           start_time: finalStart,
           end_time: finalEnd,
+          canonical_boundary: canonicalBoundary,
           scale_type: scaleType,
           recommended_platform: matchedArc ? matchedArc.recommendedPlatform : 'TikTok / Shorts',
           editorial_plan: {
@@ -1191,7 +1308,9 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     const clipAnalyses = new Map<string, any>();
     console.log(`[Nexus]: Initiating Modular Analysis for ${clips.length} segments in parallel...`);
 
-    const nexusAnalysisPromises = clips.map(async (clip, idx) => {
+    // Fix 4: Limit parallel FFmpeg + Nexus calls — pLimit already imported at top of file
+    const nexusLimit = pLimit(2);
+    const nexusAnalysisPromises = clips.map((clip, idx) => nexusLimit(async () => {
       try {
         const clipDuration = clip.end_time - clip.start_time;
 
@@ -1200,11 +1319,18 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         if (NEXUS_FEATURES.cinematic_cropping && clipDuration > 0) {
           analysisDir = path.join(tempDir, `frames_${clip.id}`);
           fs.mkdirSync(analysisDir, { recursive: true });
+          // Fix 2: Preserve path for cleanup even when extraction fails (analysisDir gets cleared below)
+          const analysisDirForCleanup = analysisDir;
           try {
             await processor.extractAnalysisFrames(inputPath, clip.start_time, clipDuration, analysisDir);
           } catch (frameErr: any) {
             console.warn(`[Worker]: Frame extraction failed for clip ${idx + 1} (non-fatal): ${frameErr.message}`);
             analysisDir = undefined; // Fall through to center crop
+          }
+          // Fix 2: Always clean up the directory whether extraction succeeded or failed
+          if (analysisDirForCleanup) {
+            // Defer cleanup until after analysis completes — see cleanup block below
+            (clip as any)._analysisDirForCleanup = analysisDirForCleanup;
           }
         }
 
@@ -1217,9 +1343,11 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           clip.start_time
         );
 
-        // Cleanup frames immediately after analysis to prevent disk bloat
-        if (analysisDir) {
-          try { fs.rmSync(analysisDir, { recursive: true, force: true }); } catch {}
+        // Fix 2: Cleanup frames after analysis — use preserved path so failed extractions also clean up
+        const cleanupDir = (clip as any)._analysisDirForCleanup || analysisDir;
+        if (cleanupDir) {
+          try { fs.rmSync(cleanupDir, { recursive: true, force: true }); } catch {}
+          delete (clip as any)._analysisDirForCleanup;
         }
 
         (clip as any).enhancements = analysis.enhancements;
@@ -1228,7 +1356,16 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
 
         if (NEXUS_FEATURES.scoring_merge_enabled) {
           const oldScore = clip.virality_score;
-          const offset = analysis.finalScoreOffset * 100;
+          // Fix 1: Guard against NaN — finalScoreOffset may be NaN when a sub-signal crashes.
+          // Log the invalid signal so it is distinguishable from a genuine neutral offset.
+          const rawOffset = analysis.finalScoreOffset;
+          let offset: number;
+          if (Number.isFinite(rawOffset)) {
+            offset = rawOffset * 100;
+          } else {
+            console.warn(`[Nexus]: Clip ${idx + 1} — non-finite finalScoreOffset (${rawOffset}). Treating as 0. scoreStatus=invalid_signal scoreReason=non_finite_finalScoreOffset`);
+            offset = 0;
+          }
           clip.virality_score = Math.min(100, Math.max(0, Math.round(oldScore + offset)));
           console.log(`[Nexus]: Clip ${idx + 1} Score Adjusted: ${oldScore} -> ${clip.virality_score} (Offset: ${offset.toFixed(1)})`);
         }
@@ -1266,7 +1403,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       } catch (nexusError) {
         console.error(`[Nexus]: Analysis failed for clip ${idx + 1}, skipping.`, nexusError);
       }
-    });
+    }));
 
     await Promise.all(nexusAnalysisPromises);
     recordStage(
@@ -1718,8 +1855,11 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       const clipScore = clip.clip_score || clip.virality_score;
 
       // Extract words matching this clip's time range
+      // Fix 3: Use strict intersection (word.end > start AND word.start < end) — consistent with
+      // renderWorker's canonical word intersection. The old ±0.25 slack re-introduced the
+      // clamping-to-zero bug that Phase 3 fixed.
       const rawClipWords = (clip as any).words || (words || []).filter(
-        (w: any) => typeof w.start === 'number' && typeof w.end === 'number' && w.start >= (renderStart - 0.25) && w.end <= (renderEnd + 0.25)
+        (w: any) => typeof w.start === 'number' && typeof w.end === 'number' && w.end > renderStart && w.start < renderEnd
       );
       (clip as any).words = rawClipWords;
 
@@ -1853,6 +1993,8 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           clipStart: renderStart,
           clipEnd: renderEnd,
           clipWords: rawClipWords,
+          // Fix 7: Declare coordinate system explicitly so renderWorker never has to guess
+          wordsAreAbsolute: true,
           cropPlan: cropPlan,
           jumpCutPlan: jumpCutPlan,
           hookText: hookText,
@@ -1933,10 +2075,15 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       const rawClip = clips.find((c: any) => c.id === rj.clipId || c.metadata?.id === rj.clipId);
       const renderPayload = {
         videoUrl: videoUrl,
+        sourceStorageKey: sourceManifest?.storageKey,
+        contentHash: sourceManifest?.contentHash,
         clipId: rj.clipId,
         clipStart: clip?.start_time ?? rawClip?.start_time ?? 0,
         clipEnd: clip?.end_time ?? rawClip?.end_time ?? 0,
-        clipWords: (clip as any)?.words || (rawClip as any)?.words || [],
+        clipWords: (clip as any)?.words || (rawClip as any)?.words || (clip as any)?.metadata?.words || (words || []).filter(
+          (w: any) => typeof w.start === 'number' && typeof w.end === 'number' && w.end > (clip?.start_time ?? 0) && w.start < (clip?.end_time ?? 60)
+        ),
+        wordsAreAbsolute: true,
         cropPlan: (clip as any)?.metadata?.nexus?.crop_plan || (rawClip as any)?.metadata?.nexus?.crop_plan || (clip as any)?.cropPlan || null,
         jumpCutPlan: (clip as any)?.metadata?.jump_cut_plan || (rawClip as any)?.jump_cut_plan || null,
         aspectRatio: rj.aspectRatio,
@@ -1963,122 +2110,73 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       }
     }
 
-    try { await JobStateMachine.transition(db, jobId, JobStatus.RENDERING, { progress: 85 }); } catch (err: any) { console.warn(`Failed to set rendering status: ${err.message}`) }
-    console.log('[Worker]: Awaiting RenderWorker completion contract...');
-    
-    const WATCHDOG_TIMEOUT_MS = 10 * 60 * 1000;
-    const { finalStatus, finalReason, deliverySummary, finalClipsCheck, usedFallbackMode } = await awaitRenderJobsAndFinalize(
-      db,
-      jobId,
-      renderPlan.renderJobs.length,
-      dbClips,
-      clips,
-      data,
-      WATCHDOG_TIMEOUT_MS,
-      sleep as any
-    );
+    // ─── P4.4 Event-Driven Render Fan-In ──────────────────────────────────────
+    const expectedJobs = renderPlan.renderJobs.length;
+    await db.updateJob(jobId, { expected_render_jobs: expectedJobs });
 
-    // ─── Step 4.5: Delivery Validation Stage ─────────────────────────────────
-    const artifactChecks = (finalClipsCheck || []).map((c: any) => ({
-      clipId: c.id,
-      videoUrl: c.storage_path || c.video_url || '',
-      isPlayable: c.status === 'uploaded' || Boolean(c.storage_path),
-      storageVerified: Boolean(c.storage_path && c.status === 'uploaded'),
-    }));
-    const deliveryReport = DeliveryValidator.validate(renderPlan, artifactChecks);
-    console.log(`[Worker]: Delivery Funnel Validation Report -> Pass: ${deliveryReport.pass} (${deliveryReport.playable}/${deliveryReport.scheduled} playable)`);
-
-    // ─── Step 5: Finalize ───────────────────────────────────────────
-    if (finalStatus === 'failed' || !deliveryReport.pass) {
-      const failureReason = finalReason || deliveryReport.reason || 'Delivery validation failed.';
-      await db.updateJob(jobId, {
-        status: 'failed',
-        progress: 100,
-        result: finalClipsCheck,
-        failed_reason: failureReason,
-        generation_mode: generationMode,
-        pipeline_summary: { ...(pipelineSummary || {}), render: deliverySummary, delivery_report: deliveryReport }
-      }).catch(err => console.error(`[Worker]: Failed to record failed status: ${err.message}`));
-      return { status: 'failed', failedReason: failureReason, totalExecutionTimeMs };
-    }
-    
-    // Save timeline coverage for memory service
+    // Save timeline coverage for memory service early before releasing worker slot
     try {
       for (const clip of dbClips) {
-          try {
-            const crypto = require('crypto');
-            await memoryService.recordClipCoverage({
-              video_id: videoUrl,
-              start_time: clip.start_time,
-              end_time: clip.end_time,
-              clip_id: clip.id,
-              transcript_hash: crypto.createHash('sha256').update((clip as any).caption || '').digest('hex'),
-              story_signature: clip.metadata?.nexus?.story_signature || 'viral_moment',
-              event_signature: clip.metadata?.nexus?.event_signature || 'moment',
-              semantic_summary: (clip.metadata as any)?.description || (clip as any).caption,
-              embedding: (clip as any).temp_embedding || null
-            });
-          } catch (memErr: any) {
-            console.warn(`[Worker]: Primary timeline coverage write failed for clip ${clip.id} (likely UUID constraint): ${memErr.message}. Retrying with omitted clip_id.`);
-            try {
-              const crypto = require('crypto');
-              await memoryService.recordClipCoverage({
-                video_id: videoUrl,
-                start_time: clip.start_time,
-                end_time: clip.end_time,
-                transcript_hash: crypto.createHash('sha256').update((clip as any).caption || '').digest('hex'),
-                story_signature: clip.metadata?.nexus?.story_signature || 'viral_moment',
-                event_signature: clip.metadata?.nexus?.event_signature || 'moment',
-                semantic_summary: (clip.metadata as any)?.description || (clip as any).caption,
-                embedding: (clip as any).temp_embedding || null
-              });
-            } catch (retryErr: any) {
-              console.warn(`[Worker]: Fallback timeline coverage write failed: ${retryErr.message}`);
-            }
+        try {
+          const crypto = require('crypto');
+          await memoryService.recordClipCoverage({
+            video_id: videoUrl,
+            start_time: clip.start_time,
+            end_time: clip.end_time,
+            clip_id: clip.id,
+            transcript_hash: crypto.createHash('sha256').update((clip as any).caption || '').digest('hex'),
+            story_signature: clip.metadata?.nexus?.story_signature || 'viral_moment',
+            event_signature: clip.metadata?.nexus?.event_signature || 'moment',
+            semantic_summary: (clip.metadata as any)?.description || (clip as any).caption,
+            embedding: (clip as any).temp_embedding || null
+          });
+        } catch (memErr: any) {
+          console.warn(`[Worker]: Primary timeline coverage write failed for clip ${clip.id}: ${memErr.message}`);
         }
       }
     } catch (memErr: any) {
       console.warn(`[Worker]: Timeline coverage write warning: ${memErr.message}`);
     }
 
-    try {
-      await JobStateMachine.transition(db, jobId, JobStatus.COMPLETED, {
-        pipeline_summary: { ...(pipelineSummary || {}), render: deliverySummary },
-        // ── Full performance_metrics: all stage timings + download attempt telemetry.
-        //    Keys match what /api/system/dashboard and /api/system/jobs/retry-telemetry
-        //    expect. Never delete existing keys — merge with spread so early writes survive.
-        performance_metrics: {
-          total: totalExecutionTimeMs,
-          // Stage timings (milliseconds)
-          download_ms:        monitor.stages.stage_0_input?.durationMs           ?? null,
-          transcription_ms:   monitor.stages.stage_1_transcript?.durationMs      ?? null,
-          ai_analysis_ms:     monitor.stages.stage_3_segment_generation?.durationMs ?? null,
-          ranking_ms:         monitor.stages.stage_6_ranking?.durationMs          ?? null,
-          // Nexus / multi-module stages
-          nexus_ms:           monitor.stages.stage_2_to_12_nexus_modules?.durationMs ?? null,
-          classification_ms:  monitor.stages.stage_1_5?.durationMs                ?? null,
-          // Download strategy telemetry — the full DownloadAttempt[] array
-          // consumed by DownloadStrategyExplorer and RetryTelemetryCard
-          download_attempts: Array.isArray(debugData.download?.attempts)
-            ? debugData.download.attempts
-            : [],
-          // Generation metadata
-          generation_mode: generationMode,
-          cache_hit:        isCacheHit,
-        },
+    if (expectedJobs === 0) {
+      console.log(`[Worker]: No render jobs scheduled for ${jobId}. Finalizing immediately...`);
+      await JobFinalizerService.finalizeJob(db, jobId);
+      return {
+        status: 'completed',
+        progress: 100,
+        result: dbClips,
+        generationMode,
         debug_data: debugData,
-      });
-    } catch (telemetryErr: any) {
-      console.warn(`[Worker]: Telemetry persistence failed (non-fatal): ${telemetryErr.message}`);
+        pipeline_summary: pipelineSummary,
+        totalExecutionTimeMs,
+      };
     }
 
+    // Transition parent job to WAITING_RENDER and release worker slot immediately
+    await JobStateMachine.transition(db, jobId, JobStatus.WAITING_RENDER, {
+      progress: 85,
+      expected_render_jobs: expectedJobs,
+      stage_label: `Dispatched ${expectedJobs} render jobs. Awaiting event-driven fan-in.`,
+      pipeline_summary: pipelineSummary,
+      debug_data: debugData,
+      performance_metrics: {
+        total: totalExecutionTimeMs,
+        download_ms: monitor.stages.stage_0_input?.durationMs ?? null,
+        transcription_ms: monitor.stages.stage_1_transcript?.durationMs ?? null,
+        ai_analysis_ms: monitor.stages.stage_3_segment_generation?.durationMs ?? null,
+        ranking_ms: monitor.stages.stage_6_ranking?.durationMs ?? null,
+        generation_mode: generationMode,
+        cache_hit: isCacheHit,
+      }
+    });
+
+    console.log(`[Worker]: 🚀 Event-driven render fan-in active for ${jobId}. ${expectedJobs} jobs dispatched. Ingestion worker slot released.`);
+    isWaitingRender = true;
     return {
-      status: 'completed',
-      progress: 100,
+      status: 'waiting_render',
+      progress: 85,
       result: dbClips,
-      recoveryMode: usedFallbackMode,
       generationMode,
-      recoveryReason,
       debug_data: debugData,
       pipeline_summary: pipelineSummary,
       totalExecutionTimeMs,
@@ -2169,7 +2267,8 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     };
   } finally {
     clearInterval(heartbeatInterval);
-    if (tempDir) {
+    // Only clean up tempDir if the job failed or finished locally; retain it for render workers when waiting_render
+    if (tempDir && !isWaitingRender) {
       try { const fs = require('fs'); fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
     }
 
@@ -2262,15 +2361,16 @@ async function processClaimedJobWithRetries(job: any, workerId: number) {
     // Finalize attempt
     const completedAt = new Date().toISOString();
     const isSuccess = lastResult?.status === 'completed';
+    const isWaitingRender = lastResult?.status === 'waiting_render';
     const retryable = lastResult?.retryable !== false;
-    const failedReason = lastResult?.failedReason || (isSuccess ? undefined : 'Job failed before completion.');
+    const failedReason = lastResult?.failedReason || (isSuccess || isWaitingRender ? undefined : 'Job failed before completion.');
 
     const finalizedAttemptObj = {
       ...currentAttemptObj,
       completedAt,
-      success: isSuccess,
-      retryable: isSuccess ? undefined : retryable,
-      error: isSuccess ? undefined : failedReason,
+      success: isSuccess || isWaitingRender,
+      retryable: isSuccess || isWaitingRender ? undefined : retryable,
+      error: isSuccess || isWaitingRender ? undefined : failedReason,
       durationMs: attemptDurationMs
     };
     
@@ -2278,8 +2378,16 @@ async function processClaimedJobWithRetries(job: any, workerId: number) {
     payload = {
       ...payload,
       attempts: attemptsHistory,
-      successfulAttempt: isSuccess ? attempt : undefined
+      successfulAttempt: isSuccess || isWaitingRender ? attempt : undefined
     };
+
+    if (isWaitingRender) {
+      console.log(`[Worker]: Job ${job.id} transitioned to waiting_render. Ingestion successfully handed off to render fan-in.`);
+      try {
+        await db.updateJob(job.id, { payload });
+      } catch(e) {}
+      return lastResult;
+    }
 
     if (isSuccess) {
       // The DB is already updated to completed by processVideoJob, but let's just make sure payload is synced

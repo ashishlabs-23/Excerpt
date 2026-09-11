@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback, useMemo } from 'react';
+import React, { useRef, useState, useCallback, useMemo, useEffect } from 'react';
 import { Scissors, Music, ZoomIn, ZoomOut, Volume2 } from 'lucide-react';
 
 interface TimelineProps {
@@ -18,6 +18,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   words = [],
   excludedWordIndices = new Set(),
 }) => {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const [inPoint, setInPoint] = useState(0);          // 0–1 normalised
   const [outPoint, setOutPoint] = useState(1);         // 0–1 normalised
@@ -26,6 +27,25 @@ export const Timeline: React.FC<TimelineProps> = ({
   const [hoverTime, setHoverTime] = useState<number | null>(null);
 
   const progress = duration > 0 ? Math.max(0, Math.min(1, currentTime / duration)) : 0;
+
+  // Auto-scroll timeline to follow playhead when zoomed in and playing
+  useEffect(() => {
+    if (zoom > 1 && scrollContainerRef.current && trackRef.current && !isDragging) {
+      const container = scrollContainerRef.current;
+      const trackWidth = trackRef.current.clientWidth;
+      const playheadX = progress * trackWidth;
+      const scrollLeft = container.scrollLeft;
+      const clientWidth = container.clientWidth;
+
+      // Center playhead if it goes outside visible center window
+      if (playheadX < scrollLeft + 50 || playheadX > scrollLeft + clientWidth - 50) {
+        container.scrollTo({
+          left: Math.max(0, playheadX - clientWidth / 2),
+          behavior: 'smooth',
+        });
+      }
+    }
+  }, [progress, zoom, isDragging]);
 
   // Derive cut intervals from excluded word indices
   const cutIntervals = useMemo(() => {
@@ -41,7 +61,7 @@ export const Timeline: React.FC<TimelineProps> = ({
 
   // Generate dynamic waveform bars based on speech density and word timing
   const waveformBars = useMemo(() => {
-    const BAR_COUNT = 100;
+    const BAR_COUNT = Math.round(100 * zoom);
     if (duration <= 0) return Array(BAR_COUNT).fill({ height: 30, isSpeech: false, isExcluded: false });
 
     return Array.from({ length: BAR_COUNT }, (_, i) => {
@@ -62,7 +82,7 @@ export const Timeline: React.FC<TimelineProps> = ({
         return { height: breathVariation, isSpeech: false, isExcluded: false, word: null };
       }
     });
-  }, [words, excludedWordIndices, duration]);
+  }, [words, excludedWordIndices, duration, zoom]);
 
   const getPct = (clientX: number): number => {
     if (!trackRef.current) return 0;
@@ -112,12 +132,18 @@ export const Timeline: React.FC<TimelineProps> = ({
     setHoverTime(null);
   };
 
+  const nudgeFrame = (frames: number) => {
+    const frameDuration = 0.0333; // 30fps
+    const nextTime = Math.max(0, Math.min(duration, currentTime + frames * frameDuration));
+    onSeek(nextTime);
+  };
+
   const formatTime = (t: number) => {
     const s = Math.max(0, t);
     return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}.${String(Math.floor((s % 1) * 10))}`;
   };
 
-  const tickCount = Math.min(10, Math.max(4, Math.floor(duration / 5)));
+  const tickCount = Math.min(24, Math.max(6, Math.floor((duration / 4) * zoom)));
   const ticks = Array.from({ length: tickCount + 1 }, (_, i) => i / tickCount);
 
   return (
@@ -129,7 +155,7 @@ export const Timeline: React.FC<TimelineProps> = ({
             <Scissors className="text-primary" size={14} />
             <span className="text-[10px] font-black text-[#e0e5f6] uppercase tracking-widest">Precision Timeline</span>
           </div>
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 border border-white/5">
+          <div className="hidden sm:flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 border border-white/5">
             <Volume2 className="text-primary" size={11} />
             <span className="text-[9px] text-white/70 font-mono">Dynamic Waveform</span>
           </div>
@@ -141,16 +167,37 @@ export const Timeline: React.FC<TimelineProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Frame-by-frame nudge buttons */}
+          <div className="flex items-center gap-1 bg-[#1f2937] rounded-lg p-0.5 border border-white/5">
+            <button
+              onClick={() => nudgeFrame(-1)}
+              className="px-1.5 py-0.5 text-[9px] font-mono font-bold text-white/60 hover:text-white hover:bg-white/10 rounded transition-all"
+              title="Step back 1 frame (-33ms)"
+            >
+              -1f
+            </button>
+            <span className="w-px h-3 bg-white/10" />
+            <button
+              onClick={() => nudgeFrame(1)}
+              className="px-1.5 py-0.5 text-[9px] font-mono font-bold text-white/60 hover:text-white hover:bg-white/10 rounded transition-all"
+              title="Step forward 1 frame (+33ms)"
+            >
+              +1f
+            </button>
+          </div>
+
           {/* Trim range display */}
           <span className="text-[10px] font-mono text-primary tracking-wider bg-primary/10 px-2 py-0.5 rounded border border-primary/20">
             {formatTime(inPoint * duration)} — {formatTime(outPoint * duration)}
           </span>
+
           {/* Zoom controls */}
           <div className="flex items-center gap-1 bg-[#1f2937] rounded-lg px-2 py-0.5">
             <button
               onClick={() => setZoom(z => Math.max(1, +(z - 0.5).toFixed(1)))}
               className="text-[#6b7280] hover:text-white transition-colors"
               disabled={zoom <= 1}
+              title="Zoom out"
             >
               <ZoomOut size={12} />
             </button>
@@ -159,171 +206,179 @@ export const Timeline: React.FC<TimelineProps> = ({
               onClick={() => setZoom(z => Math.min(4, +(z + 0.5).toFixed(1)))}
               className="text-[#6b7280] hover:text-white transition-colors"
               disabled={zoom >= 4}
+              title="Zoom in"
             >
               <ZoomIn size={12} />
             </button>
           </div>
-          <span className="text-[10px] font-black text-[#4b5563] uppercase tracking-widest font-mono">
+          <span className="text-[10px] font-black text-[#4b5563] uppercase tracking-widest font-mono hidden sm:inline">
             {formatTime(duration)}
           </span>
         </div>
       </div>
 
-      {/* Time ruler */}
-      <div className="relative h-5 bg-[#030712] px-0 border-b border-[#1f2937] overflow-hidden">
-        {ticks.map((t, i) => (
-          <div
-            key={i}
-            className="absolute top-0 bottom-0 flex flex-col items-center justify-end pb-0.5"
-            style={{ left: `${t * 100}%` }}
-          >
-            <div className="w-px bg-[#2d3748]" style={{ height: i % 2 === 0 ? '10px' : '5px' }} />
-            {i % 2 === 0 && (
-              <span className="absolute top-0.5 text-[8px] text-[#6b7280] font-mono -translate-x-1/2">
-                {formatTime(t * duration)}
-              </span>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* Main track */}
-      <div className="relative select-none" style={{ overflowX: 'hidden' }}>
-        <div
-          ref={trackRef}
-          role="slider"
-          tabIndex={0}
-          aria-label="Video timeline seeking"
-          aria-valuenow={currentTime}
-          aria-valuemin={0}
-          aria-valuemax={duration}
-          className="relative h-20 bg-[#030712] cursor-crosshair focus:outline-none focus:ring-1 focus:ring-primary group"
-          onClick={handleTrackClick}
-          onMouseMove={handleMouseMove}
-          onMouseLeave={handleMouseLeave}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowRight') { onSeek(Math.min(duration, currentTime + 2)); e.preventDefault(); }
-            if (e.key === 'ArrowLeft') { onSeek(Math.max(0, currentTime - 2)); e.preventDefault(); }
-          }}
-        >
-          {/* Waveform bars */}
-          <div className="absolute inset-0 flex items-center px-2 gap-[2px] pointer-events-none">
-            {waveformBars.map((bar, i) => {
-              const pct = i / waveformBars.length;
-              const inRegion = pct >= inPoint && pct <= outPoint;
-              return (
-                <div
-                  key={i}
-                  className="flex-1 rounded-sm transition-all duration-150"
-                  style={{
-                    height: `${bar.height}%`,
-                    backgroundColor: bar.isExcluded
-                      ? 'rgba(239, 68, 68, 0.4)'
-                      : inRegion
-                      ? bar.isSpeech
-                        ? `rgba(200, 119, 64, ${0.5 + bar.height / 150})`
-                        : 'rgba(255, 255, 255, 0.15)'
-                      : 'rgba(255, 255, 255, 0.05)',
-                  }}
-                />
-              );
-            })}
-          </div>
-
-          {/* Visual cut region markers (for jump cuts) */}
-          {duration > 0 && cutIntervals.map((cut, idx) => {
-            const leftPct = Math.max(0, (cut.start / duration) * 100);
-            const widthPct = Math.min(100 - leftPct, ((cut.end - cut.start) / duration) * 100);
-            return (
-              <div
-                key={idx}
-                className="absolute top-0 bottom-0 z-15 pointer-events-none bg-red-500/20 border-x border-red-500/50 flex items-center justify-center overflow-hidden"
-                style={{
-                  left: `${leftPct}%`,
-                  width: `${Math.max(0.8, widthPct)}%`,
-                  backgroundImage: 'repeating-linear-gradient(45deg, rgba(239, 68, 68, 0.15), rgba(239, 68, 68, 0.15) 4px, transparent 4px, transparent 8px)'
-                }}
-                title={`Cut: "${cut.word}"`}
-              >
-                <Scissors size={10} className="text-red-400 rotate-90 opacity-60" />
-              </div>
-            );
-          })}
-
-          {/* Trim region overlay */}
-          <div
-            className="absolute top-0 bottom-0 z-10 pointer-events-none"
-            style={{
-              left: `${inPoint * 100}%`,
-              width: `${(outPoint - inPoint) * 100}%`,
-              backgroundColor: 'rgba(200,119,64,0.06)',
-              borderTop: '2px solid rgba(200,119,64,0.6)',
-              borderBottom: '2px solid rgba(200,119,64,0.6)',
-            }}
-          />
-
-          {/* IN point handle */}
-          <div
-            className="absolute top-0 bottom-0 w-4 flex items-center justify-center cursor-ew-resize z-25 group/in"
-            style={{ left: `calc(${inPoint * 100}% - 8px)` }}
-            onMouseDown={startDrag('in')}
-          >
-            <div className="w-1.5 h-12 bg-primary rounded-full group-hover/in:w-2 transition-all shadow-lg ring-2 ring-black/40" />
-            <div className="absolute -top-4 left-1/2 -translate-x-1/2 px-1 py-0.5 rounded bg-primary text-[8px] font-black text-white whitespace-nowrap opacity-0 group-hover/in:opacity-100 transition-opacity">IN</div>
-          </div>
-
-          {/* OUT point handle */}
-          <div
-            className="absolute top-0 bottom-0 w-4 flex items-center justify-center cursor-ew-resize z-25 group/out"
-            style={{ left: `calc(${outPoint * 100}% - 8px)` }}
-            onMouseDown={startDrag('out')}
-          >
-            <div className="w-1.5 h-12 bg-primary rounded-full group-hover/out:w-2 transition-all shadow-lg ring-2 ring-black/40" />
-            <div className="absolute -top-4 left-1/2 -translate-x-1/2 px-1 py-0.5 rounded bg-primary text-[8px] font-black text-white whitespace-nowrap opacity-0 group-hover/out:opacity-100 transition-opacity">OUT</div>
-          </div>
-
-          {/* Hover scrubber */}
-          {hoverTime !== null && !isDragging && (
-            <div
-              className="absolute top-0 bottom-0 w-px bg-white/40 z-20 pointer-events-none"
-              style={{ left: `${(hoverTime / duration) * 100}%` }}
-            >
-              <div className="absolute -bottom-5 -translate-x-1/2 px-1.5 py-0.5 bg-[#1f2937] text-white/90 rounded text-[8px] font-mono whitespace-nowrap shadow-lg">
-                {formatTime(hoverTime)}
-              </div>
-            </div>
-          )}
-
-          {/* Playhead */}
-          <div
-            className="absolute top-0 bottom-0 w-px bg-white z-30 pointer-events-none"
-            style={{ left: `${progress * 100}%` }}
-          >
-            {/* Diamond top */}
-            <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white rotate-45 shadow-[0_0_10px_rgba(255,255,255,1)]" />
-            {/* Current time bubble */}
-            <div className="absolute top-4 -translate-x-1/2 px-1.5 py-0.5 bg-white rounded text-[8px] font-black text-black whitespace-nowrap shadow-xl">
-              {formatTime(currentTime)}
-            </div>
-          </div>
-        </div>
-
-        {/* Audio track row */}
-        <div className="h-7 bg-[#020409] border-t border-[#1f2937] flex items-center px-3 gap-2">
-          <Music size={10} className="text-[#374151]" />
-          <div className="flex-1 flex items-center gap-[2px] h-3">
-            {waveformBars.slice(0, 60).map((b, i) => (
+      {/* Scrollable Timeline Area (Ruler + Waveform + Audio Track) */}
+      <div
+        ref={scrollContainerRef}
+        className="relative overflow-x-auto custom-scrollbar select-none"
+        style={{ scrollBehavior: 'auto' }}
+      >
+        <div style={{ width: `${zoom * 100}%`, minWidth: '100%' }}>
+          {/* Time ruler */}
+          <div className="relative h-5 bg-[#030712] border-b border-[#1f2937] overflow-hidden">
+            {ticks.map((t, i) => (
               <div
                 key={i}
-                className="flex-1 rounded-sm"
-                style={{
-                  height: `${b.height * 0.4}%`,
-                  backgroundColor: b.isExcluded ? 'rgba(239,68,68,0.5)' : 'rgba(99,102,241,0.3)',
-                }}
-              />
+                className="absolute top-0 bottom-0 flex flex-col items-center justify-end pb-0.5"
+                style={{ left: `${t * 100}%` }}
+              >
+                <div className="w-px bg-[#2d3748]" style={{ height: i % 2 === 0 ? '10px' : '5px' }} />
+                {i % 2 === 0 && (
+                  <span className="absolute top-0.5 text-[8px] text-[#6b7280] font-mono -translate-x-1/2 whitespace-nowrap">
+                    {formatTime(t * duration)}
+                  </span>
+                )}
+              </div>
             ))}
           </div>
-          <span className="text-[8px] text-[#4b5563] font-bold uppercase tracking-widest">Speech Track</span>
+
+          {/* Main track */}
+          <div
+            ref={trackRef}
+            role="slider"
+            tabIndex={0}
+            aria-label="Video timeline seeking"
+            aria-valuenow={currentTime}
+            aria-valuemin={0}
+            aria-valuemax={duration}
+            className="relative h-20 bg-[#030712] cursor-crosshair focus:outline-none focus:ring-1 focus:ring-primary group"
+            onClick={handleTrackClick}
+            onMouseMove={handleMouseMove}
+            onMouseLeave={handleMouseLeave}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowRight') { onSeek(Math.min(duration, currentTime + 2)); e.preventDefault(); }
+              if (e.key === 'ArrowLeft') { onSeek(Math.max(0, currentTime - 2)); e.preventDefault(); }
+            }}
+          >
+            {/* Waveform bars */}
+            <div className="absolute inset-0 flex items-center px-2 gap-[2px] pointer-events-none">
+              {waveformBars.map((bar, i) => {
+                const pct = i / waveformBars.length;
+                const inRegion = pct >= inPoint && pct <= outPoint;
+                return (
+                  <div
+                    key={i}
+                    className="flex-1 rounded-sm transition-all duration-150"
+                    style={{
+                      height: `${bar.height}%`,
+                      backgroundColor: bar.isExcluded
+                        ? 'rgba(239, 68, 68, 0.4)'
+                        : inRegion
+                        ? bar.isSpeech
+                          ? `rgba(200, 119, 64, ${0.5 + bar.height / 150})`
+                          : 'rgba(255, 255, 255, 0.15)'
+                        : 'rgba(255, 255, 255, 0.05)',
+                    }}
+                  />
+                );
+              })}
+            </div>
+
+            {/* Visual cut region markers (for jump cuts) */}
+            {duration > 0 && cutIntervals.map((cut, idx) => {
+              const leftPct = Math.max(0, (cut.start / duration) * 100);
+              const widthPct = Math.min(100 - leftPct, ((cut.end - cut.start) / duration) * 100);
+              return (
+                <div
+                  key={idx}
+                  className="absolute top-0 bottom-0 z-15 pointer-events-none bg-red-500/20 border-x border-red-500/50 flex items-center justify-center overflow-hidden"
+                  style={{
+                    left: `${leftPct}%`,
+                    width: `${Math.max(0.8, widthPct)}%`,
+                    backgroundImage: 'repeating-linear-gradient(45deg, rgba(239, 68, 68, 0.15), rgba(239, 68, 68, 0.15) 4px, transparent 4px, transparent 8px)'
+                  }}
+                  title={`Cut: "${cut.word}"`}
+                >
+                  <Scissors size={10} className="text-red-400 rotate-90 opacity-60" />
+                </div>
+              );
+            })}
+
+            {/* Trim region overlay */}
+            <div
+              className="absolute top-0 bottom-0 z-10 pointer-events-none"
+              style={{
+                left: `${inPoint * 100}%`,
+                width: `${(outPoint - inPoint) * 100}%`,
+                backgroundColor: 'rgba(200,119,64,0.06)',
+                borderTop: '2px solid rgba(200,119,64,0.6)',
+                borderBottom: '2px solid rgba(200,119,64,0.6)',
+              }}
+            />
+
+            {/* IN point handle */}
+            <div
+              className="absolute top-0 bottom-0 w-4 flex items-center justify-center cursor-ew-resize z-25 group/in"
+              style={{ left: `calc(${inPoint * 100}% - 8px)` }}
+              onMouseDown={startDrag('in')}
+            >
+              <div className="w-1.5 h-12 bg-primary rounded-full group-hover/in:w-2 transition-all shadow-lg ring-2 ring-black/40" />
+              <div className="absolute -top-4 left-1/2 -translate-x-1/2 px-1 py-0.5 rounded bg-primary text-[8px] font-black text-white whitespace-nowrap opacity-0 group-hover/in:opacity-100 transition-opacity">IN</div>
+            </div>
+
+            {/* OUT point handle */}
+            <div
+              className="absolute top-0 bottom-0 w-4 flex items-center justify-center cursor-ew-resize z-25 group/out"
+              style={{ left: `calc(${outPoint * 100}% - 8px)` }}
+              onMouseDown={startDrag('out')}
+            >
+              <div className="w-1.5 h-12 bg-primary rounded-full group-hover/out:w-2 transition-all shadow-lg ring-2 ring-black/40" />
+              <div className="absolute -top-4 left-1/2 -translate-x-1/2 px-1 py-0.5 rounded bg-primary text-[8px] font-black text-white whitespace-nowrap opacity-0 group-hover/out:opacity-100 transition-opacity">OUT</div>
+            </div>
+
+            {/* Hover scrubber */}
+            {hoverTime !== null && !isDragging && (
+              <div
+                className="absolute top-0 bottom-0 w-px bg-white/40 z-20 pointer-events-none"
+                style={{ left: `${(hoverTime / duration) * 100}%` }}
+              >
+                <div className="absolute -bottom-5 -translate-x-1/2 px-1.5 py-0.5 bg-[#1f2937] text-white/90 rounded text-[8px] font-mono whitespace-nowrap shadow-lg">
+                  {formatTime(hoverTime)}
+                </div>
+              </div>
+            )}
+
+            {/* Playhead */}
+            <div
+              className="absolute top-0 bottom-0 w-px bg-white z-30 pointer-events-none"
+              style={{ left: `${progress * 100}%` }}
+            >
+              {/* Diamond top */}
+              <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white rotate-45 shadow-[0_0_10px_rgba(255,255,255,1)]" />
+              {/* Current time bubble */}
+              <div className="absolute top-4 -translate-x-1/2 px-1.5 py-0.5 bg-white rounded text-[8px] font-black text-black whitespace-nowrap shadow-xl">
+                {formatTime(currentTime)}
+              </div>
+            </div>
+          </div>
+
+          {/* Audio track row */}
+          <div className="h-7 bg-[#020409] border-t border-[#1f2937] flex items-center px-3 gap-2">
+            <Music size={10} className="text-[#374151]" />
+            <div className="flex-1 flex items-center gap-[2px] h-3">
+              {waveformBars.slice(0, Math.min(waveformBars.length, 60 * zoom)).map((b, i) => (
+                <div
+                  key={i}
+                  className="flex-1 rounded-sm"
+                  style={{
+                    height: `${b.height * 0.4}%`,
+                    backgroundColor: b.isExcluded ? 'rgba(239,68,68,0.5)' : 'rgba(99,102,241,0.3)',
+                  }}
+                />
+              ))}
+            </div>
+            <span className="text-[8px] text-[#4b5563] font-bold uppercase tracking-widest whitespace-nowrap">Speech Track</span>
+          </div>
         </div>
       </div>
 
@@ -333,7 +388,7 @@ export const Timeline: React.FC<TimelineProps> = ({
           Trimmed: {formatTime((outPoint - inPoint) * duration)} / {formatTime(duration)}
         </span>
         <div className="flex items-center gap-4">
-          <span className="text-[9px] text-[#4b5563]">Drag waveform to seek · Red sections indicate cut filler words</span>
+          <span className="text-[9px] text-[#4b5563]">Drag handles to trim · Waveform indicates speech · Use ±1f for precision</span>
         </div>
       </div>
     </div>

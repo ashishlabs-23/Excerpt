@@ -8,6 +8,7 @@ import { StrategyManager } from './StrategyManager';
 import { TelemetryCollector } from './TelemetryCollector';
 import { DownloadStrategy, DownloadAttempt } from './types';
 import { EnvProxyProvider } from './ProxyProvider';
+import { FormatResolver } from './FormatResolver';
 
 export class DownloadIntelligenceEngine {
   private strategyManager = new StrategyManager();
@@ -45,6 +46,40 @@ export class DownloadIntelligenceEngine {
     } catch {
       return null;
     }
+  }
+
+  public async probeMedia(filePath: string): Promise<{ width: number; height: number; vcodec: string; acodec: string }> {
+    const ffprobeBin = getBinaryPath('ffprobe');
+    return new Promise((resolve) => {
+      execFile(
+        ffprobeBin,
+        [
+          '-v', 'error',
+          '-show_entries', 'stream=width,height,codec_name,codec_type',
+          '-of', 'json',
+          filePath,
+        ],
+        { timeout: 10000 },
+        (err, stdout) => {
+          if (err || !stdout) {
+            return resolve({ width: 0, height: 0, vcodec: 'unknown', acodec: 'unknown' });
+          }
+          try {
+            const data = JSON.parse(stdout);
+            const vStream = (data.streams || []).find((s: any) => s.codec_type === 'video');
+            const aStream = (data.streams || []).find((s: any) => s.codec_type === 'audio');
+            resolve({
+              width: Number(vStream?.width) || 0,
+              height: Number(vStream?.height) || 0,
+              vcodec: vStream?.codec_name || 'unknown',
+              acodec: aStream?.codec_name || 'unknown',
+            });
+          } catch {
+            resolve({ width: 0, height: 0, vcodec: 'unknown', acodec: 'unknown' });
+          }
+        }
+      );
+    });
   }
 
   public async executeDownload(
@@ -121,13 +156,28 @@ export class DownloadIntelligenceEngine {
               cookiePath,
               (percent, speed, eta) => onProgress(percent, speed, eta, strategy.id)
             );
-            
+
+            // Post-download quality floor validation & media telemetry
+            const media = await this.probeMedia(finalOutputPath);
+            console.log(`[DownloadEngine]: Probed downloaded media (${strategy.id}): ${media.width}x${media.height} (v=${media.vcodec}, a=${media.acodec})`);
+
+            if (media.height > 0 && media.height < 720 && !strategy.allowLowResolutionFallback) {
+              throw new Error(`[DownloadEngine]: Downloaded media resolution (${media.height}p) violates quality floor (>=720p). Rejecting degraded download.`);
+            }
+
             telemetry.setCommand(this.redactSecrets(command));
+            telemetry.recordMediaInfo({
+              selectedHeight: media.height,
+              selectedWidth: media.width,
+              selectedVideoCodec: media.vcodec,
+              selectedAudioCodec: media.acodec,
+              isLowResolutionSource: media.height < 720,
+            });
             telemetry.recordSuccess(Date.now() - startTime, finalSpeedBps ? finalSpeedBps / (1024 * 1024) : undefined);
             attempts.push(telemetry.build());
             
             this.strategyManager.recordResult(strategy.id, true);
-            console.log(`[DownloadEngine]: Success with ${strategy.id}`);
+            console.log(`[DownloadEngine]: Success with ${strategy.id} (${media.width}x${media.height})`);
             return { outputPath: finalOutputPath, attempts };
             
           } catch (error: any) {
@@ -188,18 +238,9 @@ export class DownloadIntelligenceEngine {
     onProgress: (percent: number, speed: string, eta: string) => void
   ): Promise<{ outputPath: string; command: string[], finalSpeedBps?: number }> {
     return new Promise((resolve, reject) => {
-      const cap = strategy.resolutionCap || '1080';
-      const formatSelector = [
-        `bestvideo[ext=mp4][height<=${cap}][height>=720]+bestaudio[ext=m4a]`,
-        `bestvideo[height<=${cap}][height>=720]+bestaudio`,
-        `bestvideo[height<=${cap}][ext=mp4]+bestaudio[ext=m4a]`,
-        `bestvideo[height<=${cap}]+bestaudio`,
-        `bestvideo[height<=${cap}][protocol^=m3u8]+bestaudio[protocol^=m3u8]`,
-        `best[ext=mp4][height<=${cap}][height>=720]`,
-        `best[height<=${cap}][height>=720]`,
-        `best[height<=${cap}]`,
-        'best'
-      ].join('/');
+      const cap = Number(strategy.resolutionCap) || 1080;
+      const formatResolution = FormatResolver.resolve([], cap);
+      const formatSelector = formatResolution.selector;
 
       const args = [
         '-f', formatSelector,

@@ -236,15 +236,16 @@ export class ContextualDirectorEngine {
       const sceneCutNearby = sceneCuts.find(sc => Math.abs(sc.timestampSec - peak.timestampSec) <= 0.8);
       const sceneVal = sceneCutNearby ? 80 : 20;
 
-      const interventionScore = Number(
-        (
-          profile.weights.semantic * semanticEmphasis +
-          profile.weights.emotion * emotionSpike +
-          profile.weights.motion * motionVal +
-          profile.weights.sceneCut * sceneVal -
-          profile.weights.unnecessaryPenalty
-        ).toFixed(1)
+      const speakerVal = primaryFace ? Math.min(100, Math.max(0, primaryFace.confidence * 100)) : 80;
+      const rawScore = (
+        profile.weights.semantic * semanticEmphasis +
+        profile.weights.emotion * emotionSpike +
+        profile.weights.speaker * speakerVal +
+        profile.weights.motion * motionVal +
+        profile.weights.sceneCut * sceneVal
       );
+      const penalty = (emotionSpike < 60 || semanticEmphasis < 70) ? profile.weights.unnecessaryPenalty : 0;
+      const interventionScore = Number((rawScore - penalty).toFixed(1));
 
       // Ponytail Rule Check:
       // If score does not cross profile threshold, DO NOT EDIT!

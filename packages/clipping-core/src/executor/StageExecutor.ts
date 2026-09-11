@@ -1,5 +1,5 @@
 import { ErrorCategory, PipelineError, classifyPipelineError, TimeoutType } from '../types/errorTaxonomy';
-import { StageExecutionOptions, StageHealth, StageHealthStatus, StageExecutionTelemetry } from './types';
+import { StageExecutionOptions, StageHealth, StageHealthStatus, StageExecutionTelemetry, ProcessHandle, StageExecutionContext } from './types';
 
 export class StageExecutor {
   private static healthRegistry = new Map<string, {
@@ -77,13 +77,25 @@ export class StageExecutor {
       attempt++;
       const attemptStartTime = Date.now();
 
+      const abortController = new AbortController();
+      const registeredProcesses: ProcessHandle[] = [];
+      const context: StageExecutionContext = {
+        abortSignal: abortController.signal,
+        registerProcess: (handle: ProcessHandle) => {
+          registeredProcesses.push(handle);
+        },
+        processRunner: options.processRunner,
+      };
+
       try {
-        // Execute with timeout wrapper
+        // Execute with timeout and process-tree lifecycle management
         const result = await StageExecutor.executeWithTimeout(
-          execute(input, attempt),
+          execute(input, attempt, context),
           timeoutMs,
           stage,
-          timeoutType
+          timeoutType,
+          registeredProcesses,
+          abortController
         );
 
         // Lifecycle Step 3: Validate Output
@@ -252,11 +264,34 @@ export class StageExecutor {
     promise: Promise<T>,
     timeoutMs: number,
     stage: string,
-    timeoutType: TimeoutType
+    timeoutType: TimeoutType,
+    registeredProcesses: ProcessHandle[] = [],
+    abortController?: AbortController
   ): Promise<T> {
     let timeoutId: NodeJS.Timeout;
+    let timedOut = false;
+
     const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => {
+      timeoutId = setTimeout(async () => {
+        timedOut = true;
+        if (abortController) {
+          try {
+            abortController.abort();
+          } catch {}
+        }
+
+        // Trigger kill on all registered process trees
+        const killPromise = Promise.allSettled(
+          registeredProcesses.map(async (proc) => {
+            try {
+              await proc.killTree('SIGTERM', 3000);
+            } catch (err: any) {
+              console.warn(`[StageExecutor]: Error killing process tree for PID ${proc.pid}:`, err.message);
+            }
+          })
+        );
+
+        // Reject immediately with canonical TIMEOUT error
         reject(
           new PipelineError({
             message: `Stage [${stage}] timed out after ${timeoutMs}ms`,
@@ -267,11 +302,24 @@ export class StageExecutor {
             rootCause: 'STAGE_TIMEOUT',
           })
         );
+
+        await killPromise;
       }, timeoutMs);
     });
 
     try {
-      return await Promise.race([promise, timeoutPromise]);
+      const result = await Promise.race([promise, timeoutPromise]);
+      if (timedOut) {
+        throw new PipelineError({
+          message: `Stage [${stage}] timed out after ${timeoutMs}ms`,
+          category: ErrorCategory.TIMEOUT,
+          stage,
+          timeoutType,
+          retryable: true,
+          rootCause: 'STAGE_TIMEOUT',
+        });
+      }
+      return result;
     } finally {
       clearTimeout(timeoutId!);
     }

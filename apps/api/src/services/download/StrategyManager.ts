@@ -2,11 +2,9 @@ import { DownloadStrategy } from './types';
 
 const DEFAULT_STRATEGIES: DownloadStrategy[] = [
   {
-    id: 'ios',
+    id: 'direct-hd',
     resolutionCap: '1080',
-    extractorArgs: 'youtube:player_client=ios',
-    useCookies: false, 
-    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+    useCookies: false,
     maxRetries: 0,
     rateLimit: '35M'
   },
@@ -19,9 +17,8 @@ const DEFAULT_STRATEGIES: DownloadStrategy[] = [
     rateLimit: '35M'
   },
   {
-    id: 'web_embedded',
+    id: 'hd-m3u8',
     resolutionCap: '1080',
-    extractorArgs: 'youtube:player_client=web_embedded',
     useCookies: false,
     maxRetries: 0,
     rateLimit: '35M'
@@ -33,20 +30,6 @@ const DEFAULT_STRATEGIES: DownloadStrategy[] = [
     useCookies: false,
     maxRetries: 0,
     rateLimit: '35M'
-  },
-  {
-    id: 'hd-m3u8',
-    resolutionCap: '1080',
-    useCookies: false,
-    maxRetries: 0,
-    rateLimit: '30M'
-  },
-  {
-    id: 'direct-hd',
-    resolutionCap: '1080',
-    useCookies: false,
-    maxRetries: 0,
-    rateLimit: '30M'
   },
   {
     id: 'web',
@@ -63,6 +46,23 @@ const DEFAULT_STRATEGIES: DownloadStrategy[] = [
     useCookies: true,
     maxRetries: 1,
     rateLimit: '30M'
+  },
+  {
+    id: 'ios',
+    resolutionCap: '1080',
+    extractorArgs: 'youtube:player_client=ios',
+    useCookies: false, 
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+    maxRetries: 0,
+    rateLimit: '35M'
+  },
+  {
+    id: 'web_embedded',
+    resolutionCap: '1080',
+    extractorArgs: 'youtube:player_client=web_embedded',
+    useCookies: false,
+    maxRetries: 0,
+    rateLimit: '35M'
   },
   {
     id: 'android',

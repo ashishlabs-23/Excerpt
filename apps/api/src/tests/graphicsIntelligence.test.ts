@@ -1,6 +1,6 @@
 import { createDefaultContext } from '../services/intelligence/PipelineContext';
 import { broadcastGraphicsDetector } from '../services/intelligence/BroadcastGraphicsDetector';
-import { protectClipBoundaries } from '../services/pipelineUtils';
+import { protectClipBoundaries, validateClipBoundary } from '../services/pipelineUtils';
 
 describe('Broadcast Graphics & Gameplay Density Engines', () => {
   it('correctly calculates graphic OCR keyword scores', () => {
@@ -68,7 +68,7 @@ describe('Broadcast Graphics & Gameplay Density Engines', () => {
     expect(segment).toBe('graphic');
   });
 
-  it('protects clip boundaries from starting or ending on graphics', () => {
+  it('protects clip boundaries from starting or ending on graphics without mutating timestamps', () => {
     const context = createDefaultContext('boundary-job');
     context.visualTimeline = [
       { second: 0, segment_type: 'graphic', gameplay_density: 10, text_density: 0.5, motion_score: 0.01 },
@@ -80,7 +80,11 @@ describe('Broadcast Graphics & Gameplay Density Engines', () => {
     ];
 
     const adjusted = protectClipBoundaries(0, 15, context);
-    expect(adjusted.start).toBe(3);
-    expect(adjusted.end).toBe(12);
+    expect(adjusted.start).toBe(0);
+    expect(adjusted.end).toBe(15);
+
+    const validation = validateClipBoundary(0, 15, context);
+    expect(validation.hasGraphicViolation).toBe(true);
+    expect(validation.graphicPenalty).toBeGreaterThan(0);
   });
 });

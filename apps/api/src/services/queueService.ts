@@ -21,7 +21,11 @@ export class QueueService {
     intent?: string; 
     avoidSimilarClips?: string; 
     userId: string; 
-    generationMode?: 'draft' | 'quality' 
+    generationMode?: 'draft' | 'quality';
+    targetDuration?: number;
+    minDuration?: number;
+    maxDuration?: number;
+    durationPolicy?: any;
   }) {
     if (!data.userId) {
       throw new Error('user_id is required to create a job.');
@@ -47,6 +51,10 @@ export class QueueService {
         intent: data.intent || 'viral',
         avoidSimilarClips: data.avoidSimilarClips || 'balanced',
         generation_mode: data.generationMode || 'draft',
+        targetDuration: data.targetDuration,
+        minDuration: data.minDuration,
+        maxDuration: data.maxDuration,
+        durationPolicy: data.durationPolicy,
       },
       createdAt: now,
       updatedAt: now,

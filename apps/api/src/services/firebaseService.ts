@@ -135,17 +135,27 @@ export class FirebaseDatabaseService {
     return path.join(rootDir, 'active_queue.json');
   }
 
-  readQueue(): { jobs: Record<string, any>; clips: Record<string, any>; render_jobs: Record<string, any> } {
+  readQueue(): { jobs: Record<string, any>; clips: Record<string, any>; render_jobs: any[] } {
     try {
       const p = this.getQueueFilePath();
       if (fs.existsSync(p)) {
-        return JSON.parse(fs.readFileSync(p, 'utf8'));
+        const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+        const renderJobsList = Array.isArray(parsed.render_jobs)
+          ? parsed.render_jobs
+          : typeof parsed.render_jobs === 'object' && parsed.render_jobs !== null
+          ? Object.values(parsed.render_jobs)
+          : [];
+        return {
+          jobs: parsed.jobs || {},
+          clips: parsed.clips || {},
+          render_jobs: renderJobsList,
+        };
       }
     } catch {}
-    return { jobs: {}, clips: {}, render_jobs: {} };
+    return { jobs: {}, clips: {}, render_jobs: [] };
   }
 
-  writeQueue(data: { jobs: Record<string, any>; clips: Record<string, any>; render_jobs: Record<string, any> }): void {
+  writeQueue(data: { jobs: Record<string, any>; clips: Record<string, any>; render_jobs: any[] }): void {
     try {
       const p = this.getQueueFilePath();
       const tmp = `${p}.${Date.now()}.${Math.random().toString(36).substring(2, 7)}.tmp`;

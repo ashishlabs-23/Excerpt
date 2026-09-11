@@ -322,7 +322,7 @@ function overlapRatio(
   return overlap / shorter;
 }
 
-function buildCandidateWindow(windowSegments: TranscriptSegment[]): CandidateWindow | null {
+function buildCandidateWindow(windowSegments: TranscriptSegment[], minDurationConstraint: number = 15): CandidateWindow | null {
   if (windowSegments.length === 0) {
     return null;
   }
@@ -385,7 +385,11 @@ function buildCandidateWindow(windowSegments: TranscriptSegment[]): CandidateWin
   const sentenceRichness = clamp(sentences.length, 1, 7) * 2;
   const structureBonus = hookHits > 0 && payoffHits > 0 ? 18 : hookHits > 0 ? 8 : 0;
   const startPenalty = start < 12 && lowSignalHits > 0 ? 18 : 0;
-  const thinContentPenalty = duration >= 28 && wordCount < 55 ? 22 : 0;
+  // Speech density penalty: only penalize when words-per-second is genuinely sparse (< 0.70 wps),
+  // allowing dramatic storytelling and pauses to flourish without arbitrary word-count discrimination
+  const thinContentPenalty = minDurationConstraint >= 35 
+    ? (duration >= 40 && density < 0.70 ? 15 : 0)
+    : (duration >= 25 && density < 0.85 ? 18 : 0);
   const repetitivePenalty = sentences.length <= 2 && emotionHits > 0 && insightHits === 0 ? 16 : 0;
   const numericNoisePenalty = numberHits > Math.max(4, Math.floor(wordCount * 0.18)) ? 30 : 0;
   const lowLanguagePenalty = alphaRatio < 0.62 ? 26 : alphaRatio < 0.72 ? 12 : 0;
@@ -428,11 +432,12 @@ function buildCandidateWindow(windowSegments: TranscriptSegment[]): CandidateWin
       lowSignalPressure * 0.8
   );
   const keywordImportance = normalizeUnit(
-    0.16 +
-      insightNormalized * 0.48 +
-      hookNormalized * 0.14 +
-      payoffNormalized * 0.08 -
-      languagePenalty * 0.6
+    0.2 +
+      insightNormalized * 0.45 +
+      hookNormalized * 0.18 +
+      payoffNormalized * 0.12 -
+      lowSignalPressure * 0.4 -
+      languagePenalty * 0.25
   );
   const facePresenceScore = normalizeUnit(
     0.56 +
@@ -442,12 +447,11 @@ function buildCandidateWindow(windowSegments: TranscriptSegment[]): CandidateWin
       languagePenalty * 0.15
   );
   const motionIntensity = normalizeUnit(
-    0.12 +
-      contrastHits * 0.14 +
-      emotionNormalized * 0.18 +
-      densityNormalized * 0.16 +
-      (/[!?]/.test(hookText) ? 0.08 : 0) -
-      lowSignalPressure * 0.35
+    0.14 +
+      densityNormalized * 0.32 +
+      emotionNormalized * 0.34 +
+      contrastHits * 0.08 -
+      lowSignalPressure * 0.5
   );
 
   const scoreBreakdown = {
@@ -458,19 +462,21 @@ function buildCandidateWindow(windowSegments: TranscriptSegment[]): CandidateWin
     motion_intensity: motionIntensity,
   };
 
-  const score =
-    (speechEnergy * 0.30) +
-    (emotionScore * 0.25) +
-    (keywordImportance * 0.20) +
-    (facePresenceScore * 0.15) +
-    (motionIntensity * 0.10);
+  const compositeScore =
+    speechEnergy * 0.3 +
+    emotionScore * 0.25 +
+    keywordImportance * 0.2 +
+    facePresenceScore * 0.15 +
+    motionIntensity * 0.1;
+
+  const score = toPercentScore(compositeScore);
   const reason = buildSelectionReason(scoreBreakdown);
 
   return {
     start: Number(start.toFixed(2)),
     end: Number(end.toFixed(2)),
     duration: Number(duration.toFixed(2)),
-    score: toPercentScore(score),
+    score,
     text,
     hookText,
     payoffText,
@@ -489,12 +495,16 @@ export const fallbackClipService = {
     numClips = 2,
     totalDuration,
     excludedZones,
+    minDurationSec,
+    maxDurationSec,
   }: {
     segments: any[];
     videoUrl: string;
     numClips?: number;
     totalDuration: number;
     excludedZones?: { start: number; end: number }[];
+    minDurationSec?: number;
+    maxDurationSec?: number;
   }): FallbackClipSegment[] {
     const normalizedSegments = segments
       .map(normalizeSegment)
@@ -511,7 +521,10 @@ export const fallbackClipService = {
         : normalizedSegments[normalizedSegments.length - 1].end
     );
 
-    if (safeDuration < 30) {
+    const minDuration = minDurationSec ?? 15;
+    const maxDuration = maxDurationSec ?? 45;
+
+    if (safeDuration <= minDuration) {
       const fullWindow = buildCandidateWindow(normalizedSegments);
       const fullText = normalizedSegments.map((segment) => segment.text).join(' ').replace(/\s+/g, ' ').trim();
       const sentences = splitSentences(fullText);
@@ -547,8 +560,6 @@ export const fallbackClipService = {
       ];
     }
 
-    const minDuration = 15;
-    const maxDuration = 45;
     const step = normalizedSegments.length > 350 ? 3 : normalizedSegments.length > 180 ? 2 : 1;
     const candidates: CandidateWindow[] = [];
 
@@ -567,7 +578,7 @@ export const fallbackClipService = {
           break;
         }
 
-        const candidate = buildCandidateWindow(normalizedSegments.slice(startIndex, endIndex + 1));
+        const candidate = buildCandidateWindow(normalizedSegments.slice(startIndex, endIndex + 1), minDuration);
         if (!candidate) {
           continue;
         }

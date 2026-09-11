@@ -47,7 +47,11 @@ export class CandidateGenerator {
 
     // 6. Map to ClipCandidate structure
     return finalSelection.map((seg, index) => ({
-      candidateId: crypto.randomUUID(),
+      candidateId: crypto
+        .createHash('sha256')
+        .update(`${seg.startMs}_${seg.endMs}_${index}`)
+        .digest('hex')
+        .substring(0, 16),
       startMs: seg.startMs,
       endMs: seg.endMs,
       durationMs: seg.durationMs,

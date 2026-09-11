@@ -28,6 +28,7 @@ import { ensureSourceVideo } from '../services/download/ensureSourceVideo';
 import { GenerativeVisualEngine } from '../services/intelligence/GenerativeVisualEngine';
 
 import { firebaseDb } from '../services/firebaseService';
+import { JobFinalizerService } from '../services/render/JobFinalizerService';
 
 const PHASE_E_BROLL_ENABLED = process.env.ENABLE_PHASE_E_BROLL === 'true';
 const generativeVisualEngine = new GenerativeVisualEngine();
@@ -56,7 +57,7 @@ export async function claimNextRenderJob() {
     }
   } catch {}
 
-  // 2. Try Supabase RPC stored procedure
+  // 2. Try Supabase RPC stored procedure (atomic — no TOCTOU race)
   try {
     const { data, error } = await db.getSupabase()
       .rpc('claim_next_render_job', { 
@@ -66,32 +67,9 @@ export async function claimNextRenderJob() {
     if (!error && data && data.length > 0) return data[0];
   } catch (err: any) {}
 
-  // 2. Direct table fallback if RPC is not available
-  try {
-    const { data, error } = await db.getSupabase()
-      .from('render_jobs')
-      .select('*')
-      .in('status', ['pending', 'queued'])
-      .order('created_at', { ascending: true })
-      .limit(1);
-
-    if (!error && data && data.length > 0) {
-      const renderJob = data[0];
-      const { error: updateError } = await db.getSupabase()
-        .from('render_jobs')
-        .update({
-          status: 'rendering',
-          worker_id: workerInstanceId,
-          locked_at: new Date().toISOString()
-        })
-        .eq('id', renderJob.id);
-
-      if (!updateError) {
-        return { ...renderJob, status: 'rendering', worker_id: workerInstanceId };
-      }
-    }
-  } catch (err: any) {}
-
+  // Direct-table fallback removed: the RPC above is atomic and owns claim logic.
+  // A non-atomic SELECT+UPDATE fallback creates a TOCTOU duplicate-ownership race.
+  // If the RPC is unavailable, return null and let the poller retry.
   return null;
 }
 
@@ -121,8 +99,13 @@ export async function processRenderJob(renderJob: any) {
     
     // Path Normalization: Reconstruct absolute paths dynamically
     const tempDir = path.join(process.cwd(), 'temp', renderJob.job_id);
-    // Rescue missing ephemeral file (Idempotent architecture helper)
-    const { videoPath, telemetry } = await ensureSourceVideo(renderJob.job_id, payload.videoUrl, tempDir);
+    // Rescue missing ephemeral file using immutable source artifact
+    const { videoPath, telemetry } = await ensureSourceVideo(
+      renderJob.job_id,
+      payload.sourceStorageKey || payload.videoUrl,
+      tempDir,
+      payload.contentHash
+    );
     console.log(`[RenderWorker]: ensureSourceVideo resolved:`, JSON.stringify(telemetry));
     
     // Check Render Cache (L5)
@@ -142,6 +125,16 @@ export async function processRenderJob(renderJob: any) {
       await db.updateRenderJob(renderJob.id, { status: 'completed' });
       clearInterval(heartbeatInterval);
       await db.getSupabase().from('render_worker_heartbeats').upsert({ worker_id: workerInstanceId, last_heartbeat: new Date().toISOString(), status: 'idle' });
+
+      // P4.4 Event-driven render fan-in
+      try {
+        const fanIn = await db.checkAndFinalizeRenderFanIn(renderJob.job_id);
+        if (fanIn.claimed) {
+          await JobFinalizerService.finalizeJob(db, renderJob.job_id);
+        }
+      } catch (fanInErr: any) {
+        console.warn(`[RenderWorker]: Fan-in check error: ${fanInErr.message}`);
+      }
       return;
     }
 
@@ -159,35 +152,60 @@ export async function processRenderJob(renderJob: any) {
       let hasCaptions = false;
       const wordsToCaption = clipWords;
 
+      const clipDurationSec = clipEnd - clipStart;
+      const actualRenderedDurationSec = clipDurationSec;
+
       if (wordsToCaption && wordsToCaption.length > 0) {
         try {
-          // Robust check if words have absolute timestamps from source video or are already relative to 0
-          const isWordsAbsolute = clipStart > 2.0 && wordsToCaption.some((w: any) => typeof w.start === 'number' && w.start >= (clipStart * 0.5));
+          fs.mkdirSync(path.dirname(assFilePath), { recursive: true });
 
-          // Normalize word timestamps relative to the cut video start (0.000s)
-          const relativeWords = wordsToCaption
-            .map((w: any) => {
-              const rawStart = typeof w.start === 'number' ? w.start : 0;
-              const rawEnd = typeof w.end === 'number' ? w.end : (rawStart + 0.3);
-              const startOffset = isWordsAbsolute
-                ? Math.max(0, Number((rawStart - clipStart).toFixed(3)))
-                : Math.max(0, Number(rawStart.toFixed(3)));
-              const endOffset = isWordsAbsolute
-                ? Math.max(startOffset + 0.05, Number((rawEnd - clipStart).toFixed(3)))
-                : Math.max(startOffset + 0.05, Number(rawEnd.toFixed(3)));
-              return {
-                ...w,
-                start: startOffset,
-                end: endOffset,
-              };
-            })
-            .filter((w: any) => w.end > 0 && w.start < (clipEnd - clipStart + 0.5));
+          // 1. Sort raw words strictly ascending by source start timestamp
+          const sortedRawWords = [...wordsToCaption]
+            .filter((w: any) => typeof w.start === 'number' && typeof w.end === 'number' && (w.word || w.text) && String(w.word || w.text).trim().length > 0)
+            .sort((a: any, b: any) => a.start - b.start);
+
+          // Contract: clipWords carry source-media timestamps (wordsAreAbsolute: true).
+          // Fallback to auto-detection if flag is missing:
+          const explicitAbsolute = (renderJob.payload as any)?.wordsAreAbsolute;
+          const wordsLookAbsolute = (clipStart > 0.5 && sortedRawWords.some((w: any) => Number(w.start) >= clipStart * 0.5)) ||
+            sortedRawWords.some((w: any) => Number(w.start) >= clipDurationSec);
+          const wordsAreAbsolute: boolean = explicitAbsolute !== undefined ? explicitAbsolute === true : (clipStart > 0.5 ? wordsLookAbsolute : true);
+
+          // 3. Canonical Word Intersection: retain only if word.end > clipStart AND word.start < clipEnd
+          const relativeWords: any[] = [];
+          for (const w of sortedRawWords) {
+            const rawStart = Number(w.start);
+            const rawEnd = Number(w.end);
+            const wordText = String(w.word || w.text).trim();
+
+            if (wordsAreAbsolute) {
+              if (rawEnd > clipStart && rawStart < clipEnd) {
+                const relativeStart = Math.max(0, Number((rawStart - clipStart).toFixed(3)));
+                const relativeEnd = Math.min(clipDurationSec, Number((rawEnd - clipStart).toFixed(3)));
+                if (relativeEnd > relativeStart) {
+                  relativeWords.push({ ...w, word: wordText, start: relativeStart, end: relativeEnd });
+                }
+              }
+            } else {
+              // Legacy path: words already 0-relative
+              if (rawEnd > 0 && rawStart < clipDurationSec) {
+                const relativeStart = Math.max(0, Number(rawStart.toFixed(3)));
+                const relativeEnd = Math.min(clipDurationSec, Number(rawEnd.toFixed(3)));
+                if (relativeEnd > relativeStart) {
+                  relativeWords.push({ ...w, word: wordText, start: relativeStart, end: relativeEnd });
+                }
+              }
+            }
+          }
+
+          // Invariant: strictly chronological relative words
+          relativeWords.sort((a, b) => a.start - b.start);
 
           if (relativeWords.length > 0) {
             const requestedStyle = (renderJob.payload as any)?.caption_style
               || (renderJob.payload as any)?.caption_preset
               || 'submagic';
-            captionService.generateASS(relativeWords, assFilePath, requestedStyle);
+            captionService.generateASS(relativeWords, assFilePath, requestedStyle, clipDurationSec);
             hasCaptions = true;
           }
         } catch (capGenErr: any) {
@@ -195,21 +213,18 @@ export async function processRenderJob(renderJob: any) {
         }
       }
 
-      const clipDurationSec = clipEnd - clipStart;
-      const jumpCutPlan = payload.jumpCutPlan as { total_new_duration_sec?: number } | null | undefined;
-      const actualRenderedDurationSec = jumpCutPlan?.total_new_duration_sec ?? clipDurationSec;
-
       let renderedClips: { videoPath: string; startSec: number; durationSec: number; layout?: string }[] = [];
       let bRollDir: string | undefined;
 
       // ── Phase E: Contextual B-Roll Preparation (Gate: ENABLE_PHASE_E_BROLL=true) ──
       if (PHASE_E_BROLL_ENABLED) {
         try {
-          const isWordsAbsolute = clipStart > 2.0 && (clipWords || []).some((w: any) => typeof w.start === 'number' && w.start >= clipStart * 0.5);
+          // Contract: all clipWords carry source-media timestamps (wordsAreAbsolute: true per payload contract).
+          const wordsAreAbsoluteForBRoll: boolean = (renderJob.payload as any)?.wordsAreAbsolute === true;
           const relWordsForBRoll = (clipWords || []).map((w: any) => ({
             word: w.word || '',
-            start: isWordsAbsolute ? Math.max(0, (w.start ?? 0) - clipStart) : Math.max(0, w.start ?? 0),
-            end: isWordsAbsolute ? Math.max(0, (w.end ?? 0) - clipStart) : Math.max(0, w.end ?? 0),
+            start: wordsAreAbsoluteForBRoll ? Math.max(0, (w.start ?? 0) - clipStart) : Math.max(0, w.start ?? 0),
+            end: wordsAreAbsoluteForBRoll ? Math.max(0, (w.end ?? 0) - clipStart) : Math.max(0, w.end ?? 0),
           }));
 
           const bRollMoments = generativeVisualEngine.planBRollMoments(
@@ -236,22 +251,31 @@ export async function processRenderJob(renderJob: any) {
         }
       }
 
-      console.log(`[RenderWorker]: Executing unified single-pass render (${generationMode}) for clip ${clipId}...`);
+      console.log(`[RenderWorker]: Executing clean base render (${generationMode}) for clip ${clipId}...`);
       const renderStart = Date.now();
       await processor.renderSinglePassClip({
         inputPath: videoPath,
-        outputPath,
+        outputPath: cleanOutputPath,
         start: clipStart,
         duration: clipDurationSec,
         cropPlan,
-        subtitlePath: hasCaptions ? assFilePath : undefined,
+        subtitlePath: undefined, // Pristine clean clip for studio editor & clean downloads
         bRollClips: renderedClips.length > 0 ? renderedClips : undefined,
         hookText: (PHASE_E_BROLL_ENABLED && hookText) ? hookText : undefined,
         totalDurationSec: actualRenderedDurationSec,
         generationMode,
       });
       cropMs = Date.now() - renderStart;
-      captionMs = hasCaptions ? 1 : 0;
+
+      if (hasCaptions && fs.existsSync(assFilePath)) {
+        console.log(`[RenderWorker]: Burning styled captions onto clip ${clipId}...`);
+        const capStart = Date.now();
+        await processor.burnInSubtitles(cleanOutputPath, outputPath, assFilePath);
+        captionMs = Date.now() - capStart;
+      } else {
+        fs.copyFileSync(cleanOutputPath, outputPath);
+        captionMs = 0;
+      }
 
       if (bRollDir) {
         try { fs.rmSync(bRollDir, { recursive: true, force: true }); } catch {}
@@ -391,6 +415,16 @@ export async function processRenderJob(renderJob: any) {
         total_ms: cropMs + captionMs + uploadMs
       });
 
+      // P4.4 Event-driven render fan-in
+      try {
+        const fanIn = await db.checkAndFinalizeRenderFanIn(renderJob.job_id);
+        if (fanIn.claimed) {
+          await JobFinalizerService.finalizeJob(db, renderJob.job_id);
+        }
+      } catch (fanInErr: any) {
+        console.warn(`[RenderWorker]: Fan-in check error: ${fanInErr.message}`);
+      }
+
       // 7. Cleanup Job Temp Directory ONLY if ALL render jobs for this job are done
       try {
         let hasPending = false;
@@ -442,6 +476,14 @@ export async function processRenderJob(renderJob: any) {
           });
         } catch {}
         await db.updateRenderJob(renderJob.id, { status: 'failed', error: err.message });
+        try {
+          const fanIn = await db.checkAndFinalizeRenderFanIn(renderJob.job_id);
+          if (fanIn.claimed) {
+            await JobFinalizerService.finalizeJob(db, renderJob.job_id);
+          }
+        } catch (fanInErr: any) {
+          console.warn(`[RenderWorker]: Fan-in check error on failure: ${fanInErr.message}`);
+        }
       } else {
         await db.updateRenderJob(renderJob.id, { status: 'retrying', error: err.message, locked_by: null });
       }

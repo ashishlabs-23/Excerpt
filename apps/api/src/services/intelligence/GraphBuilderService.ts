@@ -102,13 +102,15 @@ export class GraphBuilderService {
         }
       }
 
-      // 4. Fuse Audio Energy (Placeholder until audio energy is extracted)
+      // 4. Fuse Audio Energy & Acoustic Silence Events
       if (audioResult.status === 'fulfilled' && audioResult.value) {
-        console.log(`[GraphBuilder]: Fusing audio energy...`);
-        graph.audio = audioResult.value;
+        console.log(`[GraphBuilder]: Fusing audio energy and silence events...`);
+        graph.audio = audioResult.value.audioNodes;
+        graph.audioEvents = audioResult.value.audioEvents;
+        console.log(`[GraphBuilder]: Extracted ${graph.audio.length} loudness nodes and ${graph.audioEvents.length} acoustic silence intervals.`);
       }
 
-      console.log(`[GraphBuilder]: [BUILD_COMPLETE] elapsed=${Date.now() - buildStart}ms transcript=${graph.transcript.length} visual=${graph.visual.length} ts=${new Date().toISOString()}`);
+      console.log(`[GraphBuilder]: [BUILD_COMPLETE] elapsed=${Date.now() - buildStart}ms transcript=${graph.transcript.length} visual=${graph.visual.length} audioEvents=${graph.audioEvents.length} ts=${new Date().toISOString()}`);
       return graph;
     } finally {
       // Cleanup analysis frames
@@ -134,8 +136,8 @@ export class GraphBuilderService {
 
     return Promise.race([
       (async () => {
-        // Extract frames at 4fps
-        await this.processor.extractAnalysisFrames(videoPath, 0, duration, tempDir);
+        // Capped / windowed frame analysis (max 120 frames across duration) to eliminate frame explosion
+        await this.processor.extractAnalysisFrames(videoPath, 0, duration, tempDir, { maxFrames: 120 });
         console.log(`[GraphBuilder]: [VISUAL_FRAMES_DONE] elapsedMs=${Date.now() - start} ts=${new Date().toISOString()}`);
         // Run Python tracking logic over the extracted frames
         return this.cropEngine.analyze(tempDir, duration);
@@ -151,8 +153,12 @@ export class GraphBuilderService {
   }
 
 
-  private async extractAudio(videoPath: string, duration: number): Promise<GraphAudioNode[]> {
+  private async extractAudio(videoPath: string, duration: number): Promise<{
+    audioNodes: GraphAudioNode[];
+    audioEvents: Array<{ type: 'silence' | 'loudness_peak'; startSec: number; endSec: number; durationSec: number; value?: number }>;
+  }> {
     const audioNodes: GraphAudioNode[] = [];
+    const audioEvents: Array<{ type: 'silence' | 'loudness_peak'; startSec: number; endSec: number; durationSec: number; value?: number }> = [];
     const totalDuration = Math.max(1, Math.round(duration));
 
     try {
@@ -163,28 +169,31 @@ export class GraphBuilderService {
       const ffmpegBin = getBinaryPath('ffmpeg');
       const nullSink = process.platform === 'win32' ? 'NUL' : '/dev/null';
 
-      // Real FFmpeg broadcast loudness measurement (EBU R128 Momentary Loudness)
+      // Combined EBU R128 loudness & silencedetect (Layered Acoustic Signal)
       const { stderr } = await execFileAsync(
         ffmpegBin,
         [
           '-i', videoPath,
           '-vn',
-          '-af', 'ebur128=metadata=1,ametadata=print:key=lavfi.r128.M',
+          '-af', 'ebur128=metadata=1,ametadata=print:key=lavfi.r128.M,silencedetect=n=-35dB:d=0.25',
           '-f', 'null', nullSink
         ],
-        { timeout: 45000, maxBuffer: 10 * 1024 * 1024 }
+        { timeout: 45000, maxBuffer: 15 * 1024 * 1024 }
       );
 
       const lines = stderr.split(/\r?\n/);
       const secondLoudness: Map<number, number[]> = new Map();
       let currentT = 0;
+      let activeSilenceStart: number | null = null;
 
       for (const line of lines) {
+        // 1. Parse timestamps
         const tMatch = line.match(/pts_time:([\d.]+)/) || line.match(/t:([\d.]+)/);
         if (tMatch) {
           currentT = parseFloat(tMatch[1]);
-          continue;
         }
+
+        // 2. Parse loudness
         const mMatch = line.match(/lavfi\.r128\.M=([\-\d.]+)/);
         if (mMatch) {
           const lufs = parseFloat(mMatch[1]);
@@ -194,6 +203,38 @@ export class GraphBuilderService {
             secondLoudness.get(sec)!.push(lufs);
           }
         }
+
+        // 3. Parse silence intervals
+        const startSilenceMatch = line.match(/silence_start:\s*([\d.]+)/);
+        if (startSilenceMatch) {
+          activeSilenceStart = parseFloat(startSilenceMatch[1]);
+        }
+
+        const endSilenceMatch = line.match(/silence_end:\s*([\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)/);
+        if (endSilenceMatch) {
+          const silEnd = parseFloat(endSilenceMatch[1]);
+          const silDur = parseFloat(endSilenceMatch[2]);
+          const silStart = activeSilenceStart !== null ? activeSilenceStart : Math.max(0, silEnd - silDur);
+          audioEvents.push({
+            type: 'silence',
+            startSec: Number(silStart.toFixed(3)),
+            endSec: Number(silEnd.toFixed(3)),
+            durationSec: Number(silDur.toFixed(3)),
+            value: -35,
+          });
+          activeSilenceStart = null;
+        }
+      }
+
+      // Handle unclosed silence at EOF
+      if (activeSilenceStart !== null && activeSilenceStart < duration) {
+        audioEvents.push({
+          type: 'silence',
+          startSec: Number(activeSilenceStart.toFixed(3)),
+          endSec: Number(duration.toFixed(3)),
+          durationSec: Number((duration - activeSilenceStart).toFixed(3)),
+          value: -35,
+        });
       }
 
       for (let t = 0; t < totalDuration; t++) {
@@ -217,18 +258,10 @@ export class GraphBuilderService {
           });
         }
       }
-      return audioNodes;
-    } catch (err: any) {
-      console.warn(`[GraphBuilder]: Real audio extraction fallback: ${err.message}`);
-      for (let t = 0; t < totalDuration; t++) {
-        audioNodes.push({
-          time: t,
-          duration: 1.0,
-          energy: 0.5,
-          isSilence: false
-        });
-      }
-      return audioNodes;
+      return { audioNodes, audioEvents };
+    } catch (e: any) {
+      console.warn(`[GraphBuilder]: Failed to extract audio metrics/silences via FFmpeg: ${e.message}`);
+      return { audioNodes: [], audioEvents: [] };
     }
   }
 }

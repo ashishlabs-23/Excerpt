@@ -320,12 +320,10 @@ export class RetentionService {
       }
 
       // 3. Remove orphaned render jobs
-      if (queue.render_jobs) {
-        for (const [rjId, rj] of Object.entries(queue.render_jobs)) {
-          if (expiredClipIds.includes((rj as any).clip_id)) {
-            delete queue.render_jobs[rjId];
-          }
-        }
+      if (Array.isArray(queue.render_jobs)) {
+        queue.render_jobs = queue.render_jobs.filter(
+          (rj: any) => !expiredClipIds.includes(rj.clip_id)
+        );
       }
 
       firebaseDb.writeQueue(queue);

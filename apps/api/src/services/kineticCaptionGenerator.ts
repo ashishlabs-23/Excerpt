@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 
 export type CaptionPreset = 'hormozi' | 'mrbeast' | 'neon' | 'minimalist' | 'submagic' | 'tiktok' | 'minimal';
 
@@ -34,7 +35,8 @@ export class KineticCaptionGenerator {
     generateASS(
         words: {start: number; end: number; word: string}[],
         outputPath: string,
-        preset: CaptionPreset | string = 'submagic'
+        preset: CaptionPreset | string = 'submagic',
+        clipDurationSec?: number
     ) {
         const normalizedPreset = (preset || 'submagic').toLowerCase();
         let highlightColor = '&H009948EC&'; // Submagic Vibrant Pink (BGR for #ec4899)
@@ -93,14 +95,31 @@ Style: Default,${fontName},${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H800000
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
 
-        // Sanitize words
-        words = words.map(w => {
-            return {
-                start: Math.max(0, w.start),
-                end: Math.max(0, w.end),
-                word: w.word.trim(),
-            };
-        }).filter(w => w.word.length > 0);
+        // Sanitize and sort words chronologically
+        words = [...words]
+            .map(w => {
+                const s = Math.max(0, Number(w.start) || 0);
+                const e = clipDurationSec ? Math.min(clipDurationSec, Number(w.end) || 0) : (Number(w.end) || 0);
+                return {
+                    start: s,
+                    end: e,
+                    word: (w.word || '').replace(/[{}\\]/g, '').trim(),
+                };
+            })
+            .filter(w => w.word.length > 0 && w.end > w.start)
+            .sort((a, b) => a.start - b.start);
+
+        // Assertions: firstCaption >= 0, lastCaption <= clipDurationSec
+        if (words.length > 0) {
+            const firstCaption = words[0].start;
+            const lastCaption = words[words.length - 1].end;
+            if (firstCaption < 0) {
+                throw new Error(`[KineticCaptionGenerator]: Assertion failed - firstCaption (${firstCaption}) < 0`);
+            }
+            if (clipDurationSec && lastCaption > clipDurationSec + 0.05) {
+                words[words.length - 1].end = clipDurationSec;
+            }
+        }
 
         // Enforce strictly increasing start times to prevent overlaps/collisions
         for (let i = 0; i < words.length - 1; i++) {
@@ -157,7 +176,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     : phrase.end;
                 
                 // Ensure end time matches next start time to prevent overlap stack shifting in libass
-                const clampedEndVal = nextStart > activeW.start ? nextStart : activeW.start + 0.01;
+                const rawClampedEnd = nextStart > activeW.start ? nextStart : activeW.start + 0.01;
+                const clampedEndVal = clipDurationSec ? Math.min(clipDurationSec, rawClampedEnd) : rawClampedEnd;
                 const endASS = this.formatTime(clampedEndVal);
                 
                 // Active word has kinetic scale effect and emoji injection
@@ -177,6 +197,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             });
         });
 
+        const dir = path.dirname(outputPath);
+        if (dir && !fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
         fs.writeFileSync(outputPath, assContent);
     }
 

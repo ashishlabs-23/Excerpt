@@ -69,6 +69,7 @@ export interface AudioEvent {
   type: 'loudness_peak' | 'silence' | string;
   startSec: number;
   endSec: number;
+  durationSec?: number;
   value: number;
 }
 
@@ -216,3 +217,5 @@ export function queryPerceptionRange(
     },
   };
 }
+
+export * from './FrameRecord';

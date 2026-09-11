@@ -34,6 +34,12 @@ interface EditorSidebarProps {
   // Studio properties
   captionStyle: string;
   onChangeCaptionStyle: (style: string) => void;
+  captionFontSize?: number;
+  onChangeCaptionFontSize?: (size: number) => void;
+  captionPosition?: 'bottom' | 'middle' | 'top';
+  onChangeCaptionPosition?: (pos: 'bottom' | 'middle' | 'top') => void;
+  captionColor?: string;
+  onChangeCaptionColor?: (color: string) => void;
   cropOffset: number;
   onChangeCropOffset: (offset: number) => void;
   thumbnailTime: number | null;
@@ -61,6 +67,15 @@ const CAPTION_THEMES = [
   { id: 'Minimal', name: 'Minimalist', desc: 'Clean, elegant, white subtitle', style: 'text-white font-medium' },
 ];
 
+const ACCENT_COLORS = [
+  { label: 'Pink', value: '#ec4899', bg: 'bg-[#ec4899]' },
+  { label: 'Yellow', value: '#facc15', bg: 'bg-[#facc15]' },
+  { label: 'Neon Green', value: '#22c55e', bg: 'bg-[#22c55e]' },
+  { label: 'Cyan', value: '#06b6d4', bg: 'bg-[#06b6d4]' },
+  { label: 'Sunset', value: '#f97316', bg: 'bg-[#f97316]' },
+  { label: 'White', value: '#ffffff', bg: 'bg-white' },
+];
+
 export const EditorSidebar: React.FC<EditorSidebarProps> = ({
   captionsEnabled,
   onToggleCaptions,
@@ -73,6 +88,12 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
   clipMeta,
   captionStyle,
   onChangeCaptionStyle,
+  captionFontSize = 28,
+  onChangeCaptionFontSize,
+  captionPosition = 'bottom',
+  onChangeCaptionPosition,
+  captionColor,
+  onChangeCaptionColor,
   cropOffset,
   onChangeCropOffset,
   thumbnailTime,
@@ -224,30 +245,159 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
 
         {activeTab === 'captions' && (
           <div className="space-y-6">
-            <div className="text-[9px] text-[#374151] font-black uppercase tracking-[0.2em] flex items-center gap-2">
-              <Type size={11} />
-              Caption Customization
-            </div>
+            {/* Master Caption Toggle */}
+            <div className="p-4 rounded-2xl bg-[#111827] border border-[#1f2937] space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2 rounded-lg ${captionsEnabled ? 'bg-primary/20 text-primary' : 'bg-white/5 text-white/40'}`}>
+                    <Type size={16} />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-[#e0e5f6] block">
+                      {captionsEnabled ? 'Captions Active' : 'Captions Removed'}
+                    </span>
+                    <span className="text-[10px] text-[#9ca3af] block">
+                      {captionsEnabled ? 'Animated text overlaid on video' : 'Clean video without captions'}
+                    </span>
+                  </div>
+                </div>
+                <Switch checked={captionsEnabled} onCheckedChange={onToggleCaptions} />
+              </div>
 
-            <div className="space-y-3">
-              {CAPTION_THEMES.map(theme => (
+              <div className="flex gap-2 pt-2 border-t border-white/5">
                 <button
-                  key={theme.id}
-                  onClick={() => onChangeCaptionStyle(theme.id)}
-                  className={`w-full p-4 rounded-xl border text-left flex items-center justify-between transition-all ${
-                    captionStyle === theme.id
-                      ? 'bg-primary/10 border-primary/40 text-primary'
-                      : 'bg-[#111827] border-[#1f2937] text-white/70 hover:border-[#374151]'
+                  type="button"
+                  onClick={() => onToggleCaptions(false)}
+                  className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all ${
+                    !captionsEnabled
+                      ? 'bg-red-500/20 text-red-400 border border-red-500/40'
+                      : 'bg-white/5 text-white/60 hover:text-white hover:bg-white/10'
                   }`}
                 >
-                  <div>
-                    <span className="text-xs font-bold block">{theme.name}</span>
-                    <span className="text-[9px] text-white/30 block mt-0.5">{theme.desc}</span>
-                  </div>
-                  <span className={`text-sm font-bold uppercase ${theme.style}`}>Style</span>
+                  Remove Captions
                 </button>
-              ))}
+                <button
+                  type="button"
+                  onClick={() => onToggleCaptions(true)}
+                  className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all ${
+                    captionsEnabled
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                      : 'bg-white/5 text-white/60 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  Add Captions
+                </button>
+              </div>
             </div>
+
+            {captionsEnabled ? (
+              <>
+                <div className="text-[9px] text-[#374151] font-black uppercase tracking-[0.2em] flex items-center gap-2">
+                  <Type size={11} />
+                  Choose Caption Style
+                </div>
+
+                <div className="space-y-3">
+                  {CAPTION_THEMES.map(theme => (
+                    <button
+                      key={theme.id}
+                      onClick={() => onChangeCaptionStyle(theme.id)}
+                      className={`w-full p-4 rounded-xl border text-left flex items-center justify-between transition-all ${
+                        captionStyle === theme.id
+                          ? 'bg-primary/10 border-primary/40 text-primary'
+                          : 'bg-[#111827] border-[#1f2937] text-white/70 hover:border-[#374151]'
+                      }`}
+                    >
+                      <div>
+                        <span className="text-xs font-bold block">{theme.name}</span>
+                        <span className="text-[9px] text-white/30 block mt-0.5">{theme.desc}</span>
+                      </div>
+                      <span className={`text-sm font-bold uppercase ${theme.style}`}>Style</span>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Caption Position */}
+                <div className="space-y-2 pt-2 border-t border-white/5">
+                  <span className="text-[9px] text-[#4b5563] font-black uppercase tracking-wider block">Position on Screen</span>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(['top', 'middle', 'bottom'] as const).map(pos => (
+                      <button
+                        key={pos}
+                        type="button"
+                        onClick={() => onChangeCaptionPosition && onChangeCaptionPosition(pos)}
+                        className={`py-1.5 rounded-lg border text-center text-xs font-bold capitalize transition-all ${
+                          captionPosition === pos
+                            ? 'bg-primary/20 border-primary/50 text-white shadow-sm'
+                            : 'bg-[#111827] border-[#1f2937] text-white/50 hover:border-[#374151]'
+                        }`}
+                      >
+                        {pos}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Caption Font Size */}
+                <div className="space-y-2 pt-2 border-t border-white/5">
+                  <div className="flex justify-between text-[10px] text-white/40 font-bold">
+                    <span>Text Size</span>
+                    <span className="text-white font-mono">{captionFontSize}px</span>
+                  </div>
+                  <Slider
+                    min={18}
+                    max={44}
+                    step={2}
+                    value={[captionFontSize]}
+                    onValueChange={(vals) => onChangeCaptionFontSize && onChangeCaptionFontSize(vals[0])}
+                    className="accent-primary"
+                  />
+                </div>
+
+                {/* Highlight Accent Color */}
+                <div className="space-y-2 pt-2 border-t border-white/5">
+                  <div className="flex justify-between text-[10px] text-white/40 font-bold">
+                    <span>Highlight Color</span>
+                    {captionColor && (
+                      <button
+                        type="button"
+                        onClick={() => onChangeCaptionColor && onChangeCaptionColor('')}
+                        className="text-[9px] text-primary hover:underline"
+                      >
+                        Default
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {ACCENT_COLORS.map(c => (
+                      <button
+                        key={c.value}
+                        type="button"
+                        onClick={() => onChangeCaptionColor && onChangeCaptionColor(c.value)}
+                        title={c.label}
+                        className={`w-7 h-7 rounded-full ${c.bg} transition-all border-2 ${
+                          captionColor === c.value
+                            ? 'border-white scale-110 shadow-lg'
+                            : 'border-transparent hover:scale-105 opacity-80 hover:opacity-100'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="p-4 rounded-2xl bg-[#111827]/40 border border-white/5 text-center space-y-2">
+                <p className="text-xs font-medium text-white/50">Captions are currently turned off.</p>
+                <p className="text-[11px] text-white/30">Your video will play clean and export without any text or burned subtitles.</p>
+                <button
+                  type="button"
+                  onClick={() => onToggleCaptions(true)}
+                  className="mt-2 text-xs font-bold text-primary hover:underline"
+                >
+                  + Add Captions Back
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -397,8 +547,13 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
           className="w-full h-12 rounded-2xl bg-primary hover:bg-primary/90 text-white flex items-center justify-center gap-3 font-black text-[10px] tracking-widest uppercase shadow-lg shadow-primary/20 transition-all active:scale-95"
         >
           {isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-          {isExporting ? 'Exporting...' : `Export ${aspectRatio} · ${quality === 'high' ? '1080p' : '720p'}`}
+          {isExporting ? 'Preparing Download...' : `Export ${aspectRatio} · ${quality === 'high' ? '1080p' : '720p'}`}
         </Button>
+        {isExporting && (
+          <p className="text-[10px] text-center text-primary/80 animate-pulse font-semibold">
+            Rendering cuts & subtitles — download will start automatically...
+          </p>
+        )}
 
         <Button
           variant="outline"

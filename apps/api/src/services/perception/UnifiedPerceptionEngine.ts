@@ -417,7 +417,7 @@ export class UnifiedPerceptionEngine {
     let faceScore = 0.5;
 
     try {
-      await this.processor.extractAnalysisFrames(videoPath, 0, durationSec, tempDir);
+      await this.processor.extractAnalysisFrames(videoPath, 0, durationSec, tempDir, { maxFrames: 120 });
       const cropResult = await this.cropEngine.analyze(tempDir, durationSec);
 
       if (cropResult?.cropPlan?.frames_data) {

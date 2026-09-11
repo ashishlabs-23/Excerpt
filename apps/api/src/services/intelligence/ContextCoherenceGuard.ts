@@ -81,9 +81,10 @@ export class ContextCoherenceGuard {
     allWords: Array<{ word: string; start: number; end: number }>,
     candidateStartSec: number,
     candidateEndSec: number,
-    options?: { stripPreamble?: boolean }
+    options?: { stripPreamble?: boolean; preRollMs?: number }
   ): GuardedBoundaryResult {
     const shouldStripPreamble = options?.stripPreamble !== false;
+    const preRollSec = (options?.preRollMs ?? 0) / 1000;
     let startSec = candidateStartSec;
     let endSec = candidateEndSec;
     let danglingPronounResolved = false;
@@ -93,39 +94,54 @@ export class ContextCoherenceGuard {
 
     const scrubbed = this.scrubHallucinations(allWords);
 
-    // 1. Find the first word in the clip
-    let firstWordIndex = scrubbed.findIndex((w) => w.start >= startSec - 0.2);
+    // 1. Find the first word in the clip (handling mid-word start cuts)
+    let firstWordIndex = scrubbed.findIndex(
+      (w) => (w.start <= startSec && w.end > startSec) || w.start >= startSec - 0.15
+    );
     if (firstWordIndex !== -1) {
+      if (scrubbed[firstWordIndex].start < startSec) {
+        // Cut landed mid-word -> snap back to word start
+        startSec = Math.max(0, scrubbed[firstWordIndex].start - preRollSec);
+      }
+
       // 1a. Hook Sharpener / Preamble Stripping (Elite Human Editorial Craft)
       // Check if opening words match throat-clearing patterns and advance start to the real punchy hook
       if (shouldStripPreamble) {
         for (const pattern of this.preamblePatterns) {
-        const matchesPattern = pattern.every((token, pIdx) => {
-          const target = scrubbed[firstWordIndex + pIdx];
-          if (!target) return false;
-          const clean = target.word.toLowerCase().replace(/[^a-z]/g, '');
-          return clean === token;
-        });
+          const matchesPattern = pattern.every((token, pIdx) => {
+            const target = scrubbed[firstWordIndex + pIdx];
+            if (!target) return false;
+            const clean = target.word.toLowerCase().replace(/[^a-z]/g, '');
+            return clean === token;
+          });
 
-        if (matchesPattern) {
-          const nextIndex = firstWordIndex + pattern.length;
-          // Ensure we don't overrun past the candidate or truncate below 10 seconds
-          if (nextIndex < scrubbed.length && (endSec - scrubbed[nextIndex].start) >= 10.0) {
-            startSec = scrubbed[nextIndex].start;
-            preambleStripped = true;
-            firstWordIndex = nextIndex;
-            explanation = `Stripped conversational preamble '${pattern.join(' ')}' to start directly on the punchy hook.`;
+          if (matchesPattern) {
+            const nextIndex = firstWordIndex + pattern.length;
+            const cleanStart = nextIndex < scrubbed.length ? Math.max(0, scrubbed[nextIndex].start - preRollSec) : startSec;
+            // Ensure we don't overrun past the candidate or truncate below 10 seconds
+            if (nextIndex < scrubbed.length && (endSec - cleanStart) >= 10.0) {
+              startSec = cleanStart;
+              preambleStripped = true;
+              firstWordIndex = nextIndex;
+              explanation = `Stripped conversational preamble '${pattern.join(' ')}' to start directly on the punchy hook.`;
+            }
           }
         }
       }
-    }
 
       // 1b. Check if clip starts with a dangling pronoun
       const firstWord = scrubbed[firstWordIndex]?.word.toLowerCase().replace(/[^a-z]/g, '') || '';
       if (this.danglingPronouns.has(firstWord) && firstWordIndex > 0) {
-        // Expand backwards up to 3 words to capture the noun/subject context
-        const contextIndex = Math.max(0, firstWordIndex - 3);
-        startSec = scrubbed[contextIndex].start;
+        // Expand backwards up to 3 words without crossing prior terminal punctuation
+        let contextIndex = firstWordIndex;
+        for (let i = 1; i <= 3 && (firstWordIndex - i) >= 0; i++) {
+          const prevWord = scrubbed[firstWordIndex - i];
+          contextIndex = firstWordIndex - i;
+          if (/[.?!]$/.test(prevWord.word.trim())) {
+            break;
+          }
+        }
+        startSec = Math.max(0, scrubbed[contextIndex].start - preRollSec);
         danglingPronounResolved = true;
         explanation += ` Expanded start backwards to resolve dangling pronoun '${firstWord}'.`;
       }
@@ -145,7 +161,7 @@ export class ContextCoherenceGuard {
       // Check if clip ends on a trailing conjunction or preposition (cliffhanger)
       if (this.trailingConjunctions.has(lastWord)) {
         if (lastWordIndex < scrubbed.length - 1) {
-          // Expand forward to finish the thought
+          // Expand forward to finish the thought and expose incomplete payoff to downstream engines
           endSec = scrubbed[Math.min(scrubbed.length - 1, lastWordIndex + 2)].end;
           cliffhangerResolved = true;
           explanation += ` Expanded end forward to resolve trailing conjunction '${lastWord}'.`;
@@ -179,7 +195,9 @@ export class ContextCoherenceGuard {
     candidateEndSec: number
   ): OpeningAnalysisResult {
     const scrubbed = this.scrubHallucinations(allWords);
-    const firstWordIndex = scrubbed.findIndex((w) => w.start >= candidateStartSec - 0.2);
+    const firstWordIndex = scrubbed.findIndex(
+      (w) => (w.start <= candidateStartSec && w.end > candidateStartSec) || w.start >= candidateStartSec - 0.15
+    );
 
     if (firstWordIndex === -1 || scrubbed.length === 0) {
       return {

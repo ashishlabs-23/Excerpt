@@ -146,6 +146,30 @@ export const JOB_STATUS_MAP: Record<VideoJobStatus, JobStatusMeta> = {
     icon: '⏳',
     description: 'FFmpeg multi-clip rendering in progress.'
   },
+  waiting_render: {
+    status: 'waiting_render',
+    label: 'Queued for Render',
+    category: 'in_progress',
+    variant: 'progress',
+    icon: '⏳',
+    description: 'Awaiting available render worker capacity.'
+  },
+  ready_for_delivery_validation: {
+    status: 'ready_for_delivery_validation',
+    label: 'Ready for Validation',
+    category: 'in_progress',
+    variant: 'info',
+    icon: 'ℹ️',
+    description: 'All clips rendered, initiating verification.'
+  },
+  finalizing: {
+    status: 'finalizing',
+    label: 'Finalizing Job',
+    category: 'in_progress',
+    variant: 'info',
+    icon: '⏳',
+    description: 'Aggregating deliverables and completing job.'
+  },
   validating_delivery: {
     status: 'validating_delivery',
     label: 'Validating Storage',

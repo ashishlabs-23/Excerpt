@@ -22,6 +22,7 @@ export interface DownloadStrategy {
   userAgent?: string;
   rateLimit?: string;
   proxyProvider?: ProxyProvider;
+  allowLowResolutionFallback?: boolean;
 }
 
 export interface DownloadAttempt {
@@ -44,4 +45,10 @@ export interface DownloadAttempt {
   };
   downloadSpeedMbps?: number;
   stderr_tail?: string;
+  selectedHeight?: number;
+  selectedWidth?: number;
+  selectedVideoCodec?: string;
+  selectedAudioCodec?: string;
+  selectedFormatId?: string;
+  isLowResolutionSource?: boolean;
 }

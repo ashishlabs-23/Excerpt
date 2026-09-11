@@ -96,10 +96,9 @@ export class DatabaseService {
     // 1. Mirror to local queue
     try {
       const queue = firebaseDb.readQueue();
-      if (queue.jobs && queue.jobs[jobId]) {
-        queue.jobs[jobId] = { ...queue.jobs[jobId], ...updates, updated_at: new Date().toISOString() };
-        firebaseDb.writeQueue(queue);
-      }
+      queue.jobs = queue.jobs || {};
+      queue.jobs[jobId] = { ...(queue.jobs[jobId] || { id: jobId }), ...updates, updated_at: new Date().toISOString() };
+      firebaseDb.writeQueue(queue);
     } catch {}
 
     // 2. Try Supabase
@@ -259,6 +258,114 @@ export class DatabaseService {
     } catch {}
 
     return updates;
+  }
+
+  private static fanInMutex = new Map<string, Promise<any>>();
+
+  /**
+   * P4.4 Event-Driven Render Fan-In Coordination
+   * Atomically checks if all expected render jobs reached terminal state
+   * and transitions parent job to 'ready_for_delivery_validation'.
+   * Exactly ONE concurrent caller receives { claimed: true }.
+   */
+  async checkAndFinalizeRenderFanIn(jobId: string): Promise<{
+    status: string;
+    claimed: boolean;
+    terminal_count: number;
+    expected_jobs: number;
+  }> {
+    // 1. Attempt atomic Postgres RPC execution if configured
+    if (process.env.SUPABASE_URL && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY)) {
+      try {
+        const { data, error } = await this.db.rpc('check_and_finalize_render_fan_in', {
+          p_job_id: jobId,
+        });
+        if (!error && data) {
+          return data as {
+            status: string;
+            claimed: boolean;
+            terminal_count: number;
+            expected_jobs: number;
+          };
+        }
+      } catch (rpcErr: any) {
+        // Fall through to resilient application-level atomic fallback
+      }
+    }
+
+    // 2. Application-level fallback for local mock / Firebase / non-RPC environments
+    return this.fallbackCheckAndFinalizeRenderFanIn(jobId);
+  }
+
+  private async fallbackCheckAndFinalizeRenderFanIn(jobId: string): Promise<{
+    status: string;
+    claimed: boolean;
+    terminal_count: number;
+    expected_jobs: number;
+  }> {
+    const prevLock = DatabaseService.fanInMutex.get(jobId) || Promise.resolve();
+    let release: () => void = () => {};
+    const lock = new Promise<void>(resolve => { release = resolve; });
+    DatabaseService.fanInMutex.set(jobId, prevLock.then(() => lock));
+
+    try {
+      await prevLock;
+
+      const parent = await this.getJob(jobId);
+      if (!parent) {
+        return { status: 'job_not_found', claimed: false, terminal_count: 0, expected_jobs: 0 };
+      }
+
+      const expectedJobs = parent.expected_render_jobs || 0;
+      const parentStatus = parent.status;
+
+      let renderJobs: any[] = [];
+      try {
+        renderJobs = firebaseDb.getRenderJobsForJob(jobId);
+      } catch {}
+      if (!renderJobs || renderJobs.length === 0) {
+        try {
+          const { data } = await this.db
+            .from('render_jobs')
+            .select('id, status')
+            .eq('job_id', jobId);
+          if (data) renderJobs = data;
+        } catch {}
+      }
+
+      const terminalStatuses = ['completed', 'failed', 'dead_letter'];
+      const terminalCount = (renderJobs || []).filter((rj: any) => terminalStatuses.includes(rj.status)).length;
+
+      if (expectedJobs > 0 && terminalCount >= expectedJobs) {
+        if (['rendering', 'waiting_render'].includes(parentStatus)) {
+          await this.updateJob(jobId, {
+            status: 'ready_for_delivery_validation',
+            updated_at: new Date().toISOString(),
+          });
+          return {
+            status: 'ready_for_delivery_validation',
+            claimed: true,
+            terminal_count: terminalCount,
+            expected_jobs: expectedJobs,
+          };
+        }
+        return {
+          status: parentStatus,
+          claimed: false,
+          terminal_count: terminalCount,
+          expected_jobs: expectedJobs,
+        };
+      }
+
+      return {
+        status: 'in_progress',
+        claimed: false,
+        terminal_count: terminalCount,
+        expected_jobs: expectedJobs,
+      };
+    } finally {
+      release();
+    }
   }
 
   async getRenderCache(candidateHash: string) {

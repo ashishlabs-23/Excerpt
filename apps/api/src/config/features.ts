@@ -164,3 +164,15 @@ export function getActiveTiers(): number[] {
   return tiers;
 }
 
+/**
+ * Minimum event confidence required for a V2 multi-modal event to qualify
+ * for clip generation. Events below this threshold are treated as false positives
+ * and the pipeline falls back to V1 transcript detection.
+ *
+ * 0.35 aligns with the SceneCutSnapper acceptance floor already in use.
+ * Calibrate via EXCERPT_MIN_EVENT_CONFIDENCE env var (0.0–1.0).
+ */
+export const MIN_QUALIFYING_EVENT_CONFIDENCE: number = (() => {
+  const env = parseFloat(process.env.EXCERPT_MIN_EVENT_CONFIDENCE ?? '');
+  return Number.isFinite(env) && env >= 0 && env <= 1 ? env : 0.35;
+})();

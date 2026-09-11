@@ -69,23 +69,28 @@ export class SceneCutSnapper {
     const firstWord = options?.words?.find((w) => w.end > startSec);
     const lastWord = options?.words ? [...options.words].reverse().find((w) => w.start < endSec) : undefined;
 
+    let bestStartDelta = Infinity;
+    let bestEndDelta = Infinity;
+
     for (const cut of sceneCuts) {
-      // Check start cut: must not cut into speech of first word
+      // Check start cut: must not cut into speech of first word and must be closest
       const deltaStart = Math.abs(cut.timestampSec - startSec);
-      if (deltaStart <= maxDeltaSec) {
+      if (deltaStart <= maxDeltaSec && deltaStart < bestStartDelta) {
         const wouldTruncateStart = firstWord && cut.timestampSec > firstWord.start;
         if (!wouldTruncateStart) {
           snappedStartSec = cut.timestampSec;
+          bestStartDelta = deltaStart;
           startSnapped = true;
         }
       }
 
-      // Check end cut: must not cut off last spoken word
+      // Check end cut: must not cut off last spoken word and must be closest
       const deltaEnd = Math.abs(cut.timestampSec - endSec);
-      if (deltaEnd <= maxDeltaSec) {
+      if (deltaEnd <= maxDeltaSec && deltaEnd < bestEndDelta) {
         const wouldTruncateEnd = lastWord && cut.timestampSec < lastWord.end;
         if (!wouldTruncateEnd) {
           snappedEndSec = cut.timestampSec;
+          bestEndDelta = deltaEnd;
           endSnapped = true;
         }
       }

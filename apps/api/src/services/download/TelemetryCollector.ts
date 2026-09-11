@@ -36,6 +36,22 @@ export class TelemetryCollector {
     this.attempt.timings = timings;
   }
 
+  public recordMediaInfo(info: {
+    selectedHeight?: number;
+    selectedWidth?: number;
+    selectedVideoCodec?: string;
+    selectedAudioCodec?: string;
+    selectedFormatId?: string;
+    isLowResolutionSource?: boolean;
+  }) {
+    if (info.selectedHeight !== undefined) this.attempt.selectedHeight = info.selectedHeight;
+    if (info.selectedWidth !== undefined) this.attempt.selectedWidth = info.selectedWidth;
+    if (info.selectedVideoCodec !== undefined) this.attempt.selectedVideoCodec = info.selectedVideoCodec;
+    if (info.selectedAudioCodec !== undefined) this.attempt.selectedAudioCodec = info.selectedAudioCodec;
+    if (info.selectedFormatId !== undefined) this.attempt.selectedFormatId = info.selectedFormatId;
+    if (info.isLowResolutionSource !== undefined) this.attempt.isLowResolutionSource = info.isLowResolutionSource;
+  }
+
   public recordFailure(durationMs: number, errorMsg: string, timings?: any) {
     const httpStatus = FailureClassifier.extractHttpStatus(errorMsg);
     this.attempt.httpStatus = httpStatus;

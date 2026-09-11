@@ -3,9 +3,10 @@ import { Readable, PassThrough } from 'stream';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import { StageExecutor, ErrorCategory, PipelineError } from '@excerpt/clipping-core';
+import { StageExecutor, ErrorCategory, PipelineError, FrameRecord } from '@excerpt/clipping-core';
 import { assertSafeRemoteVideoUrl } from './urlSafety';
 import { withYtDlpCookies } from '../lib/cookieHelper';
+import { ProductionProcessRunner } from '../infrastructure/process';
 
 const binaryPathCache = new Map<string, string>();
 
@@ -525,11 +526,12 @@ export class VideoProcessor {
   }
 
   /**
-   * Downloads a video from YouTube using yt-dlp via Download Intelligence Engine.
+   * Downloads a video from YouTube using the resilient YouTubeAcquisitionAdapter.
    */
   async downloadVideo(url: string, outputPath: string, onProgress?: (percent: number, speed?: string, eta?: string, strategy?: string) => void): Promise<{ outputPath: string; attempts: any[] }> {
-    const { downloadEngine } = require('./download');
-    return downloadEngine.executeDownload(url, outputPath, onProgress || (() => {}));
+    const { youTubeAcquisitionAdapter } = require('./download');
+    const result = await youTubeAcquisitionAdapter.acquire(url, outputPath, onProgress || (() => {}));
+    return { outputPath: result.outputPath, attempts: result.attempts };
   }
 
   /**
@@ -739,12 +741,25 @@ export class VideoProcessor {
         // Only activate dynamic camera pan if movement exceeds 8% horizontal shift
         if (deltaNorm >= 0.08) {
           framingMode = 'dynamic';
-          const keyframes = buckets.map(b => ({
+          let keyframes = buckets.map(b => ({
             time: Number(b.time.toFixed(2)),
             pixelX: Math.round(Math.max(0, Math.min(maxOffset, b.x * scaledWidth - cropWidth / 2))),
             trackId: b.trackId,
             normX: b.x,
           }));
+
+          // Prune keyframes with negligible pixel shift to keep FFmpeg filter expression compact and avoid CLI overflow
+          if (keyframes.length > 10) {
+            const pruned = [keyframes[0]];
+            for (let k = 1; k < keyframes.length - 1; k++) {
+              const lastKept = pruned[pruned.length - 1];
+              if (Math.abs(keyframes[k].pixelX - lastKept.pixelX) > 25 || keyframes[k].trackId !== lastKept.trackId) {
+                pruned.push(keyframes[k]);
+              }
+            }
+            pruned.push(keyframes[keyframes.length - 1]);
+            keyframes = pruned;
+          }
 
           let expr = String(keyframes[keyframes.length - 1].pixelX);
           for (let i = keyframes.length - 2; i >= 0; i--) {
@@ -771,7 +786,8 @@ export class VideoProcessor {
               const cutInterp = `if(lt(t,${splitTime}),${kfCurr.pixelX},${kfNext.pixelX})`;
               expr = `if(lt(t,${kfNext.time.toFixed(2)}),${cutInterp},${expr})`;
             } else {
-              const u = `(t-${kfCurr.time.toFixed(2)})/${dt.toFixed(2)}`;
+              // Clamp u to [0, 1] so evaluations outside [kfCurr, kfNext] do not overshoot or invert
+              const u = `min(1,max(0,(t-${kfCurr.time.toFixed(2)})/${dt.toFixed(2)}))`;
               const smoothEase = `(${u})*(${u})*(3-2*(${u}))`;
               const easeInterp = `${kfCurr.pixelX}+(${dx})*${smoothEase}`;
               expr = `if(lt(t,${kfNext.time.toFixed(2)}),${easeInterp},${expr})`;
@@ -849,16 +865,11 @@ export class VideoProcessor {
       timeoutMs: 1000 * 60 * 10, // 10 minute timeout
       timeoutType: 'process_timeout',
       validateInput: ({ inputPath }) => fs.existsSync(inputPath),
-      execute: async () => {
+      execute: async (_input, _attempt, context) => {
         const bin = getBinaryPath('ffmpeg');
-        const preSeek = Math.max(0, start - 3);
-        const fineSeek = Number((start - preSeek).toFixed(3));
-
         const inputs: string[] = [];
-        if (preSeek > 0) inputs.push('-ss', String(preSeek));
+        if (start > 0) inputs.push('-accurate_seek', '-ss', String(start));
         inputs.push('-i', inputPath);
-        if (fineSeek > 0) inputs.push('-ss', String(fineSeek));
-        inputs.push('-t', String(duration));
 
         if (bRollClips && bRollClips.length > 0) {
           for (const clip of bRollClips) {
@@ -869,8 +880,8 @@ export class VideoProcessor {
         const { cropFilter } = await this.buildCropFilter(inputPath, start, duration, nexusCropPlan);
 
         const filterParts: string[] = [];
-        // Base cropped layer
-        filterParts.push(`[0:v]${cropFilter}[v_cropped]`);
+        // Base cropped layer with normalized presentation timestamps
+        filterParts.push(`[0:v]${cropFilter},setpts=PTS-STARTPTS[v_cropped]`);
         let currentV = '[v_cropped]';
 
         // 1. Contextual B-Roll Overlay
@@ -926,15 +937,17 @@ export class VideoProcessor {
           currentV = nextV;
         }
 
-        // 4. Audio Dynamic Range & Loudness Normalization
-        const fadeDuration = 0.05;
-        const fadeStart = Math.max(0, duration - fadeDuration);
+        // 4. Audio Dynamic Range & Loudness Normalization + Parameterized Anti-Pop Envelope
+        const fadeInSec = (options as any)?.audioFadeInSec ?? 0.035;
+        const fadeOutSec = (options as any)?.audioFadeOutSec ?? 0.035;
+        const fadeStart = Math.max(0, duration - fadeOutSec);
         const audioFilter = [
+          'asetpts=PTS-STARTPTS',
           'aresample=async=1',
           'highpass=f=80',
-          `afade=t=in:st=0:d=${fadeDuration}`,
-          `afade=t=out:st=${fadeStart.toFixed(2)}:d=${fadeDuration}`,
-          'loudnorm=I=-16:TP=-1.5:LRA=11',
+          `afade=t=in:st=0:d=${fadeInSec}:curve=hsin`,
+          `afade=t=out:st=${fadeStart.toFixed(3)}:d=${fadeOutSec}:curve=hsin`,
+          'loudnorm=I=-16:TP=-1.5:LRA=11:linear=false',
         ].join(',');
 
         const hasAudio = await this.hasAudioStream(inputPath);
@@ -952,31 +965,33 @@ export class VideoProcessor {
           '-filter_complex', filterGraph,
           '-map', currentV,
           '-map', audioMap,
+          '-avoid_negative_ts', 'make_zero',
           '-t', String(duration),
           ...highQualityEncodeArgs(generationMode),
           '-y',
           outputPath
         ];
 
-        return new Promise<string>((resolve, reject) => {
-          console.log(`[VideoProcessor]: Executing unified single-pass render (${generationMode || 'draft'}) -> ${outputPath}`);
-          execFile(bin, args, { maxBuffer: 1024 * 1024 * 500 }, (error, _stdout, stderr) => {
-            if (error) {
-              console.error('[VideoProcessor]: ffmpeg single-pass error:', stderr);
-              return reject(new PipelineError({
-                message: `ffmpeg single-pass failed: ${error.message}`,
-                category: ErrorCategory.FFMPEG,
-                stage: 'video_clipping',
-                component: 'VideoProcessor',
-                provider: 'FFmpeg',
-                exitCode: error.code ? Number(error.code) : undefined,
-                rootCause: stderr || error.message,
-              }));
-            }
-            console.log('[VideoProcessor]: Unified single-pass render complete');
-            resolve(outputPath);
+        const runner = context.processRunner || new ProductionProcessRunner();
+        console.log(`[VideoProcessor]: Executing unified single-pass render (${generationMode || 'draft'}) -> ${outputPath}`);
+        const managed = runner.spawn(bin, args);
+        context.registerProcess(managed);
+
+        const output = await managed.collectOutput();
+        if (output.exitCode !== 0) {
+          console.error('[VideoProcessor]: ffmpeg single-pass error:', output.stderr);
+          throw new PipelineError({
+            message: `ffmpeg single-pass failed with exit code ${output.exitCode}`,
+            category: ErrorCategory.FFMPEG,
+            stage: 'video_clipping',
+            component: 'VideoProcessor',
+            provider: 'FFmpeg',
+            exitCode: output.exitCode ?? undefined,
+            rootCause: output.stderr,
           });
-        });
+        }
+        console.log('[VideoProcessor]: Unified single-pass render complete');
+        return outputPath;
       },
       validateOutput: (outPath) => fs.existsSync(outPath) && fs.statSync(outPath).size > 0,
     });
@@ -1003,6 +1018,49 @@ export class VideoProcessor {
       cropPlan: nexusCropPlan,
       subtitlePath,
       generationMode,
+    });
+  }
+
+  /**
+   * High-speed subtitle burn-in onto a pre-rendered base video.
+   */
+  async burnInSubtitles(inputPath: string, outputPath: string, subtitlePath: string): Promise<string> {
+    return StageExecutor.run({ inputPath, outputPath, subtitlePath }, {
+      stage: 'video_caption_burnin',
+      component: 'VideoProcessor',
+      provider: 'FFmpeg',
+      timeoutMs: 1000 * 60 * 5,
+      timeoutType: 'process_timeout',
+      validateInput: ({ inputPath, subtitlePath }) => fs.existsSync(inputPath) && fs.existsSync(subtitlePath),
+      execute: async ({ inputPath, outputPath, subtitlePath }, _attempt, context) => {
+        const bin = getBinaryPath('ffmpeg');
+        const safeAssPath = path.resolve(subtitlePath).replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\\\'");
+        const args = [
+          '-i', inputPath,
+          '-vf', `ass='${safeAssPath}'`,
+          ...highQualityEncodeArgs(),
+          '-c:a', 'copy',
+          '-y',
+          outputPath,
+        ];
+        const runner = context.processRunner || new ProductionProcessRunner();
+        const managed = runner.spawn(bin, args);
+        context.registerProcess(managed);
+        const output = await managed.collectOutput();
+        if (output.exitCode !== 0) {
+          throw new PipelineError({
+            message: `Subtitle burn-in failed with exit code ${output.exitCode}`,
+            category: ErrorCategory.FFMPEG,
+            stage: 'video_caption_burnin',
+            component: 'VideoProcessor',
+            provider: 'FFmpeg',
+            exitCode: output.exitCode ?? undefined,
+            rootCause: output.stderr,
+          });
+        }
+        return outputPath;
+      },
+      validateOutput: (outPath) => fs.existsSync(outPath) && fs.statSync(outPath).size > 0,
     });
   }
 
@@ -1138,27 +1196,36 @@ export class VideoProcessor {
           baseFilters.push(`ass='${safeAssPath}'`);
         }
 
-        baseFilters.push('setsar=1');
+        baseFilters.unshift('setpts=PTS-STARTPTS');
 
-        const hasAudioFilters = audioFilters.length > 0;
-        if (hasAudioFilters) {
-          audioFilters.push('aresample=async=1', 'loudnorm=I=-16:TP=-1.5:LRA=11');
+        // Only construct audio filtergraph if jump-cuts are present
+        const hasExcludedIntervals = Boolean(options.excludedIntervals && options.excludedIntervals.length > 0);
+        let audioFilterGraph: string | undefined = undefined;
+        if (hasExcludedIntervals && audioFilters.length > 0) {
+          audioFilters.unshift('asetpts=PTS-STARTPTS');
+          audioFilters.push('aresample=async=1');
+          audioFilterGraph = audioFilters.join(',');
         }
 
         const videoFilterGraph = baseFilters.join(',');
-        const audioFilterGraph = audioFilters.join(',');
 
-        const preSeek = Math.max(0, start - 2);
-        const fineSeek = Number((start - preSeek).toFixed(3));
+        const preset = isMediumQuality ? 'ultrafast' : 'veryfast';
+        const crf = isMediumQuality ? '24' : '20';
 
         const args = [
-          ...(preSeek > 0 ? ['-ss', String(preSeek)] : []),
+          ...(start > 0 ? ['-accurate_seek', '-ss', String(start)] : []),
           '-i', inputPath,
-          ...(fineSeek > 0 ? ['-ss', String(fineSeek)] : []),
           ...(duration ? ['-t', String(duration)] : []),
           '-vf', videoFilterGraph,
-          ...highQualityEncodeArgs(),
-          ...(hasAudioFilters ? ['-af', audioFilterGraph] : ['-c:a', 'copy']),
+          '-c:v', 'libx264',
+          '-preset', preset,
+          '-crf', crf,
+          '-threads', '0',
+          '-profile:v', 'high',
+          '-level', '4.2',
+          '-pix_fmt', 'yuv420p',
+          '-movflags', '+faststart',
+          ...(audioFilterGraph ? ['-af', audioFilterGraph, '-c:a', 'aac', '-b:a', '192k', '-ar', '48000'] : ['-c:a', 'aac', '-b:a', '192k', '-ar', '48000']),
           '-y',
           outputPath
         ];
@@ -1222,17 +1289,14 @@ export class VideoProcessor {
       const safeAssPath = path.resolve(options.subtitlePath).replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\\\'");
       baseFilters.push(`ass='${safeAssPath}'`);
     }
+    baseFilters.unshift('setpts=PTS-STARTPTS');
     baseFilters.push('setsar=1');
-
-    const preSeek = Math.max(0, start - 2);
-    const fineSeek = Number((start - preSeek).toFixed(3));
 
     const args = [
       '-hide_banner',
       '-loglevel', 'error',
-      ...(preSeek > 0 ? ['-ss', String(preSeek)] : []),
+      ...(start > 0 ? ['-accurate_seek', '-ss', String(start)] : []),
       '-i', inputPath,
-      ...(fineSeek > 0 ? ['-ss', String(fineSeek)] : []),
       ...(duration ? ['-t', String(duration)] : []),
       '-vf', baseFilters.join(','),
       '-c:v', 'libx264',
@@ -1415,33 +1479,68 @@ export class VideoProcessor {
 
   /**
    * Extracts analysis frames from a video segment for cinematic crop analysis.
-   * Frames are extracted at 4fps as lightweight PGM images scaled to 480px wide.
-   * Non-fatal on failure — cinematic cropping gracefully degrades to center crop.
+   * Frames are extracted with strict explosion ceiling and %06d index formatting.
+   * Capped to prevent inode and disk exhaustion on long-form source videos.
+   * Returns typed FrameRecord array.
    */
   async extractAnalysisFrames(
-    inputPath: string, startTime: number, duration: number, outputDir: string
-  ): Promise<void> {
+    inputPath: string,
+    startTime: number,
+    duration: number,
+    outputDir: string,
+    options?: { fps?: number; maxFrames?: number; scaleWidth?: number }
+  ): Promise<FrameRecord[]> {
+    const fps = options?.fps ?? 4;
+    const maxFrames = options?.maxFrames ?? 300;
+    const scaleWidth = options?.scaleWidth ?? 1280;
+
+    // Strict ceiling calculation: if requested frames exceed maxFrames, adjust fps
+    const effectiveFps = (duration > 0 && duration * fps > maxFrames)
+      ? Math.max(0.01, Number((maxFrames / duration).toFixed(4)))
+      : fps;
+
     const bin = getBinaryPath('ffmpeg');
     return new Promise((resolve) => {
       const args = [
         '-ss', String(startTime),
         '-i', inputPath,
         '-t', String(duration),
-        '-vf', 'fps=4,scale=1280:-1',
+        '-vf', `fps=${effectiveFps},scale=${scaleWidth}:-1`,
         '-f', 'image2',
-        path.join(outputDir, 'frame_%04d.jpg'),
+        path.join(outputDir, 'frame_%06d.jpg'),
         '-y',
       ];
 
-      console.log(`[VideoProcessor]: Extracting 720p RGB color analysis frames at 4fps for ${duration.toFixed(1)}s -> ${outputDir}`);
+      console.log(`[VideoProcessor]: Extracting analysis frames at ${effectiveFps}fps (target max ${maxFrames}) for ${duration.toFixed(1)}s -> ${outputDir}`);
       execFile(bin, args, { maxBuffer: 1024 * 1024 * 500, timeout: 1000 * 60 * 10 }, (error, stdout, stderr) => {
         if (error) {
           console.warn(`[VideoProcessor]: Frame extraction warning (non-fatal): ${error.message}`);
-        } else {
-          const frameCount = fs.readdirSync(outputDir).filter(f => f.endsWith('.jpg') || f.endsWith('.png') || f.endsWith('.pgm')).length;
-          console.log(`[VideoProcessor]: Extracted ${frameCount} analysis frames`);
         }
-        resolve(); // Always resolve — cinematic crop will gracefully degrade
+
+        let records: FrameRecord[] = [];
+        try {
+          if (fs.existsSync(outputDir)) {
+            const frameFiles = fs.readdirSync(outputDir)
+              .filter(f => f.startsWith('frame_') && (f.endsWith('.jpg') || f.endsWith('.png') || f.endsWith('.pgm')))
+              .sort();
+
+            records = frameFiles.map((filename, idx) => {
+              const match = filename.match(/frame_(\d+)\./);
+              const frameIndex = match ? parseInt(match[1], 10) : idx;
+              const frameTime = startTime + (frameFiles.length > 1 ? (idx / (frameFiles.length - 1)) * duration : 0);
+              return {
+                index: frameIndex,
+                timestampSec: Number(frameTime.toFixed(3)),
+                path: path.join(outputDir, filename),
+              };
+            });
+            console.log(`[VideoProcessor]: Extracted ${records.length} analysis frames (capped at ${maxFrames})`);
+          }
+        } catch (e: any) {
+          console.warn(`[VideoProcessor]: Error indexing extracted frames:`, e.message);
+        }
+
+        resolve(records); // Always resolve — cinematic crop will gracefully degrade
       });
     });
   }

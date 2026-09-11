@@ -79,37 +79,69 @@ export interface RankingDecision {
   reasonForSelection: string;
 }
 
-export function protectClipBoundaries(
+export interface BoundaryValidationResult {
+  start: number;
+  end: number;
+  hasGraphicViolation: boolean;
+  graphicPenalty: number;
+  explanation?: string;
+}
+
+/**
+ * Validates canonical clip boundaries against visual timeline events (graphics/overlays).
+ * Canonical Invariant: Downstream stages may validate boundaries, but MUST NOT arbitrarily mutate timestamps.
+ */
+export function validateClipBoundary(
   startSec: number,
   endSec: number,
   context: PipelineContext
-): { start: number; end: number } {
+): BoundaryValidationResult {
   if (!context.visualTimeline || context.visualTimeline.length === 0) {
-    return { start: startSec, end: endSec };
+    return { start: startSec, end: endSec, hasGraphicViolation: false, graphicPenalty: 0 };
   }
-
-  let newStart = startSec;
-  let newEnd = endSec;
 
   const hasEventNearby = (context.wowMoments || []).some(
     (w) => Math.abs(w.timestamp - startSec) < 15.0 || Math.abs(w.timestamp - endSec) < 15.0
   );
 
   if (hasEventNearby) {
-    return { start: startSec, end: endSec };
+    return { start: startSec, end: endSec, hasGraphicViolation: false, graphicPenalty: 0 };
   }
+
+  let hasGraphicViolation = false;
+  let graphicPenalty = 0;
 
   const startFrame = context.visualTimeline.find(f => Math.abs(f.second - startSec) < 1.0);
   if (startFrame && startFrame.segment_type === 'graphic') {
-    newStart = Math.min(endSec - 5, startSec + 3.0);
+    hasGraphicViolation = true;
+    graphicPenalty += 10;
   }
 
   const endFrame = context.visualTimeline.find(f => Math.abs(f.second - endSec) < 1.0);
   if (endFrame && endFrame.segment_type === 'graphic') {
-    newEnd = Math.max(newStart + 5, endSec - 3.0);
+    hasGraphicViolation = true;
+    graphicPenalty += 10;
   }
 
-  return { start: newStart, end: newEnd };
+  return {
+    start: startSec, // Invariant: Timestamps are immutable
+    end: endSec,     // Invariant: Timestamps are immutable
+    hasGraphicViolation,
+    graphicPenalty,
+    explanation: hasGraphicViolation ? 'Graphic overlap detected near boundary; recorded as ranking penalty without mutating timestamps.' : undefined,
+  };
+}
+
+/**
+ * Backwards-compatible shim: Returns intact boundaries without arbitrary +-3s shifts.
+ */
+export function protectClipBoundaries(
+  startSec: number,
+  endSec: number,
+  context: PipelineContext
+): { start: number; end: number } {
+  const result = validateClipBoundary(startSec, endSec, context);
+  return { start: result.start, end: result.end };
 }
 
 export function normalizeRankingWeights(

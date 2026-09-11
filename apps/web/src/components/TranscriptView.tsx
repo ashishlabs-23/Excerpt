@@ -126,6 +126,8 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
 }) => {
   const [search, setSearch] = useState('');
   const [matchIdx, setMatchIdx] = useState(0);
+  const [isUserScrolling, setIsUserScrolling] = useState(false);
+  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Compute filler words (um, uh, ah, like, er, actually, basically, literally)
@@ -198,9 +200,28 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
   // Reset match index when search changes
   useEffect(() => { setMatchIdx(0); }, [search]);
 
-  // Auto-scroll to active word (skip while editing or searching)
+  // Handle manual scroll pause
+  const handleContainerScroll = useCallback(() => {
+    setIsUserScrolling(true);
+    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+    scrollTimeoutRef.current = setTimeout(() => {
+      setIsUserScrolling(false);
+    }, 3000);
+  }, []);
+
+  const resumeAutoScroll = useCallback(() => {
+    setIsUserScrolling(false);
+    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+    const currentWordIndex = words.findIndex(w => currentTime >= w.start && currentTime <= w.end);
+    if (currentWordIndex !== -1 && containerRef.current) {
+      const el = containerRef.current.children[currentWordIndex] as HTMLElement | undefined;
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [currentTime, words]);
+
+  // Auto-scroll to active word (skip while editing, searching, or user scrolling manually)
   useEffect(() => {
-    if (search) return; // don't scroll while searching
+    if (search || isUserScrolling) return;
     const activeEl = document.activeElement;
     if (activeEl?.tagName === 'INPUT' || activeEl?.tagName === 'TEXTAREA') return;
 
@@ -209,7 +230,7 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
       const el = containerRef.current.children[currentWordIndex] as HTMLElement | undefined;
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
-  }, [currentTime, words, search]);
+  }, [currentTime, words, search, isUserScrolling]);
 
   const formatTime = (t: number) =>
     `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
@@ -300,46 +321,63 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
       </div>
 
       {/* Words */}
-      <div
-        ref={containerRef}
-        className="flex flex-wrap gap-x-1 gap-y-1.5 px-5 py-4 flex-grow overflow-y-auto custom-scrollbar content-start"
-      >
-        <AnimatePresence initial={false}>
-          {words.map((w, i) => {
-            const isActive = currentTime >= w.start && currentTime <= w.end;
-            const isMatch = !!(search && w.word.toLowerCase().includes(search.toLowerCase()));
-            const isCurrent = i === currentMatchWordIdx;
-            const isExcluded = excludedWordIndices.has(i);
+      <div className="relative flex-grow min-h-0 flex flex-col">
+        <div
+          ref={containerRef}
+          onScroll={handleContainerScroll}
+          className="flex flex-wrap gap-x-1 gap-y-1.5 px-5 py-4 flex-grow overflow-y-auto custom-scrollbar content-start"
+        >
+          <AnimatePresence initial={false}>
+            {words.map((w, i) => {
+              const isActive = currentTime >= w.start && currentTime <= w.end;
+              const isMatch = !!(search && w.word.toLowerCase().includes(search.toLowerCase()));
+              const isCurrent = i === currentMatchWordIdx;
+              const isExcluded = excludedWordIndices.has(i);
 
-            return (
-              <EditableWord
-                key={i}
-                word={w.word}
-                index={i}
-                isActive={isActive}
-                isMatch={isMatch}
-                isCurrentMatch={isCurrent}
-                isExcluded={isExcluded}
-                onClick={() => onSeek(w.start)}
-                onEdit={newWord => onWordEdit && onWordEdit(i, newWord)}
-                onToggleExclude={() => onToggleExcludeWord && onToggleExcludeWord(i)}
-              />
-            );
-          })}
-        </AnimatePresence>
+              return (
+                <EditableWord
+                  key={i}
+                  word={w.word}
+                  index={i}
+                  isActive={isActive}
+                  isMatch={isMatch}
+                  isCurrentMatch={isCurrent}
+                  isExcluded={isExcluded}
+                  onClick={() => {
+                    resumeAutoScroll();
+                    onSeek(w.start);
+                  }}
+                  onEdit={newWord => onWordEdit && onWordEdit(i, newWord)}
+                  onToggleExclude={() => onToggleExcludeWord && onToggleExcludeWord(i)}
+                />
+              );
+            })}
+          </AnimatePresence>
 
-        {words.length === 0 && (
-          <div className="w-full py-16 flex flex-col items-center gap-3 opacity-30">
-            <Zap size={24} className="text-primary" />
-            <p className="text-xs text-white uppercase font-black tracking-widest">No transcript</p>
-            <p className="text-[10px] text-white/50 text-center">Transcript words appear here once the clip is processed</p>
-          </div>
-        )}
+          {words.length === 0 && (
+            <div className="w-full py-16 flex flex-col items-center gap-3 opacity-30">
+              <Zap size={24} className="text-primary" />
+              <p className="text-xs text-white uppercase font-black tracking-widest">No transcript</p>
+              <p className="text-[10px] text-white/50 text-center">Transcript words appear here once the clip is processed</p>
+            </div>
+          )}
 
-        {words.length > 0 && search && matchIndices.length === 0 && (
-          <div className="w-full py-10 text-center">
-            <p className="text-xs text-white/20 uppercase font-black tracking-widest">No matches found</p>
-          </div>
+          {words.length > 0 && search && matchIndices.length === 0 && (
+            <div className="w-full py-10 text-center">
+              <p className="text-xs text-white/20 uppercase font-black tracking-widest">No matches found</p>
+            </div>
+          )}
+        </div>
+
+        {/* Floating Auto-Scroll Resume Badge */}
+        {isUserScrolling && !search && words.length > 0 && (
+          <button
+            onClick={resumeAutoScroll}
+            className="absolute bottom-3 right-5 z-20 px-3 py-1 rounded-full bg-primary/90 hover:bg-primary text-white text-[10px] font-bold shadow-lg shadow-primary/30 flex items-center gap-1.5 backdrop-blur transition-all active:scale-95 animate-in fade-in slide-in-from-bottom-2"
+          >
+            <Clock size={10} />
+            <span>Follow Speech</span>
+          </button>
         )}
       </div>
 
