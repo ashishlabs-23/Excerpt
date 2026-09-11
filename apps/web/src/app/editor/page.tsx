@@ -402,6 +402,13 @@ function ClipEditorContent() {
     const newOut = outSec + (videoData?.startTime || 0);
     setTrimIn(newIn);
     setTrimOut(newOut);
+  }, [videoData?.startTime]);
+
+  const handleTrimCommit = useCallback((inSec: number, outSec: number) => {
+    const newIn = inSec + (videoData?.startTime || 0);
+    const newOut = outSec + (videoData?.startTime || 0);
+    setTrimIn(newIn);
+    setTrimOut(newOut);
     if (videoData?.words) {
       pushSnapshot(videoData.words, excludedWordIndices, newIn, newOut);
     }
@@ -434,6 +441,9 @@ function ClipEditorContent() {
         aspectRatio: opts.aspectRatio,
         quality: opts.quality,
         captionStyle,
+        captionFontSize,
+        captionPosition,
+        captionColor: captionColor || undefined,
         captions: captionsEnabled,
         words: videoData.words,
       });
@@ -446,7 +456,7 @@ function ClipEditorContent() {
     } finally {
       setIsExporting(false);
     }
-  }, [videoData, captionsEnabled, trimIn, trimOut, excludedWordIndices, captionStyle, cropOffset]);
+  }, [videoData, captionsEnabled, trimIn, trimOut, excludedWordIndices, captionStyle, captionFontSize, captionPosition, captionColor, cropOffset]);
 
   const clipDuration = videoData ? videoData.endTime - videoData.startTime : 0;
 
@@ -754,6 +764,7 @@ function ClipEditorContent() {
                   setTimeout(() => setManualSeek(null), 50);
                 }}
                 onTrimChange={handleTrimChange}
+                onTrimCommit={handleTrimCommit}
               />
             </div>
           </div>

@@ -6,6 +6,7 @@ interface TimelineProps {
   currentTime: number;
   onSeek: (time: number) => void;
   onTrimChange?: (inPoint: number, outPoint: number) => void;
+  onTrimCommit?: (inPoint: number, outPoint: number) => void;
   words?: Array<{ word: string; start: number; end: number }>;
   excludedWordIndices?: Set<number>;
 }
@@ -15,6 +16,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   currentTime,
   onSeek,
   onTrimChange,
+  onTrimCommit,
   words = [],
   excludedWordIndices = new Set(),
 }) => {
@@ -25,6 +27,11 @@ export const Timeline: React.FC<TimelineProps> = ({
   const [zoom, setZoom] = useState(1);                  // 1–4x
   const [isDragging, setIsDragging] = useState<'head' | 'in' | 'out' | null>(null);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
+
+  const inPointRef = useRef(inPoint);
+  inPointRef.current = inPoint;
+  const outPointRef = useRef(outPoint);
+  outPointRef.current = outPoint;
 
   const progress = duration > 0 ? Math.max(0, Math.min(1, currentTime / duration)) : 0;
 
@@ -90,32 +97,49 @@ export const Timeline: React.FC<TimelineProps> = ({
     return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
   };
 
-  const startDrag = useCallback((type: 'head' | 'in' | 'out') => (e: React.MouseEvent) => {
+  const startDrag = useCallback((type: 'head' | 'in' | 'out') => (e: React.MouseEvent | React.TouchEvent) => {
     e.stopPropagation();
     setIsDragging(type);
 
-    const onMove = (ev: MouseEvent) => {
-      const pct = getPct(ev.clientX);
+    const getClientX = (ev: MouseEvent | TouchEvent) => {
+      if ('touches' in ev && ev.touches.length > 0) return ev.touches[0].clientX;
+      return (ev as MouseEvent).clientX;
+    };
+
+    const onMove = (ev: MouseEvent | TouchEvent) => {
+      const clientX = getClientX(ev);
+      const pct = getPct(clientX);
       if (type === 'head') {
         onSeek(pct * duration);
       } else if (type === 'in') {
-        const clamped = Math.max(0, Math.min(pct, outPoint - 0.02));
+        const clamped = Math.max(0, Math.min(pct, outPointRef.current - 0.02));
         setInPoint(clamped);
-        if (onTrimChange) onTrimChange(clamped * duration, outPoint * duration);
+        inPointRef.current = clamped;
+        if (onTrimChange) onTrimChange(clamped * duration, outPointRef.current * duration);
       } else {
-        const clamped = Math.min(1, Math.max(pct, inPoint + 0.02));
+        const clamped = Math.min(1, Math.max(pct, inPointRef.current + 0.02));
         setOutPoint(clamped);
-        if (onTrimChange) onTrimChange(inPoint * duration, clamped * duration);
+        outPointRef.current = clamped;
+        if (onTrimChange) onTrimChange(inPointRef.current * duration, clamped * duration);
       }
     };
+
     const onUp = () => {
       setIsDragging(null);
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
+      if ((type === 'in' || type === 'out') && onTrimCommit) {
+        onTrimCommit(inPointRef.current * duration, outPointRef.current * duration);
+      }
     };
+
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  }, [duration, inPoint, outPoint, onSeek, onTrimChange]);
+    window.addEventListener('touchmove', onMove, { passive: true });
+    window.addEventListener('touchend', onUp);
+  }, [duration, onSeek, onTrimChange, onTrimCommit]);
 
   const handleTrackClick = (e: React.MouseEvent) => {
     if (isDragging) return;
@@ -321,6 +345,7 @@ export const Timeline: React.FC<TimelineProps> = ({
               className="absolute top-0 bottom-0 w-4 flex items-center justify-center cursor-ew-resize z-25 group/in"
               style={{ left: `calc(${inPoint * 100}% - 8px)` }}
               onMouseDown={startDrag('in')}
+              onTouchStart={startDrag('in')}
             >
               <div className="w-1.5 h-12 bg-primary rounded-full group-hover/in:w-2 transition-all shadow-lg ring-2 ring-black/40" />
               <div className="absolute -top-4 left-1/2 -translate-x-1/2 px-1 py-0.5 rounded bg-primary text-[8px] font-black text-white whitespace-nowrap opacity-0 group-hover/in:opacity-100 transition-opacity">IN</div>
@@ -331,6 +356,7 @@ export const Timeline: React.FC<TimelineProps> = ({
               className="absolute top-0 bottom-0 w-4 flex items-center justify-center cursor-ew-resize z-25 group/out"
               style={{ left: `calc(${outPoint * 100}% - 8px)` }}
               onMouseDown={startDrag('out')}
+              onTouchStart={startDrag('out')}
             >
               <div className="w-1.5 h-12 bg-primary rounded-full group-hover/out:w-2 transition-all shadow-lg ring-2 ring-black/40" />
               <div className="absolute -top-4 left-1/2 -translate-x-1/2 px-1 py-0.5 rounded bg-primary text-[8px] font-black text-white whitespace-nowrap opacity-0 group-hover/out:opacity-100 transition-opacity">OUT</div>

@@ -182,6 +182,9 @@ export async function exportCustomClip(
     aspectRatio?: '9:16' | '1:1' | '16:9';
     quality?: 'high' | 'medium';
     captionStyle?: string;
+    captionFontSize?: number;
+    captionPosition?: 'bottom' | 'middle' | 'top';
+    captionColor?: string;
     captions?: boolean;
     words?: any[];
   }

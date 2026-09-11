@@ -36,7 +36,12 @@ export class KineticCaptionGenerator {
         words: {start: number; end: number; word: string}[],
         outputPath: string,
         preset: CaptionPreset | string = 'submagic',
-        clipDurationSec?: number
+        clipDurationSec?: number,
+        options?: {
+            fontSize?: number;
+            position?: 'bottom' | 'middle' | 'top';
+            color?: string;
+        }
     ) {
         const normalizedPreset = (preset || 'submagic').toLowerCase();
         let highlightColor = '&H009948EC&'; // Submagic Vibrant Pink (BGR for #ec4899)
@@ -78,6 +83,36 @@ export class KineticCaptionGenerator {
             fontSize = 44;
         }
 
+        // Apply custom color if specified (convert Hex #RRGGBB to ASS BGR &H00BBGGRR&)
+        if (options?.color && typeof options.color === 'string') {
+            const cleanHex = options.color.replace('#', '').trim();
+            if (cleanHex.length === 6) {
+                const r = cleanHex.substring(0, 2);
+                const g = cleanHex.substring(2, 4);
+                const b = cleanHex.substring(4, 6);
+                highlightColor = `&H00${b}${g}${r}&`.toUpperCase();
+            }
+        }
+
+        // Apply custom font size if specified (proportional scaling from 28px CSS preview to 1080p canvas)
+        if (options?.fontSize && typeof options.fontSize === 'number' && options.fontSize > 0) {
+            fontSize = Math.round(Math.min(84, Math.max(32, options.fontSize * (52 / 28))));
+        }
+
+        // Apply custom vertical alignment & margin
+        let alignment = 2; // Bottom Center
+        let marginV = 380;
+        if (options?.position === 'top') {
+            alignment = 8; // Top Center
+            marginV = 220;
+        } else if (options?.position === 'middle') {
+            alignment = 5; // Middle Center
+            marginV = 0;
+        } else {
+            alignment = 2; // Bottom Center
+            marginV = 380;
+        }
+
         const fontName = process.env.EXCERPT_CAPTION_FONT || 'Montserrat';
         let assContent = `[Script Info]
 Title: Excerpt SOTA Kinetic Captions (${preset.toUpperCase()})
@@ -89,7 +124,7 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,${fontName},${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,${isItalic},0,0,100,100,0,0,1,${outlineThickness},${shadowThickness},2,80,80,380,1
+Style: Default,${fontName},${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,${isItalic},0,0,100,100,0,0,1,${outlineThickness},${shadowThickness},${alignment},80,80,${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

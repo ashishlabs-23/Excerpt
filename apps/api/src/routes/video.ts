@@ -1336,6 +1336,9 @@ async function handleCustomClipExport(
     aspectRatio?: '9:16' | '1:1' | '16:9';
     quality?: 'high' | 'medium';
     captionStyle?: string;
+    captionFontSize?: number;
+    captionPosition?: 'bottom' | 'middle' | 'top';
+    captionColor?: string;
     captions?: boolean;
     words?: any[];
   },
@@ -1350,6 +1353,9 @@ async function handleCustomClipExport(
     cropOffset: params.cropOffset,
     aspectRatio: params.aspectRatio,
     captionStyle: params.captionStyle,
+    captionFontSize: params.captionFontSize,
+    captionPosition: params.captionPosition,
+    captionColor: params.captionColor,
     captions: params.captions,
     hasCustomWords: Boolean(params.words?.length),
   });
@@ -1360,37 +1366,31 @@ async function handleCustomClipExport(
   let cleanupDownloadedFile: string | null = null;
   const videoUrl = clip.storage_path || clip.video_url || '';
 
-  // Determine if clean (un-captioned) video is strictly required.
-  // We only need clean video if:
-  // - Captions are explicitly turned off (captions === false)
-  // - Caption style is changed from default ('Submagic' / 'hormozi')
-  // - Words were customized/edited
+  // Determine if clean (un-captioned) video is preferred/required.
   const origWords = clip.metadata?.words || [];
-  const hasEditedWords = Boolean(
+  const hasCustomWords = Boolean(
     params.words &&
     params.words.length > 0 &&
     origWords.length > 0 &&
     (params.words.length !== origWords.length || params.words.some((w: any, i: number) => origWords[i]?.text !== w.text))
   );
 
-  const needsCleanVideo = (params.captions === false) ||
-    (Boolean(params.captionStyle) && params.captionStyle !== 'Submagic' && params.captionStyle !== 'hormozi') ||
-    hasEditedWords;
-
   let localVideo: string | null = null;
+  let isLocalVideoClean = false;
 
-  // 1. If we don't need clean video, prefer existing captioned local clip directly!
-  if (!needsCleanVideo) {
-    localVideo = resolveLocalClipPath(videoUrl, clip.job_id, true);
-  }
+  // 1. If we are burning custom subtitles or disabling captions, always seek clean video first!
+  const preferClean = params.captions === false || hasCustomWords || Boolean(params.captionColor) ||
+    Boolean(params.captionPosition && params.captionPosition !== 'bottom') ||
+    Boolean(params.captionFontSize && params.captionFontSize !== 28) ||
+    (Boolean(params.captionStyle) && params.captionStyle !== 'Submagic' && params.captionStyle !== 'hormozi');
 
-  // 2. If clean video is required, try local clean clip first
-  if (needsCleanVideo && (!localVideo || !fs.existsSync(localVideo))) {
+  if (preferClean) {
     localVideo = resolveLocalClipPath(videoUrl, clip.job_id, false);
+    if (localVideo && fs.existsSync(localVideo)) isLocalVideoClean = true;
   }
 
-  // 3. If still needed, check clean storage key in cloud storage
-  if (needsCleanVideo && (!localVideo || !fs.existsSync(localVideo))) {
+  // 2. If clean video still needed, check clean storage key in cloud storage
+  if (preferClean && (!localVideo || !fs.existsSync(localVideo))) {
     let cleanKey = clip.metadata?.video_clean_storage_key || '';
     if (cleanKey.startsWith('clips/')) cleanKey = cleanKey.slice('clips/'.length);
     if (cleanKey) {
@@ -1407,6 +1407,7 @@ async function handleCustomClipExport(
           if (fs.existsSync(tempCleanPath) && fs.statSync(tempCleanPath).size > 1024) {
             localVideo = tempCleanPath;
             cleanupDownloadedFile = tempCleanPath;
+            isLocalVideoClean = true;
           }
         }
       } catch (cleanFetchErr: any) {
@@ -1415,8 +1416,8 @@ async function handleCustomClipExport(
     }
   }
 
-  // 4. If clean video is required and not in storage, check if source video exists to render clean clip
-  if (needsCleanVideo && (!localVideo || !fs.existsSync(localVideo))) {
+  // 3. Check if source video exists to render clean clip
+  if (preferClean && (!localVideo || !fs.existsSync(localVideo))) {
     const clipStart = typeof clip.start_time === 'number' ? clip.start_time : (clip.startTime || 0);
     const clipEnd = typeof clip.end_time === 'number' ? clip.end_time : (clip.endTime || 60);
     const candidateSourcePaths = [
@@ -1441,15 +1442,23 @@ async function handleCustomClipExport(
         );
         localVideo = tempCleanPath;
         cleanupDownloadedFile = tempCleanPath;
+        isLocalVideoClean = true;
       } catch (genCleanErr: any) {
         console.warn(`[VideoRoute]: Generating clean clip from source failed:`, genCleanErr.message);
       }
     }
   }
 
+  // 4. Fallback to clean local clip if not yet tried
+  if (!localVideo || !fs.existsSync(localVideo)) {
+    localVideo = resolveLocalClipPath(videoUrl, clip.job_id, false);
+    if (localVideo && fs.existsSync(localVideo)) isLocalVideoClean = true;
+  }
+
   // 5. Fallback to captioned local clip
   if (!localVideo || !fs.existsSync(localVideo)) {
     localVideo = resolveLocalClipPath(videoUrl, clip.job_id, true);
+    if (localVideo && fs.existsSync(localVideo)) isLocalVideoClean = false;
   }
 
   // 6. Fallback to downloading captioned clip from cloud storage
@@ -1470,6 +1479,7 @@ async function handleCustomClipExport(
           if (fs.existsSync(tempDownloadPath) && fs.statSync(tempDownloadPath).size > 1024) {
             localVideo = tempDownloadPath;
             cleanupDownloadedFile = tempDownloadPath;
+            isLocalVideoClean = false;
           }
         }
       } catch (dlErr: any) {
@@ -1517,33 +1527,55 @@ async function handleCustomClipExport(
 
   let subtitlePath: string | undefined = undefined;
   if (params.captions !== false) {
-    const rawWords = (params.words && params.words.length > 0)
-      ? params.words
-      : (clip.metadata?.words || clip.words || []);
+    // If the base video is already captioned and no custom words/styles were applied,
+    // burning another layer will cause double subtitles.
+    const hasCustomStyling = Boolean(params.captionColor) ||
+      Boolean(params.captionPosition && params.captionPosition !== 'bottom') ||
+      Boolean(params.captionFontSize && params.captionFontSize !== 28) ||
+      (Boolean(params.captionStyle) && params.captionStyle !== 'Submagic' && params.captionStyle !== 'hormozi');
 
-    if (rawWords.length > 0) {
-      const isWordsAbsolute = (clipStart > 0.5 && rawWords.some((w: any) => typeof w.start === 'number' && w.start >= (clipStart * 0.5))) ||
-        rawWords.some((w: any) => typeof w.start === 'number' && w.start >= clipDuration);
+    if (!isLocalVideoClean && !hasCustomWords && !hasCustomStyling && (!params.cuts || params.cuts.length === 0)) {
+      console.log(`[VideoRoute]: Base video already contains default burned-in captions; skipping duplicate ASS overlay.`);
+      subtitlePath = undefined;
+    } else {
+      const rawWords = (params.words && params.words.length > 0)
+        ? params.words
+        : (clip.metadata?.words || clip.words || []);
 
-      const relativeWords = rawWords
-        .map((w: any) => {
-          const rawStart = typeof w.start === 'number' ? w.start : 0;
-          const rawEnd = typeof w.end === 'number' ? w.end : (rawStart + 0.3);
-          const baseStart = isWordsAbsolute ? rawStart - clipStart : rawStart;
-          const baseEnd = isWordsAbsolute ? rawEnd - clipStart : rawEnd;
-          const wordText = String(w.word || w.text || '').trim();
-          return {
-            ...w,
-            word: wordText,
-            start: Math.max(0, Number((baseStart - relStart).toFixed(3))),
-            end: Math.max(0.05, Number((baseEnd - relStart).toFixed(3))),
-          };
-        })
-        .filter((w: any) => w.word.length > 0 && w.end > 0 && w.start < (relEnd - relStart + 0.5));
+      if (rawWords.length > 0) {
+        const isWordsAbsolute = (clipStart > 0.5 && rawWords.some((w: any) => typeof w.start === 'number' && w.start >= (clipStart * 0.5))) ||
+          rawWords.some((w: any) => typeof w.start === 'number' && w.start >= clipDuration);
 
-      if (relativeWords.length > 0) {
-        captionService.generateASS(relativeWords, assPath, params.captionStyle || 'submagic', relEnd - relStart);
-        subtitlePath = assPath;
+        const relativeWords = rawWords
+          .map((w: any) => {
+            const rawStart = typeof w.start === 'number' ? w.start : 0;
+            const rawEnd = typeof w.end === 'number' ? w.end : (rawStart + 0.3);
+            const baseStart = isWordsAbsolute ? rawStart - clipStart : rawStart;
+            const baseEnd = isWordsAbsolute ? rawEnd - clipStart : rawEnd;
+            const wordText = String(w.word || w.text || '').trim();
+            return {
+              ...w,
+              word: wordText,
+              start: Math.max(0, Number((baseStart - relStart).toFixed(3))),
+              end: Math.max(0.05, Number((baseEnd - relStart).toFixed(3))),
+            };
+          })
+          .filter((w: any) => w.word.length > 0 && w.end > 0 && w.start < (relEnd - relStart + 0.5));
+
+        if (relativeWords.length > 0) {
+          captionService.generateASS(
+            relativeWords,
+            assPath,
+            params.captionStyle || 'submagic',
+            relEnd - relStart,
+            {
+              fontSize: params.captionFontSize,
+              position: params.captionPosition,
+              color: params.captionColor,
+            }
+          );
+          subtitlePath = assPath;
+        }
       }
     }
   }
@@ -1647,6 +1679,9 @@ router.get('/download/:clipId', requireUserJWT, async (req: Request, res: Respon
         aspectRatio,
         quality: (req.query.quality as 'high' | 'medium') || 'high',
         captionStyle,
+        captionFontSize: req.query.caption_font_size ? Number(req.query.caption_font_size) : undefined,
+        captionPosition: (req.query.caption_position as 'bottom' | 'middle' | 'top') || undefined,
+        captionColor: typeof req.query.caption_color === 'string' ? req.query.caption_color : undefined,
         captions: req.query.captions !== '0',
         words: parsedWords,
       }, req, res);
@@ -1685,6 +1720,9 @@ router.post('/export-clip/:clipId', requireUserJWT, async (req: Request, res: Re
       aspectRatio,
       quality,
       captionStyle,
+      captionFontSize,
+      captionPosition,
+      captionColor,
       captions,
       words,
     } = req.body;
@@ -1713,6 +1751,9 @@ router.post('/export-clip/:clipId', requireUserJWT, async (req: Request, res: Re
       aspectRatio: aspectRatio || '9:16',
       quality: quality || 'high',
       captionStyle: captionStyle || 'Submagic',
+      captionFontSize: typeof captionFontSize === 'number' ? captionFontSize : undefined,
+      captionPosition: captionPosition || undefined,
+      captionColor: typeof captionColor === 'string' ? captionColor : undefined,
       captions: captions !== false,
       words: Array.isArray(words) ? words : undefined,
     }, req, res);

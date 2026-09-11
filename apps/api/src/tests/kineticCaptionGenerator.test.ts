@@ -97,4 +97,26 @@ describe('KineticCaptionGenerator', () => {
         const firstLine = dialogueLines[0];
         expect(firstLine).not.toContain('CLIFFS');
     });
+
+    it('applies custom fontSize, position, and color options correctly', () => {
+        const words = [
+            { start: 0.2, end: 0.8, word: 'Custom' },
+            { start: 0.8, end: 1.4, word: 'Styling' }
+        ];
+
+        // Test top alignment and custom yellow color (#facc15 -> BGR &H0015CCFA&)
+        generator.generateASS(words, tempOutputFile, 'submagic', 2.0, {
+            fontSize: 36,
+            position: 'top',
+            color: '#facc15',
+        });
+        const content = fs.readFileSync(tempOutputFile, 'utf-8');
+
+        // Check alignment is 8 (top center) and marginV is 220
+        expect(content).toContain(',8,80,80,220,1');
+        // Check font size scaled (36 * (52/28) = 67)
+        expect(content).toContain(',67,');
+        // Check highlight color has BGR value for #facc15 (&H0015CCFA&)
+        expect(content).toContain('&H0015CCFA&');
+    });
 });
