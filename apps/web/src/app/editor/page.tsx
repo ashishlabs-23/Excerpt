@@ -69,6 +69,7 @@ function ClipEditorContent() {
   const [captionStyle, setCaptionStyle] = useState('Submagic');
   const [captionFontSize, setCaptionFontSize] = useState(28);
   const [captionPosition, setCaptionPosition] = useState<'bottom' | 'middle' | 'top'>('bottom');
+  const [captionYPercent, setCaptionYPercent] = useState<number>(78);
   const [captionColor, setCaptionColor] = useState<string>('');
   const [aspectRatio, setAspectRatio] = useState<'9:16' | '1:1' | '16:9'>('9:16');
   const [cropOffset, setCropOffset] = useState<number>(0);
@@ -210,6 +211,7 @@ function ClipEditorContent() {
             if (saved.captionStyle) setCaptionStyle(saved.captionStyle);
             if (typeof saved.captionFontSize === 'number') setCaptionFontSize(saved.captionFontSize);
             if (saved.captionPosition) setCaptionPosition(saved.captionPosition);
+            if (typeof saved.captionYPercent === 'number') setCaptionYPercent(saved.captionYPercent);
             if (typeof saved.captionColor === 'string') setCaptionColor(saved.captionColor);
             if (typeof saved.cropOffset === 'number') setCropOffset(saved.cropOffset);
           }
@@ -268,6 +270,7 @@ function ClipEditorContent() {
           captionStyle,
           captionFontSize,
           captionPosition,
+          captionYPercent,
           captionColor,
           cropOffset,
           updatedAt: Date.now(),
@@ -288,6 +291,7 @@ function ClipEditorContent() {
     captionStyle,
     captionFontSize,
     captionPosition,
+    captionYPercent,
     captionColor,
     cropOffset,
     isLoadingMeta,
@@ -443,6 +447,7 @@ function ClipEditorContent() {
         captionStyle,
         captionFontSize,
         captionPosition,
+        captionYPercent,
         captionColor: captionColor || undefined,
         captions: captionsEnabled,
         words: videoData.words,
@@ -456,7 +461,7 @@ function ClipEditorContent() {
     } finally {
       setIsExporting(false);
     }
-  }, [videoData, captionsEnabled, trimIn, trimOut, excludedWordIndices, captionStyle, captionFontSize, captionPosition, captionColor, cropOffset]);
+  }, [videoData, captionsEnabled, trimIn, trimOut, excludedWordIndices, captionStyle, captionFontSize, captionPosition, captionYPercent, captionColor, cropOffset]);
 
   const clipDuration = videoData ? videoData.endTime - videoData.startTime : 0;
 
@@ -726,6 +731,8 @@ function ClipEditorContent() {
                   captionStyle={captionStyle}
                   captionFontSize={captionFontSize}
                   captionPosition={captionPosition}
+                  captionYPercent={captionYPercent}
+                  onChangeCaptionYPercent={setCaptionYPercent}
                   captionColor={captionColor}
                   cropOffset={cropOffset}
                   socialPreviewMode={socialPreviewMode}
@@ -808,6 +815,8 @@ function ClipEditorContent() {
               onChangeCaptionFontSize={setCaptionFontSize}
               captionPosition={captionPosition}
               onChangeCaptionPosition={setCaptionPosition}
+              captionYPercent={captionYPercent}
+              onChangeCaptionYPercent={setCaptionYPercent}
               captionColor={captionColor}
               onChangeCaptionColor={setCaptionColor}
               cropOffset={cropOffset}
@@ -905,6 +914,8 @@ function ClipEditorContent() {
                   onChangeCaptionFontSize={setCaptionFontSize}
                   captionPosition={captionPosition}
                   onChangeCaptionPosition={setCaptionPosition}
+                  captionYPercent={captionYPercent}
+                  onChangeCaptionYPercent={setCaptionYPercent}
                   captionColor={captionColor}
                   onChangeCaptionColor={setCaptionColor}
                   cropOffset={cropOffset}

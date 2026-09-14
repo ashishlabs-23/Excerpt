@@ -40,6 +40,7 @@ export class KineticCaptionGenerator {
         options?: {
             fontSize?: number;
             position?: 'bottom' | 'middle' | 'top';
+            yPercent?: number;
             color?: string;
         }
     ) {
@@ -102,7 +103,13 @@ export class KineticCaptionGenerator {
         // Apply custom vertical alignment & margin
         let alignment = 2; // Bottom Center
         let marginV = 380;
-        if (options?.position === 'top') {
+        if (options?.yPercent !== undefined && typeof options.yPercent === 'number' && !isNaN(options.yPercent)) {
+            const yClamped = Math.max(10, Math.min(90, options.yPercent));
+            // yPercent is distance from top (0% at top, 100% at bottom).
+            // MarginV with alignment 2 is distance from the bottom edge.
+            marginV = Math.round(1920 * (1 - yClamped / 100));
+            alignment = 2;
+        } else if (options?.position === 'top') {
             alignment = 8; // Top Center
             marginV = 220;
         } else if (options?.position === 'middle') {

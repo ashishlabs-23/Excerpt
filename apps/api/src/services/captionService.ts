@@ -12,6 +12,7 @@ export class CaptionService {
         options?: {
             fontSize?: number;
             position?: 'bottom' | 'middle' | 'top';
+            yPercent?: number;
             color?: string;
         }
     ) {

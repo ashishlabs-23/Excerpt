@@ -1,6 +1,6 @@
 'use client';
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Maximize2, Volume2, VolumeX, Volume1, Heart, MessageCircle, Share2, Music, Bookmark } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Maximize2, Volume2, VolumeX, Volume1, Heart, MessageCircle, Share2, Music, Bookmark, MoveVertical } from 'lucide-react';
 
 interface VideoPlayerProps {
   src: string;
@@ -17,6 +17,9 @@ interface VideoPlayerProps {
   captionStyle?: string;
   captionFontSize?: number;
   captionPosition?: 'bottom' | 'middle' | 'top';
+  captionYPercent?: number;
+  onChangeCaptionYPercent?: (yPercent: number) => void;
+  onCaptionPositionCommit?: (yPercent: number) => void;
   captionColor?: string;
   cropOffset?: number;
   socialPreviewMode?: 'tiktok' | 'youtube' | 'instagram' | 'none';
@@ -68,6 +71,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   captionStyle = 'Submagic',
   captionFontSize = 28,
   captionPosition = 'bottom',
+  captionYPercent,
+  onChangeCaptionYPercent,
+  onCaptionPositionCommit,
   captionColor,
   cropOffset = 0,
   socialPreviewMode = 'none',
@@ -79,6 +85,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentSrc, setCurrentSrc] = useState(src);
   const [currentTime, setCurrentTime] = useState(0);
+
+  // Caption dragging & positioning states
+  const [isDraggingCaption, setIsDraggingCaption] = useState(false);
+  const [isHoveringCaption, setIsHoveringCaption] = useState(false);
+  const [isSnappedCenter, setIsSnappedCenter] = useState(false);
 
   useEffect(() => {
     setCurrentSrc(src);
@@ -422,17 +433,69 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     ? 'aspect-video max-w-[800px] rounded-3xl'
     : 'aspect-[9/16] max-w-[390px] rounded-[2.5rem]';
 
-  const captionBottomClass = aspectRatio === '1:1'
-    ? 'bottom-[14%]'
-    : aspectRatio === '16:9'
-    ? 'bottom-[12%]'
-    : 'bottom-[20%]';
+  const effectiveYPercent = React.useMemo(() => {
+    if (typeof captionYPercent === 'number' && !isNaN(captionYPercent)) {
+      return captionYPercent;
+    }
+    if (captionPosition === 'top') return 15;
+    if (captionPosition === 'middle') return 50;
+    if (aspectRatio === '1:1') return 84;
+    if (aspectRatio === '16:9') return 86;
+    return 78;
+  }, [captionYPercent, captionPosition, aspectRatio]);
 
-  const captionPosClass = captionPosition === 'top'
-    ? 'top-[12%]'
-    : captionPosition === 'middle'
-    ? 'top-1/2 -translate-y-1/2'
-    : captionBottomClass;
+  const handleCaptionPointerDown = useCallback((e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setIsDraggingCaption(true);
+
+    const startY = e.clientY;
+    const initialPercent = effectiveYPercent;
+    let lastPercent = initialPercent;
+
+    const onPointerMove = (ev: PointerEvent) => {
+      if (!containerRef.current) return;
+      const containerHeight = containerRef.current.clientHeight;
+      if (containerHeight <= 0) return;
+
+      const deltaY = ev.clientY - startY;
+      const deltaPercent = (deltaY / containerHeight) * 100;
+      let rawPercent = initialPercent + deltaPercent;
+
+      // Magnetic snapping to safe lines
+      let snapped = false;
+      if (Math.abs(rawPercent - 50) < 2.5) {
+        rawPercent = 50;
+        snapped = true;
+      } else if (Math.abs(rawPercent - 15) < 2.0) {
+        rawPercent = 15;
+      } else if (Math.abs(rawPercent - 78) < 2.0) {
+        rawPercent = 78;
+      }
+      setIsSnappedCenter(snapped);
+
+      const clamped = Math.max(10, Math.min(88, Math.round(rawPercent * 10) / 10));
+      lastPercent = clamped;
+      if (onChangeCaptionYPercent) {
+        onChangeCaptionYPercent(clamped);
+      }
+    };
+
+    const onPointerUp = () => {
+      setIsDraggingCaption(false);
+      setIsSnappedCenter(false);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+      if (onCaptionPositionCommit) {
+        onCaptionPositionCommit(lastPercent);
+      }
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+  }, [effectiveYPercent, onChangeCaptionYPercent, onCaptionPositionCommit]);
 
   return (
     <div
@@ -452,12 +515,50 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         onClick={togglePlay}
       />
 
-      {/* ── Captions Overlay (Matches burned ASS pipeline layout) ── */}
-      {showCaptions && activePhrase && activeWord && (
-        <div className={`absolute ${captionPosClass} left-0 right-0 flex justify-center pointer-events-none z-20 px-4`}>
-          <div className="flex flex-wrap justify-center items-center gap-x-2.5 max-w-[88%] text-center select-none">
-            {activePhrase.words.map((w, idx) => {
-              const isActive = w.start === activeWord.start;
+      {/* ── Center Snapping Guideline ── */}
+      {isDraggingCaption && (
+        <div className="absolute top-1/2 left-0 right-0 h-px border-t border-dashed border-primary/50 z-20 pointer-events-none flex items-center justify-end px-3">
+          <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded transition-colors ${
+            isSnappedCenter ? 'bg-primary text-white shadow-lg' : 'bg-black/60 text-white/50'
+          }`}>
+            Center (50%)
+          </span>
+        </div>
+      )}
+
+      {/* ── Captions Overlay (Interactive & Draggable) ── */}
+      {showCaptions && (activePhrase || !isPlaying || isHoveringCaption || isDraggingCaption) && (
+        <div
+          className={`absolute left-0 right-0 flex justify-center z-20 px-4 transition-[top] duration-75 select-none ${
+            isDraggingCaption ? 'cursor-grabbing' : 'cursor-grab'
+          }`}
+          style={{
+            top: `${effectiveYPercent}%`,
+            transform: 'translateY(-50%)',
+          }}
+          onPointerDown={handleCaptionPointerDown}
+          onMouseEnter={() => setIsHoveringCaption(true)}
+          onMouseLeave={() => setIsHoveringCaption(false)}
+        >
+          <div
+            className={`relative flex flex-wrap justify-center items-center gap-x-2.5 max-w-[88%] text-center px-4 py-2 rounded-2xl transition-all ${
+              isDraggingCaption
+                ? 'ring-2 ring-primary bg-black/60 shadow-2xl backdrop-blur-sm'
+                : isHoveringCaption
+                ? 'ring-1 ring-primary/60 border border-dashed border-primary/50 bg-black/30 backdrop-blur-[2px]'
+                : ''
+            }`}
+          >
+            {/* Drag Handle & Position Badge */}
+            {(isDraggingCaption || isHoveringCaption) && (
+              <div className="absolute -top-7 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-primary text-white text-[9px] font-black uppercase tracking-wider shadow-lg pointer-events-none whitespace-nowrap">
+                <MoveVertical size={11} />
+                <span>Position: {Math.round(effectiveYPercent)}%</span>
+              </div>
+            )}
+
+            {(activePhrase ? activePhrase.words : (phrases[0]?.words || [{ word: 'SAMPLE', start: 0, end: 1 }, { word: 'CAPTION', start: 0, end: 1 }])).map((w, idx) => {
+              const isWordActive = activeWord ? w.start === activeWord.start : idx === 0;
               const emoji = getEmojiForWord(w.word);
               const cleanWord = w.word.toUpperCase();
               const formatted = emoji ? `${cleanWord} ${emoji}` : cleanWord;
@@ -465,7 +566,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 <span
                   key={idx}
                   className="font-black uppercase tracking-tight py-1"
-                  style={getWordStyle(isActive)}
+                  style={getWordStyle(isWordActive)}
                 >
                   {formatted}
                 </span>

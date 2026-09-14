@@ -119,4 +119,19 @@ describe('KineticCaptionGenerator', () => {
         // Check highlight color has BGR value for #facc15 (&H0015CCFA&)
         expect(content).toContain('&H0015CCFA&');
     });
+
+    it('calculates continuous vertical margin correctly from yPercent', () => {
+        const words = [
+            { start: 0.1, end: 0.9, word: 'Positioning' }
+        ];
+
+        // yPercent: 35% from the top -> 65% from the bottom on a 1920 canvas -> MarginV = 1248
+        generator.generateASS(words, tempOutputFile, 'submagic', 2.0, {
+            yPercent: 35,
+        });
+        const content = fs.readFileSync(tempOutputFile, 'utf-8');
+
+        // Check alignment is 2 and marginV is 1248
+        expect(content).toContain(',2,80,80,1248,1');
+    });
 });

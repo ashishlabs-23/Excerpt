@@ -184,6 +184,7 @@ export async function exportCustomClip(
     captionStyle?: string;
     captionFontSize?: number;
     captionPosition?: 'bottom' | 'middle' | 'top';
+    captionYPercent?: number;
     captionColor?: string;
     captions?: boolean;
     words?: any[];

@@ -1338,6 +1338,7 @@ async function handleCustomClipExport(
     captionStyle?: string;
     captionFontSize?: number;
     captionPosition?: 'bottom' | 'middle' | 'top';
+    captionYPercent?: number;
     captionColor?: string;
     captions?: boolean;
     words?: any[];
@@ -1355,6 +1356,7 @@ async function handleCustomClipExport(
     captionStyle: params.captionStyle,
     captionFontSize: params.captionFontSize,
     captionPosition: params.captionPosition,
+    captionYPercent: params.captionYPercent,
     captionColor: params.captionColor,
     captions: params.captions,
     hasCustomWords: Boolean(params.words?.length),
@@ -1380,6 +1382,7 @@ async function handleCustomClipExport(
 
   // 1. If we are burning custom subtitles or disabling captions, always seek clean video first!
   const preferClean = params.captions === false || hasCustomWords || Boolean(params.captionColor) ||
+    Boolean(params.captionYPercent !== undefined && params.captionYPercent !== 78) ||
     Boolean(params.captionPosition && params.captionPosition !== 'bottom') ||
     Boolean(params.captionFontSize && params.captionFontSize !== 28) ||
     (Boolean(params.captionStyle) && params.captionStyle !== 'Submagic' && params.captionStyle !== 'hormozi');
@@ -1530,6 +1533,7 @@ async function handleCustomClipExport(
     // If the base video is already captioned and no custom words/styles were applied,
     // burning another layer will cause double subtitles.
     const hasCustomStyling = Boolean(params.captionColor) ||
+      Boolean(params.captionYPercent !== undefined && params.captionYPercent !== 78) ||
       Boolean(params.captionPosition && params.captionPosition !== 'bottom') ||
       Boolean(params.captionFontSize && params.captionFontSize !== 28) ||
       (Boolean(params.captionStyle) && params.captionStyle !== 'Submagic' && params.captionStyle !== 'hormozi');
@@ -1571,6 +1575,7 @@ async function handleCustomClipExport(
             {
               fontSize: params.captionFontSize,
               position: params.captionPosition,
+              yPercent: params.captionYPercent,
               color: params.captionColor,
             }
           );
@@ -1681,6 +1686,7 @@ router.get('/download/:clipId', requireUserJWT, async (req: Request, res: Respon
         captionStyle,
         captionFontSize: req.query.caption_font_size ? Number(req.query.caption_font_size) : undefined,
         captionPosition: (req.query.caption_position as 'bottom' | 'middle' | 'top') || undefined,
+        captionYPercent: req.query.caption_y_percent ? Number(req.query.caption_y_percent) : undefined,
         captionColor: typeof req.query.caption_color === 'string' ? req.query.caption_color : undefined,
         captions: req.query.captions !== '0',
         words: parsedWords,
@@ -1722,6 +1728,7 @@ router.post('/export-clip/:clipId', requireUserJWT, async (req: Request, res: Re
       captionStyle,
       captionFontSize,
       captionPosition,
+      captionYPercent,
       captionColor,
       captions,
       words,
@@ -1753,6 +1760,7 @@ router.post('/export-clip/:clipId', requireUserJWT, async (req: Request, res: Re
       captionStyle: captionStyle || 'Submagic',
       captionFontSize: typeof captionFontSize === 'number' ? captionFontSize : undefined,
       captionPosition: captionPosition || undefined,
+      captionYPercent: typeof captionYPercent === 'number' ? captionYPercent : undefined,
       captionColor: typeof captionColor === 'string' ? captionColor : undefined,
       captions: captions !== false,
       words: Array.isArray(words) ? words : undefined,

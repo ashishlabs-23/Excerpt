@@ -38,6 +38,8 @@ interface EditorSidebarProps {
   onChangeCaptionFontSize?: (size: number) => void;
   captionPosition?: 'bottom' | 'middle' | 'top';
   onChangeCaptionPosition?: (pos: 'bottom' | 'middle' | 'top') => void;
+  captionYPercent?: number;
+  onChangeCaptionYPercent?: (y: number) => void;
   captionColor?: string;
   onChangeCaptionColor?: (color: string) => void;
   cropOffset: number;
@@ -92,6 +94,8 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
   onChangeCaptionFontSize,
   captionPosition = 'bottom',
   onChangeCaptionPosition,
+  captionYPercent,
+  onChangeCaptionYPercent,
   captionColor,
   onChangeCaptionColor,
   cropOffset,
@@ -319,22 +323,45 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
 
                 {/* Caption Position */}
                 <div className="space-y-2 pt-2 border-t border-white/5">
-                  <span className="text-[9px] text-[#4b5563] font-black uppercase tracking-wider block">Position on Screen</span>
+                  <div className="flex justify-between items-center text-[10px] font-bold">
+                    <span className="text-[#4b5563] uppercase tracking-wider">Vertical Position</span>
+                    <span className="text-white font-mono">{Math.round(captionYPercent ?? (captionPosition === 'top' ? 15 : captionPosition === 'middle' ? 50 : 78))}%</span>
+                  </div>
                   <div className="grid grid-cols-3 gap-2">
-                    {(['top', 'middle', 'bottom'] as const).map(pos => (
-                      <button
-                        key={pos}
-                        type="button"
-                        onClick={() => onChangeCaptionPosition && onChangeCaptionPosition(pos)}
-                        className={`py-1.5 rounded-lg border text-center text-xs font-bold capitalize transition-all ${
-                          captionPosition === pos
-                            ? 'bg-primary/20 border-primary/50 text-white shadow-sm'
-                            : 'bg-[#111827] border-[#1f2937] text-white/50 hover:border-[#374151]'
-                        }`}
-                      >
-                        {pos}
-                      </button>
-                    ))}
+                    {(['top', 'middle', 'bottom'] as const).map(pos => {
+                      const targetPct = pos === 'top' ? 15 : pos === 'middle' ? 50 : 78;
+                      const currentPct = captionYPercent ?? (captionPosition === 'top' ? 15 : captionPosition === 'middle' ? 50 : 78);
+                      const isActive = captionPosition === pos || Math.abs(currentPct - targetPct) < 4;
+                      return (
+                        <button
+                          key={pos}
+                          type="button"
+                          onClick={() => {
+                            if (onChangeCaptionPosition) onChangeCaptionPosition(pos);
+                            if (onChangeCaptionYPercent) onChangeCaptionYPercent(targetPct);
+                          }}
+                          className={`py-1.5 rounded-lg border text-center text-xs font-bold capitalize transition-all ${
+                            isActive
+                              ? 'bg-primary/20 border-primary/50 text-white shadow-sm'
+                              : 'bg-[#111827] border-[#1f2937] text-white/50 hover:border-[#374151]'
+                          }`}
+                        >
+                          {pos}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="pt-1">
+                    <Slider
+                      min={10}
+                      max={88}
+                      step={1}
+                      value={[captionYPercent ?? (captionPosition === 'top' ? 15 : captionPosition === 'middle' ? 50 : 78)]}
+                      onValueChange={(vals) => {
+                        if (onChangeCaptionYPercent) onChangeCaptionYPercent(vals[0]);
+                      }}
+                      className="accent-primary"
+                    />
                   </div>
                 </div>
 
