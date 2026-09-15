@@ -2062,10 +2062,16 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
 
 
     // ─── Step 4: Render Subsystem & RenderPlan Contract ────────────────────
+    const requestedCaptionStyle = (data as any)?.caption_style || (data as any)?.caption_preset || 'submagic';
     const renderPlan = createRenderPlan({
       jobId,
       requestedClips: data.numClips || data.num_clips || DEFAULT_PIPELINE_CONFIG.defaultClipCount,
       acceptedClips: dbClips,
+      captionPolicy: {
+        required: true,
+        style: requestedCaptionStyle,
+        allowUncaptionedFallback: false,
+      },
     });
     console.log(`[Worker]: RenderPlan created for job ${jobId} -> Scheduled ${renderPlan.renderJobs.length} render jobs for ${renderPlan.requestedClips} requested clips.`);
 
@@ -2088,7 +2094,8 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         jumpCutPlan: (clip as any)?.metadata?.jump_cut_plan || (rawClip as any)?.jump_cut_plan || null,
         aspectRatio: rj.aspectRatio,
         quality: rj.quality,
-        caption_style: (data as any)?.caption_style || (data as any)?.caption_preset || (clip as any)?.metadata?.caption_style || 'submagic',
+        caption_style: (clip as any)?.metadata?.caption_style || requestedCaptionStyle,
+        captionPolicy: renderPlan.captionPolicy,
         // Phase E: Hook text for editorial hook card
         hookText: (clip as any)?.metadata?.hook || (rawClip as any)?.hook || '',
       };

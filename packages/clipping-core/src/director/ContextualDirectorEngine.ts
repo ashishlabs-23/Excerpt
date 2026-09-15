@@ -65,7 +65,8 @@ export class ContextualDirectorEngine {
     };
 
     // 1. Resolve Speaker Face Coordinates
-    const primaryFace = this.resolvePrimaryFace(perception.faces);
+    const activeSpeakerId = perception.speakerTrack?.primarySpeakerId;
+    const primaryFace = this.resolvePrimaryFace(perception.faces, activeSpeakerId);
     const secondaryFace = this.resolveSecondaryFace(perception.faces, primaryFace);
 
     // 2. Generate Candidate Plans (In-Memory Counterfactuals)
@@ -74,23 +75,22 @@ export class ContextualDirectorEngine {
     const planC = this.buildSpeakerAwarePlan(clip, profile, primaryFace, secondaryFace, perception, videoDimensions, safeAreas);
 
     // 3. Evaluate Plans with Director Quality Gate
-    const evaluatedA = this.evaluatePlanWithQualityGate(planA, clipDuration);
-    const evaluatedB = this.evaluatePlanWithQualityGate(planB, clipDuration);
-    const evaluatedC = this.evaluatePlanWithQualityGate(planC, clipDuration);
+    const evaluatedA = this.evaluatePlanWithQualityGate(planA, clipDuration, primaryFace, videoDimensions);
+    const evaluatedB = this.evaluatePlanWithQualityGate(planB, clipDuration, primaryFace, videoDimensions);
+    const evaluatedC = this.evaluatePlanWithQualityGate(planC, clipDuration, primaryFace, videoDimensions);
 
-    // 4. Arbitrate Winning Plan
-    // Decision Hierarchy:
-    // Prefer Plan C (Speaker-Aware) if multiple active speakers exist and split-screen is permitted.
-    // Else prefer Plan B (Contextual Punch) if high emotional climax exists and passes quality gate.
-    // Otherwise fallback to Plan A (Conservative 1.0x steady framing).
+    // 4. Arbitrate Winning Plan (Filter unsafe candidates)
     let winner: DirectorPlan = evaluatedA;
 
     if (evaluatedC.qualityGate.passed && evaluatedC.confidence >= 0.85 && profile.allowSplitScreen && secondaryFace) {
       winner = evaluatedC;
     } else if (evaluatedB.qualityGate.passed && evaluatedB.interventions.length > 0 && evaluatedB.confidence > evaluatedA.confidence) {
       winner = evaluatedB;
-    } else {
+    } else if (evaluatedA.qualityGate.passed) {
       winner = evaluatedA;
+    } else {
+      const candidates = [evaluatedA, evaluatedB, evaluatedC].sort((a, b) => b.confidence - a.confidence);
+      winner = candidates[0];
     }
 
     return winner;
@@ -107,7 +107,7 @@ export class ContextualDirectorEngine {
     videoDim: { width: number; height: number },
     safeAreas: SafeAreas
   ): DirectorPlan {
-    const crop = this.calculateCropBox(primaryFace, 1.0, profile.composition, videoDim);
+    const crop = this.calculateCropBox(primaryFace, 1.0, profile.composition, videoDim, safeAreas, profile.closeUpFaceRatio);
     const clipDuration = Number((clip.endSec - clip.startSec).toFixed(2));
 
     const shot: DirectorShot = {
@@ -170,6 +170,7 @@ export class ContextualDirectorEngine {
         chinCutoffDetected: false,
         cropJitterScorePx: 0,
         speakerOscillationCount: 0,
+        rapidSpeakerSwitchCount: 0,
         subtitleSafeClearanceOk: true,
         unnecessaryInterventionCount: 0,
         rejectionReasons: [],
@@ -382,8 +383,8 @@ export class ContextualDirectorEngine {
     }
 
     const clipDuration = Number((clip.endSec - clip.startSec).toFixed(2));
-    const primaryCrop = this.calculateCropBox(primaryFace, 1.0, profile.composition, videoDim);
-    const secondaryCrop = this.calculateCropBox(secondaryFace, 1.0, profile.composition, videoDim);
+    const primaryCrop = this.calculateCropBox(primaryFace, 1.0, profile.composition, videoDim, safeAreas, profile.closeUpFaceRatio);
+    const secondaryCrop = this.calculateCropBox(secondaryFace, 1.0, profile.composition, videoDim, safeAreas, profile.closeUpFaceRatio);
 
     const shot: DirectorShot = {
       shotIndex: 0,
@@ -446,6 +447,7 @@ export class ContextualDirectorEngine {
         chinCutoffDetected: false,
         cropJitterScorePx: 0,
         speakerOscillationCount: 0,
+        rapidSpeakerSwitchCount: 0,
         subtitleSafeClearanceOk: true,
         unnecessaryInterventionCount: 0,
         rejectionReasons: [],
@@ -457,14 +459,20 @@ export class ContextualDirectorEngine {
 
   /**
    * Director Quality Gate:
-   * Validates framing safety, head/chin cutoffs, subtitle safe areas, and jitter.
+   * Empirically validates framing safety, head/chin cutoffs, subtitle safe areas, and rapid speaker switching.
    */
-  private evaluatePlanWithQualityGate(plan: DirectorPlan, durationSec: number): DirectorPlan {
+  private evaluatePlanWithQualityGate(
+    plan: DirectorPlan,
+    durationSec: number,
+    primaryFace?: { x: number; y: number; w: number; h: number; confidence: number },
+    videoDim: { width: number; height: number } = { width: 1920, height: 1080 }
+  ): DirectorPlan {
     const rejectionReasons: string[] = [];
     let headCutoff = false;
     let chinCutoff = false;
+    let subtitleSafeClearanceOk = true;
 
-    // 1. Head & Chin Cutoff Check
+    // 1. Head & Chin Cutoff Check across all shots / zoom scales
     for (const shot of plan.shots) {
       if (shot.zoomScale > 1.22) {
         headCutoff = true;
@@ -472,16 +480,62 @@ export class ContextualDirectorEngine {
       }
     }
 
-    // 2. Unnecessary Intervention Count Check
-    // More than 1 intervention per 8 seconds is considered hyper-metronomic over-editing
+    // 2. Trajectory-level geometric checks on keyframes
+    if (primaryFace) {
+      const faceTopSourceY = primaryFace.y * videoDim.height;
+      const faceBottomSourceY = (primaryFace.y + primaryFace.h) * videoDim.height;
+
+      for (const kf of plan.cameraKeyframes) {
+        const faceTopOnCanvas = faceTopSourceY - kf.cropBox.y;
+        const faceBottomOnCanvas = faceBottomSourceY - kf.cropBox.y;
+
+        // Head cutoff: face top above top canvas boundary
+        if (faceTopOnCanvas < 0) {
+          headCutoff = true;
+          rejectionReasons.push('Head/forehead cutoff detected above canvas top boundary.');
+          break;
+        }
+
+        // Chin cutoff: face bottom below bottom canvas boundary
+        if (faceBottomOnCanvas > this.defaultTargetH) {
+          chinCutoff = true;
+          rejectionReasons.push('Chin cutoff detected below canvas bottom boundary.');
+          break;
+        }
+
+        // Subtitle clearance: check if non-close-up face encroaches deep into subtitle clearance
+        const faceHeightRatio = (primaryFace.h * videoDim.height) / this.defaultTargetH;
+        const subtitleTop = this.defaultTargetH - plan.safeAreas.bottomSubtitleClearancePx;
+        if (faceHeightRatio < 0.45 && faceBottomOnCanvas > subtitleTop + 30) {
+          subtitleSafeClearanceOk = false;
+          rejectionReasons.push('Face encroaches into bottom subtitle safe zone.');
+          break;
+        }
+      }
+    }
+
+    // 3. Unnecessary Intervention Count Check
     const maxPermittedInterventions = Math.max(1, Math.floor(durationSec / 7.0));
     if (plan.interventions.length > maxPermittedInterventions) {
       rejectionReasons.push(`Too many visual interventions (${plan.interventions.length} > ${maxPermittedInterventions}).`);
     }
 
-    // 3. Subtitle Clearance
-    // Bottom 340px must remain unencumbered
-    const subtitleSafeOk = true;
+    // 4. Rapid Speaker Switch Check (< 1.8s hold window)
+    let rapidSpeakerSwitchCount = 0;
+    const minHoldSec = 1.8;
+    for (let i = 1; i < plan.shots.length; i++) {
+      const prev = plan.shots[i - 1];
+      const curr = plan.shots[i];
+      if (prev.targetSubject !== curr.targetSubject) {
+        if (prev.durationSec < minHoldSec) {
+          rapidSpeakerSwitchCount++;
+        }
+      }
+    }
+
+    if (rapidSpeakerSwitchCount > 0) {
+      rejectionReasons.push(`Rapid speaker oscillation detected (${rapidSpeakerSwitchCount} switch(es) < ${minHoldSec}s).`);
+    }
 
     const passed = rejectionReasons.length === 0;
 
@@ -491,8 +545,9 @@ export class ContextualDirectorEngine {
       headCutoffDetected: headCutoff,
       chinCutoffDetected: chinCutoff,
       cropJitterScorePx: 1.2, // Within safe bounds
-      speakerOscillationCount: 0,
-      subtitleSafeClearanceOk: subtitleSafeOk,
+      speakerOscillationCount: rapidSpeakerSwitchCount,
+      rapidSpeakerSwitchCount,
+      subtitleSafeClearanceOk,
       unnecessaryInterventionCount: Math.max(0, plan.interventions.length - maxPermittedInterventions),
       rejectionReasons,
     };
@@ -505,33 +560,65 @@ export class ContextualDirectorEngine {
   }
 
   /**
-   * Calculates crop box coordinates honoring eye-line and headroom padding.
+   * Calculates crop box coordinates honoring scale-aware eye-line, headroom, and subtitle clearance.
    */
   public calculateCropBox(
     face: { x: number; y: number; w: number; h: number },
     zoomScale: number,
     composition: ShotComposition,
-    videoDim: { width: number; height: number }
+    videoDim: { width: number; height: number },
+    safeAreas?: SafeAreas,
+    closeUpFaceRatio?: number
   ): CameraCropBox {
     const targetW = this.defaultTargetW;
     const targetH = this.defaultTargetH;
 
-    const scaledW = Math.round(targetW * zoomScale);
-    const scaledH = Math.round(targetH * zoomScale);
-
     // Coordinate mapping into source dimensions
-    const faceCenterX = face.x + face.w / 2;
-    const faceCenterY = face.y + face.h / 2;
+    const faceW = face.w * videoDim.width;
+    const faceH = face.h * videoDim.height;
+    const faceCenterX = (face.x + face.w / 2) * videoDim.width;
+    const faceCenterY = (face.y + face.h / 2) * videoDim.height;
 
     const maxOffsetX = Math.max(0, videoDim.width - targetW);
     const maxOffsetY = Math.max(0, videoDim.height - targetH);
 
     // Center crop horizontally around face
-    const idealCropX = Math.round(faceCenterX * videoDim.width - targetW / 2);
+    const idealCropX = Math.round(faceCenterX - targetW / 2);
     const cropX = Math.max(0, Math.min(maxOffsetX, idealCropX));
 
-    // Position eye-line at target eye-line ratio (e.g. 35% from top)
-    const idealCropY = Math.round(faceCenterY * videoDim.height - targetH * composition.targetEyeLineRatio);
+    // Scale-aware eye-line adjustment:
+    // Parametric close-up threshold (default 0.35)
+    const effectiveCloseUpRatio = closeUpFaceRatio ?? 0.35;
+    const faceHeightRatio = faceH / targetH;
+
+    let eyeLineRatio = composition.targetEyeLineRatio;
+    if (faceHeightRatio > effectiveCloseUpRatio) {
+      // Close-up: raise eye-line to protect chin from bottom crop
+      const excess = faceHeightRatio - effectiveCloseUpRatio;
+      eyeLineRatio = Math.max(0.24, eyeLineRatio - excess * 0.4);
+    }
+
+    // Ideal vertical crop positioning
+    let idealCropY = Math.round(faceCenterY - targetH * eyeLineRatio);
+
+    // Subtitle safe-zone clearance in target pixels
+    const subtitleClearancePx = safeAreas?.bottomSubtitleClearancePx ?? 340;
+    const faceBottomSourceY = (face.y + face.h) * videoDim.height;
+    const subtitleZoneTopOnCanvas = targetH - subtitleClearancePx;
+
+    // If face bottom would collide with bottom subtitle area:
+    if (faceBottomSourceY - idealCropY > subtitleZoneTopOnCanvas) {
+      const adjustedCropY = faceBottomSourceY - subtitleZoneTopOnCanvas;
+      // Headroom constraint: top of face must not be pushed above top margin
+      const faceTopSourceY = face.y * videoDim.height;
+      const minHeadroomPx = targetH * 0.06;
+      const maxPermissibleCropY = faceTopSourceY - minHeadroomPx;
+
+      if (maxPermissibleCropY >= 0) {
+        idealCropY = Math.min(adjustedCropY, maxPermissibleCropY);
+      }
+    }
+
     const cropY = Math.max(0, Math.min(maxOffsetY, idealCropY));
 
     return {
@@ -542,9 +629,18 @@ export class ContextualDirectorEngine {
     };
   }
 
-  private resolvePrimaryFace(faces?: MultimodalPerceptionInput['faces']) {
+  private resolvePrimaryFace(
+    faces?: MultimodalPerceptionInput['faces'],
+    activeSpeakerId?: string | null
+  ) {
     if (faces && faces.length > 0) {
-      // Pick highest confidence face
+      // GAP B: Prefer the face whose speakerId matches the active speaker.
+      // Mirrors the pattern in SmartReframeEngine.calculateKeyframe().
+      if (activeSpeakerId) {
+        const match = faces.find(f => f.speakerId === activeSpeakerId);
+        if (match) return match;
+      }
+      // Fall back to highest-confidence face
       const sorted = [...faces].sort((a, b) => b.confidence - a.confidence);
       return sorted[0];
     }

@@ -351,11 +351,17 @@ router.get('/dashboard', requireUserJWT, async (req: Request, res: Response) => 
     const processing = jobs.filter((j: any) => j.status === 'processing').length;
     const queued = jobs.filter((j: any) => j.status === 'queued').length;
 
-    // Derive per-stage stats from performance_metrics.stage_times if present,
-    // otherwise approximate from job counts and known pipeline structure.
+    // Canonical Excerpt pipeline stages — matches the architectural taxonomy
     const stageNames = [
-      'DOWNLOAD', 'TRANSCRIPTION', 'AI_ANALYSIS', 'SEGMENTATION',
-      'RANKING', 'RENDER', 'UPLOAD', 'RETENTION'
+      'ACQUISITION',          // Input / Download
+      'NORMALIZATION',        // Media probe, audio extraction, format normalization
+      'PERCEPTION',           // Unified perception: ASR, vision, audio events
+      'UNDERSTANDING',        // AI analysis, category classification, story graph
+      'CANDIDATES',           // Segmentation + candidate clip generation
+      'RANKING',              // Score, rank, and filter candidates
+      'DIRECTOR',             // Boundary refinement + framing (P6)
+      'RENDER',               // FFmpeg encode + caption burn-in
+      'DELIVERY',             // Upload to storage + delivery validation
     ];
 
     // Collect stage durations from performance_metrics if stored
@@ -367,22 +373,35 @@ router.get('/dashboard', requireUserJWT, async (req: Request, res: Response) => 
     for (const job of jobs) {
       const pm = job.performance_metrics as any;
       if (pm && typeof pm === 'object') {
-        // Map known metric keys to stage names
-        if (pm.download_ms) { stageTotals['DOWNLOAD'].totalMs += pm.download_ms; stageTotals['DOWNLOAD'].count++; }
-        if (pm.transcription_ms) { stageTotals['TRANSCRIPTION'].totalMs += pm.transcription_ms; stageTotals['TRANSCRIPTION'].count++; }
-        if (pm.ai_analysis_ms) { stageTotals['AI_ANALYSIS'].totalMs += pm.ai_analysis_ms; stageTotals['AI_ANALYSIS'].count++; }
-        if (pm.ranking_ms) { stageTotals['RANKING'].totalMs += pm.ranking_ms; stageTotals['RANKING'].count++; }
-        if (pm.render_ms) { stageTotals['RENDER'].totalMs += pm.render_ms; stageTotals['RENDER'].count++; }
-        if (pm.upload_ms) { stageTotals['UPLOAD'].totalMs += pm.upload_ms; stageTotals['UPLOAD'].count++; }
+        // Map stored metric keys → canonical stage
+        if (pm.download_ms)      { stageTotals['ACQUISITION'].totalMs += pm.download_ms;      stageTotals['ACQUISITION'].count++; }
+        if (pm.transcription_ms) { stageTotals['PERCEPTION'].totalMs += pm.transcription_ms;  stageTotals['PERCEPTION'].count++; }
+        if (pm.ai_analysis_ms)   { stageTotals['UNDERSTANDING'].totalMs += pm.ai_analysis_ms; stageTotals['UNDERSTANDING'].count++; }
+        if (pm.ranking_ms)       { stageTotals['RANKING'].totalMs += pm.ranking_ms;            stageTotals['RANKING'].count++; }
+        if (pm.render_ms)        { stageTotals['RENDER'].totalMs += pm.render_ms;              stageTotals['RENDER'].count++; }
+        if (pm.upload_ms)        { stageTotals['DELIVERY'].totalMs += pm.upload_ms;            stageTotals['DELIVERY'].count++; }
 
-        // Count failures by reason keyword
+        // Failure attribution by failed_reason keyword
         if (job.status === 'failed' && job.failed_reason) {
           const r = (job.failed_reason as string).toLowerCase();
-          if (r.includes('download')) stageTotals['DOWNLOAD'].failures++;
-          else if (r.includes('transcri')) stageTotals['TRANSCRIPTION'].failures++;
-          else if (r.includes('ai') || r.includes('gemini') || r.includes('groq')) stageTotals['AI_ANALYSIS'].failures++;
-          else if (r.includes('render') || r.includes('ffmpeg')) stageTotals['RENDER'].failures++;
-          else if (r.includes('upload') || r.includes('storage') || r.includes('b2')) stageTotals['UPLOAD'].failures++;
+          if (r.includes('download') || r.includes('yt-dlp') || r.includes('ytdlp'))
+            stageTotals['ACQUISITION'].failures++;
+          else if (r.includes('probe') || r.includes('ffprobe') || r.includes('normalize'))
+            stageTotals['NORMALIZATION'].failures++;
+          else if (r.includes('transcri') || r.includes('whisper') || r.includes('groq'))
+            stageTotals['PERCEPTION'].failures++;
+          else if (r.includes('ai') || r.includes('gemini') || r.includes('classif') || r.includes('story'))
+            stageTotals['UNDERSTANDING'].failures++;
+          else if (r.includes('segment') || r.includes('candidate') || r.includes('clip'))
+            stageTotals['CANDIDATES'].failures++;
+          else if (r.includes('rank'))
+            stageTotals['RANKING'].failures++;
+          else if (r.includes('director') || r.includes('frame') || r.includes('reframe') || r.includes('caption'))
+            stageTotals['DIRECTOR'].failures++;
+          else if (r.includes('render') || r.includes('ffmpeg') || r.includes('encode'))
+            stageTotals['RENDER'].failures++;
+          else if (r.includes('upload') || r.includes('storage') || r.includes('b2') || r.includes('deliver'))
+            stageTotals['DELIVERY'].failures++;
         }
       }
     }
@@ -398,6 +417,9 @@ router.get('/dashboard', requireUserJWT, async (req: Request, res: Response) => 
       };
     });
 
+    // successRate is null when < 5 jobs exist to avoid misleading 100% on cold-start
+    const successRate = total >= 5 ? Math.round((completed / total) * 100) : null;
+
     pipelineStages.push({
       name: 'SUMMARY',
       total24h: total,
@@ -405,7 +427,7 @@ router.get('/dashboard', requireUserJWT, async (req: Request, res: Response) => 
       failed24h: failed,
       processing: processing,
       queued: queued,
-      successRate: total > 0 ? Math.round((completed / total) * 100) : 100,
+      successRate,
     });
   } catch (e: any) {
     pipelineStages = [{ error: e.message }];

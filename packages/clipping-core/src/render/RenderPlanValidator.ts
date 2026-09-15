@@ -29,5 +29,12 @@ export class RenderPlanValidator {
         `RenderPlan unsupported schemaVersion: ${plan.schemaVersion}`
       );
     }
+
+    if (plan.captionPolicy && plan.captionPolicy.required && plan.captionPolicy.allowUncaptionedFallback) {
+      throw new PipelineError(
+        PipelineErrorCode.RenderPlanInvalid,
+        `RenderPlan contradictory captionPolicy: required is true but allowUncaptionedFallback is true`
+      );
+    }
   }
 }

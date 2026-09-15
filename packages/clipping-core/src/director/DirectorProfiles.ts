@@ -17,6 +17,10 @@ export interface DirectorProfileConfig {
   };
   composition: ShotComposition;
   preferredLayout: LayoutMode;
+  closeUpFaceRatio?: number; // Face height relative to target height to treat as close-up (default 0.35)
+  speakerHoldTimeSec?: number; // Minimum hold time before switching speakers (default 1.8s)
+  speakerSwitchThresholdDelta?: number; // Required confidence delta to switch speakers (default 0.15)
+  faceLossHoldDurationSec?: number; // Duration to hold last stable crop on face loss (default 0.8s)
 }
 
 export const DIRECTOR_PROFILES: Record<DirectorProfileType, DirectorProfileConfig> = {

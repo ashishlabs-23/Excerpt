@@ -44,6 +44,10 @@ export interface DirectorConfig {
   headroomPaddingRatio: number; // Ratio of face height to add above the face
   preferredLayout?: LayoutMode;
   enablePunchIn?: boolean;
+  speakerHoldTimeSec?: number; // Minimum hold duration on speaker before switching (default 1.8s)
+  speakerSwitchThresholdDelta?: number; // Required confidence delta to trigger switch (default 0.15)
+  closeUpFaceRatio?: number; // Threshold for close-up face scaling relative to target height (default 0.35)
+  faceLossHoldDurationSec?: number; // Duration to hold last stable crop before neutral fallback (default 0.8s)
 }
 
 export interface CameraPlan {
@@ -112,6 +116,7 @@ export interface DirectorQualityGate {
   chinCutoffDetected: boolean;
   cropJitterScorePx: number;
   speakerOscillationCount: number;
+  rapidSpeakerSwitchCount: number; // Rapid switches violating hold window (< 1.8s)
   subtitleSafeClearanceOk: boolean;
   unnecessaryInterventionCount: number;
   rejectionReasons: string[];

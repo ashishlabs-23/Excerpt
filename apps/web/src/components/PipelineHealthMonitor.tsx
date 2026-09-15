@@ -17,36 +17,51 @@ interface Props {
 }
 
 const STAGE_ORDER = [
-  "DOWNLOAD",
-  "TRANSCRIPTION",
-  "AI_ANALYSIS",
-  "SEGMENTATION",
+  "ACQUISITION",
+  "NORMALIZATION",
+  "PERCEPTION",
+  "UNDERSTANDING",
+  "CANDIDATES",
   "RANKING",
+  "DIRECTOR",
   "RENDER",
-  "UPLOAD",
-  "RETENTION",
+  "DELIVERY",
 ];
 
 const STAGE_LABELS: Record<string, string> = {
-  DOWNLOAD: "Download",
-  TRANSCRIPTION: "Transcription",
-  AI_ANALYSIS: "AI Analysis",
-  SEGMENTATION: "Segmentation",
-  RANKING: "Ranking",
-  RENDER: "Render",
-  UPLOAD: "Upload",
-  RETENTION: "Retention",
+  ACQUISITION:   "Acquisition",
+  NORMALIZATION: "Normalization",
+  PERCEPTION:    "Perception",
+  UNDERSTANDING: "Understanding",
+  CANDIDATES:    "Candidates",
+  RANKING:       "Ranking",
+  DIRECTOR:      "Director",
+  RENDER:        "Render",
+  DELIVERY:      "Delivery",
+};
+
+const STAGE_SUBLABELS: Record<string, string> = {
+  ACQUISITION:   "input / download",
+  NORMALIZATION: "probe · extract · normalize",
+  PERCEPTION:    "ASR · vision · audio",
+  UNDERSTANDING: "AI analysis · classify · graph",
+  CANDIDATES:    "segment · generate",
+  RANKING:       "score · filter",
+  DIRECTOR:      "boundary · framing · P6",
+  RENDER:        "encode · caption burn-in",
+  DELIVERY:      "upload · validate",
 };
 
 const STAGE_COLORS: Record<string, string> = {
-  DOWNLOAD: "text-blue-400 bg-blue-500/10 border-blue-500/20",
-  TRANSCRIPTION: "text-indigo-400 bg-indigo-500/10 border-indigo-500/20",
-  AI_ANALYSIS: "text-primary bg-primary/10 border-primary/20",
-  SEGMENTATION: "text-amber-400 bg-amber-500/10 border-amber-500/20",
-  RANKING: "text-purple-400 bg-purple-500/10 border-purple-500/20",
-  RENDER: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
-  UPLOAD: "text-cyan-400 bg-cyan-500/10 border-cyan-500/20",
-  RETENTION: "text-rose-400 bg-rose-500/10 border-rose-500/20",
+  ACQUISITION:   "text-blue-400 bg-blue-500/10 border-blue-500/20",
+  NORMALIZATION: "text-sky-400 bg-sky-500/10 border-sky-500/20",
+  PERCEPTION:    "text-indigo-400 bg-indigo-500/10 border-indigo-500/20",
+  UNDERSTANDING: "text-primary bg-primary/10 border-primary/20",
+  CANDIDATES:    "text-amber-400 bg-amber-500/10 border-amber-500/20",
+  RANKING:       "text-purple-400 bg-purple-500/10 border-purple-500/20",
+  DIRECTOR:      "text-fuchsia-400 bg-fuchsia-500/10 border-fuchsia-500/20",
+  RENDER:        "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
+  DELIVERY:      "text-cyan-400 bg-cyan-500/10 border-cyan-500/20",
 };
 
 function fmtMs(ms: number | null | undefined): string {
@@ -93,8 +108,14 @@ export const PipelineHealthMonitor: React.FC<Props> = ({ pipeline }) => {
               <div className="w-px h-8 bg-white/10" />
               <div className="text-center">
                 <p className="text-white/30 text-[8px] uppercase tracking-widest">Success</p>
-                <p className={`font-black text-lg ${(summary.successRate ?? 0) >= 90 ? "text-emerald-400" : "text-rose-400"}`}>
-                  {summary.successRate ?? 0}%
+                <p className={`font-black text-lg ${
+                  summary.successRate == null
+                    ? "text-white/30"
+                    : summary.successRate >= 90
+                    ? "text-emerald-400"
+                    : "text-rose-400"
+                }`}>
+                  {summary.successRate != null ? `${summary.successRate}%` : "N/A"}
                 </p>
               </div>
               <div className="w-px h-8 bg-white/10" />
@@ -136,7 +157,7 @@ export const PipelineHealthMonitor: React.FC<Props> = ({ pipeline }) => {
                       : "border-white/[0.06] bg-black/20"
                   }`}
                 >
-                  {/* Left: badge + name */}
+                  {/* Left: badge + name + sublabel */}
                   <div className="flex items-center gap-3">
                     <span
                       className={`text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border ${colorClass}`}
@@ -147,6 +168,11 @@ export const PipelineHealthMonitor: React.FC<Props> = ({ pipeline }) => {
                       <AlertTriangle size={12} className="text-rose-400" />
                     ) : (
                       <CheckCircle2 size={12} className="text-emerald-400/60" />
+                    )}
+                    {STAGE_SUBLABELS[stage.name] && (
+                      <span className="text-[9px] text-white/25 hidden md:inline">
+                        {STAGE_SUBLABELS[stage.name]}
+                      </span>
                     )}
                   </div>
 

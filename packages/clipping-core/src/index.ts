@@ -42,7 +42,7 @@ export * from './planning/BoundaryPlanner';
 export * from './render/types';
 export * from './render/RenderPlanHasher';
 export { StandardizedRankingWeights, RANKING_PROFILES, getRankingWeightsForCategory } from './engines/ranking/RankingProfiles';
-export { createRenderPlan, DEFAULT_PIPELINE_CONFIG, RenderJobPlan, PipelineConfig, RenderQuality, AspectRatio, RenderFormat } from './contracts/RenderPlan';
+export { createRenderPlan, DEFAULT_PIPELINE_CONFIG, RenderJobPlan, PipelineConfig, RenderQuality, AspectRatio, RenderFormat, CaptionPolicy } from './contracts/RenderPlan';
 export * from './contracts/ArtifactValidator';
 export * from './render/RenderPlanValidator';
 export * from './job/types';

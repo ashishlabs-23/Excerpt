@@ -152,6 +152,15 @@ export async function processRenderJob(renderJob: any) {
       let hasCaptions = false;
       const wordsToCaption = clipWords;
 
+      // P6.2: Compulsory Caption Contract Policy
+      const captionPolicy = (renderJob.payload as any)?.captionPolicy || {
+        required: true,
+        style: (renderJob.payload as any)?.caption_style || (renderJob.payload as any)?.caption_preset || 'submagic',
+        allowUncaptionedFallback: false,
+      };
+      const isCaptionRequired: boolean = captionPolicy.required !== false;
+      const allowFallback: boolean = captionPolicy.allowUncaptionedFallback === true;
+
       const clipDurationSec = clipEnd - clipStart;
       const actualRenderedDurationSec = clipDurationSec;
 
@@ -204,13 +213,21 @@ export async function processRenderJob(renderJob: any) {
           if (relativeWords.length > 0) {
             const requestedStyle = (renderJob.payload as any)?.caption_style
               || (renderJob.payload as any)?.caption_preset
+              || captionPolicy.style
               || 'submagic';
             captionService.generateASS(relativeWords, assFilePath, requestedStyle, clipDurationSec);
             hasCaptions = true;
           }
         } catch (capGenErr: any) {
+          if (isCaptionRequired && !allowFallback) {
+            throw new Error(`[RenderWorker]: Terminal failure - Caption generation failed (${capGenErr.message}) under compulsory caption contract.`);
+          }
           console.warn(`[RenderWorker]: Caption script generation failed (${capGenErr.message}), proceeding without captions.`);
         }
+      }
+
+      if (isCaptionRequired && !allowFallback && wordsToCaption && wordsToCaption.length > 0 && (!hasCaptions || !fs.existsSync(assFilePath))) {
+        throw new Error(`[RenderWorker]: Terminal failure - Captions required for clip ${clipId} with spoken words, but ASS subtitles file was not produced.`);
       }
 
       let renderedClips: { videoPath: string; startSec: number; durationSec: number; layout?: string }[] = [];
@@ -273,6 +290,9 @@ export async function processRenderJob(renderJob: any) {
         await processor.burnInSubtitles(cleanOutputPath, outputPath, assFilePath);
         captionMs = Date.now() - capStart;
       } else {
+        if (isCaptionRequired && !allowFallback && wordsToCaption && wordsToCaption.length > 0) {
+          throw new Error(`[RenderWorker]: Terminal failure - Subtitle burn-in bypassed for clip ${clipId} under compulsory caption contract.`);
+        }
         fs.copyFileSync(cleanOutputPath, outputPath);
         captionMs = 0;
       }
@@ -347,6 +367,13 @@ export async function processRenderJob(renderJob: any) {
               } : {}),
               video_captioned_storage_key: storageKey,
               video_captioned_url: videoUrl,
+              caption_burned: hasCaptions,
+              caption_verified: hasCaptions && fs.existsSync(outputPath),
+              caption_policy: captionPolicy,
+              source_artifact: {
+                source_storage_key: (renderJob.payload as any)?.sourceStorageKey || null,
+                source_video_url: (renderJob.payload as any)?.videoUrl || null,
+              },
             },
             updated_at: new Date().toISOString(),
           };
@@ -362,6 +389,13 @@ export async function processRenderJob(renderJob: any) {
           video_clean_url: cleanVideoUrl,
           video_captioned_storage_key: storageKey,
           video_captioned_url: videoUrl,
+          caption_burned: hasCaptions,
+          caption_verified: hasCaptions && fs.existsSync(outputPath),
+          caption_policy: captionPolicy,
+          source_artifact: {
+            source_storage_key: (renderJob.payload as any)?.sourceStorageKey || null,
+            source_video_url: (renderJob.payload as any)?.videoUrl || null,
+          },
         };
         const { data: updatedClipData, error: clipUpdateErr } = await db.getSupabase().from('clips').update({
           storage_path: storageKey,

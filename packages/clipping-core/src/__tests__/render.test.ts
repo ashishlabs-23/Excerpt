@@ -54,4 +54,33 @@ describe('Canonical RenderPlan - Core Validation', () => {
     
     expect(hash1).toBe(hash2);
   });
+
+  it('4. createRenderPlan enforces compulsory caption policy by default', () => {
+    const { createRenderPlan } = require('../contracts/RenderPlan');
+    const plan = createRenderPlan({
+      jobId: 'job-p6',
+      requestedClips: 2,
+      acceptedClips: [{ id: 'clip-1' }, { id: 'clip-2' }],
+    });
+
+    expect(plan.captionPolicy).toBeDefined();
+    expect(plan.captionPolicy.required).toBe(true);
+    expect(plan.captionPolicy.allowUncaptionedFallback).toBe(false);
+    expect(plan.renderJobs[0].expectedOutputs.subtitle).toBe(true);
+  });
+
+  it('5. RenderPlanValidator rejects contradictory caption policy', () => {
+    const contradictoryPlan = {
+      ...validPlan,
+      captionPolicy: {
+        required: true,
+        allowUncaptionedFallback: true,
+      }
+    };
+
+    expect(() => RenderPlanValidator.validate(contradictoryPlan)).toThrow(
+      /contradictory captionPolicy/
+    );
+  });
 });
+

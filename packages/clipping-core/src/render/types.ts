@@ -40,6 +40,12 @@ export interface RenderEncodingPolicy {
   audioSampleRate: number;
 }
 
+export interface CaptionPolicy {
+  required: boolean;
+  style?: string;
+  allowUncaptionedFallback?: boolean;
+}
+
 export interface RenderPlan {
   jobId: string;
   schemaVersion: string;
@@ -56,5 +62,6 @@ export interface RenderPlan {
   planHash: string; // sha256 of the plan's serialized content (excluding this field)
   generationMode?: GenerationMode;
   encodingPolicy?: RenderEncodingPolicy;
+  captionPolicy?: CaptionPolicy;
 }
 

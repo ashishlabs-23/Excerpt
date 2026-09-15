@@ -22,6 +22,12 @@ export interface DeliveryPolicy {
   minSuccessfulClips: number;
 }
 
+export interface CaptionPolicy {
+  required: boolean;
+  style?: string;
+  allowUncaptionedFallback?: boolean;
+}
+
 export interface RenderPlan {
   jobId: string;
   requestedClips: number;
@@ -29,6 +35,7 @@ export interface RenderPlan {
   renderJobs: RenderJobPlan[];
   expectedArtifacts: number;
   deliveryPolicy: DeliveryPolicy;
+  captionPolicy?: CaptionPolicy;
   createdAt: string;
 }
 
@@ -52,6 +59,7 @@ export function createRenderPlan(params: {
   quality?: RenderQuality;
   generationMode?: GenerationMode;
   deliveryPolicy?: Partial<DeliveryPolicy>;
+  captionPolicy?: CaptionPolicy;
 }): RenderPlan {
   const {
     jobId,
@@ -61,9 +69,15 @@ export function createRenderPlan(params: {
     generationMode,
     quality = generationMode === 'draft' ? 'draft' : 'high',
     deliveryPolicy = {},
+    captionPolicy,
   } = params;
 
   const effectiveGenerationMode: GenerationMode = generationMode || (quality === 'draft' ? 'draft' : 'quality');
+  const effectiveCaptionPolicy: CaptionPolicy = captionPolicy || {
+    required: true,
+    style: 'submagic',
+    allowUncaptionedFallback: false,
+  };
 
   const renderJobs: RenderJobPlan[] = acceptedClips.map((clip, index) => ({
     id: `render_job_${jobId}_${clip.id}_${index + 1}`,
@@ -75,7 +89,7 @@ export function createRenderPlan(params: {
     expectedOutputs: {
       video: true,
       thumbnail: true,
-      subtitle: true,
+      subtitle: effectiveCaptionPolicy.required,
     },
   }));
 
@@ -92,6 +106,7 @@ export function createRenderPlan(params: {
       allowPartialDelivery: deliveryPolicy.allowPartialDelivery ?? true,
       minSuccessfulClips: deliveryPolicy.minSuccessfulClips ?? Math.min(1, acceptedClips.length),
     },
+    captionPolicy: effectiveCaptionPolicy,
     createdAt: new Date().toISOString(),
   };
 }
