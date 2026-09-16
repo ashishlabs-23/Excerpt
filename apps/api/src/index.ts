@@ -292,6 +292,21 @@ async function bootstrap() {
     res.status(allHealthy ? 200 : 207).json({ healthy: allHealthy, workers });
   });
 
+  // Retention Service Health & Telemetry
+  app.get('/health/retention', (req: express.Request, res: express.Response) => {
+    try {
+      const { RetentionService } = require('./services/RetentionService');
+      const telemetry = RetentionService.getLatestTelemetry();
+      res.status(200).json({
+        status: 'ok',
+        retentionPolicyHours: Number(process.env.RETENTION_HOURS || 24),
+        latestTelemetry: telemetry,
+      });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', error: err.message });
+    }
+  });
+
   // Download Engine
   app.get('/health/download', async (req: express.Request, res: express.Response) => {
     let envSnapshot: any = {};

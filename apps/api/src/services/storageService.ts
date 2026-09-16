@@ -5,10 +5,17 @@ import { Readable } from 'stream';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from './supabaseService';
 import { initFirebaseAdmin } from './firebaseService';
-import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, ListObjectVersionsCommand, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PipelineError, ErrorCategory } from '@excerpt/clipping-core';
+
+export interface StorageObjectMetadata {
+  key: string;
+  size: number;
+  lastModified: Date;
+  versionId?: string;
+}
 
 // Safety load for monorepo context
 dotenv.config();
@@ -415,28 +422,151 @@ export class StorageService {
     }
   }
 
-  async listAllObjects(): Promise<string[]> {
-    const firebaseBucket = this.getFirebaseBucket();
-    if (firebaseBucket) {
+  /**
+   * Discovers current live storage objects matching an optional prefix across S3/B2, Firebase, or Supabase.
+   */
+  async listCurrentObjects(prefix?: string): Promise<StorageObjectMetadata[]> {
+    const results: StorageObjectMetadata[] = [];
+
+    // 1. S3 / Backblaze B2 (Primary)
+    if (this.s3) {
       try {
-        const [files] = await firebaseBucket.getFiles();
-        return files.map(f => f.name);
-      } catch (err) {
-        // Fallback
+        let continuationToken: string | undefined = undefined;
+        let isTruncated = true;
+        while (isTruncated) {
+          const res: any = await this.s3.send(new ListObjectsV2Command({
+            Bucket: this.bucket,
+            Prefix: prefix,
+            ContinuationToken: continuationToken,
+          }));
+
+          for (const item of (res.Contents || [])) {
+            if (item.Key) {
+              results.push({
+                key: item.Key,
+                size: item.Size || 0,
+                lastModified: item.LastModified ? new Date(item.LastModified) : new Date(),
+              });
+            }
+          }
+          continuationToken = res.NextContinuationToken;
+          isTruncated = Boolean(res.IsTruncated && continuationToken);
+        }
+
+        return results;
+      } catch (err: any) {
+        console.warn(`[StorageService]: S3/B2 listCurrentObjects warning: ${err.message}`);
       }
     }
 
+    // 2. Firebase Storage fallback
+    const firebaseBucket = this.getFirebaseBucket();
+    if (firebaseBucket) {
+      try {
+        const [files] = await firebaseBucket.getFiles({ prefix });
+        for (const file of files) {
+          const [metadata]: any = await file.getMetadata().catch(() => [{}]);
+          results.push({
+            key: file.name,
+            size: Number(metadata?.size || 0),
+            lastModified: metadata?.updated ? new Date(metadata.updated) : new Date(),
+          });
+        }
+        return results;
+      } catch (err: any) {
+        console.warn(`[StorageService]: Firebase listFiles warning: ${err.message}`);
+      }
+    }
+
+    // 3. Supabase Storage fallback
     try {
-      const { data, error } = await this.getSupabase().storage.from("clips").list("", {
+      const { data } = await this.getSupabase().storage.from("clips").list(prefix || "", {
         limit: 1000,
         offset: 0,
         sortBy: { column: "created_at", order: "desc" }
       });
-      if (error) return [];
-      return (data || []).map(item => item.name);
-    } catch {
-      return [];
+      if (data) {
+        for (const item of data) {
+          results.push({
+            key: prefix ? `${prefix.replace(/\/+$/, '')}/${item.name}` : item.name,
+            size: (item.metadata as any)?.size || 0,
+            lastModified: item.created_at ? new Date(item.created_at) : new Date(),
+          });
+        }
+      }
+    } catch {}
+
+    return results;
+  }
+
+  /**
+   * Backward-compatible alias for listCurrentObjects.
+   */
+  async listAllStorageObjects(prefix?: string): Promise<StorageObjectMetadata[]> {
+    return this.listCurrentObjects(prefix);
+  }
+
+  async listAllObjects(): Promise<string[]> {
+    const objects = await this.listCurrentObjects();
+    return objects.map(o => o.key);
+  }
+
+  /**
+   * Lists object versions and delete markers from S3/B2 (Historical Version Inventory).
+   */
+  async listObjectVersions(prefix?: string): Promise<{
+    versions: Array<{ key: string; versionId: string; size: number; isLatest?: boolean; lastModified: Date }>;
+    deleteMarkers: Array<{ key: string; versionId: string; lastModified: Date }>;
+  }> {
+    const versions: Array<{ key: string; versionId: string; size: number; isLatest?: boolean; lastModified: Date }> = [];
+    const deleteMarkers: Array<{ key: string; versionId: string; lastModified: Date }> = [];
+
+    if (!this.s3) return { versions, deleteMarkers };
+
+    try {
+      let keyMarker: string | undefined = undefined;
+      let versionIdMarker: string | undefined = undefined;
+      let isTruncated = true;
+
+      while (isTruncated) {
+        const res: any = await this.s3.send(new ListObjectVersionsCommand({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          KeyMarker: keyMarker,
+          VersionIdMarker: versionIdMarker,
+        }));
+
+        for (const v of (res.Versions || [])) {
+          if (v.Key && v.VersionId) {
+            versions.push({
+              key: v.Key,
+              versionId: v.VersionId,
+              size: v.Size || 0,
+              isLatest: v.IsLatest,
+              lastModified: v.LastModified ? new Date(v.LastModified) : new Date(),
+            });
+          }
+        }
+
+        for (const dm of (res.DeleteMarkers || [])) {
+          if (dm.Key && dm.VersionId) {
+            deleteMarkers.push({
+              key: dm.Key,
+              versionId: dm.VersionId,
+              lastModified: dm.LastModified ? new Date(dm.LastModified) : new Date(),
+            });
+          }
+        }
+
+        keyMarker = res.NextKeyMarker;
+        versionIdMarker = res.NextVersionIdMarker;
+        isTruncated = Boolean(res.IsTruncated && (keyMarker || versionIdMarker));
+      }
+    } catch (err: any) {
+      console.warn(`[StorageService]: listObjectVersions warning: ${err.message}`);
     }
+
+    return { versions, deleteMarkers };
   }
 
   /**
@@ -488,7 +618,59 @@ export class StorageService {
     }
   }
 
-  async deleteObjects(keysOrUrls: string[]): Promise<{ deleted: string[]; errors: string[] }> {
+  /**
+   * Permanently deletes specific object versions and delete markers from S3/B2.
+   * Idempotent: objects already absent (NotFound / NoSuchKey) are treated as successfully deleted.
+   */
+  async deleteObjectVersions(items: Array<{ key: string; versionId?: string }>): Promise<{ deleted: string[]; errors: string[] }> {
+    if (!items || items.length === 0) return { deleted: [], errors: [] };
+    const deleted: string[] = [];
+    const errors: string[] = [];
+
+    if (this.s3) {
+      try {
+        for (let i = 0; i < items.length; i += 1000) {
+          const batch = items.slice(i, i + 1000);
+          const response = await this.s3.send(new DeleteObjectsCommand({
+            Bucket: this.bucket,
+            Delete: {
+              Objects: batch.map(x => ({ Key: this.normalizeStorageKey(x.key), ...(x.versionId ? { VersionId: x.versionId } : {}) })),
+              Quiet: false,
+            },
+          }));
+
+          if (response.Deleted) {
+            response.Deleted.forEach(d => { if (d.Key) deleted.push(d.Key); });
+          }
+          if (response.Errors && response.Errors.length > 0) {
+            response.Errors.forEach(e => {
+              if (e.Code === 'NoSuchKey' || e.Code === 'NotFound' || e.Code === 'NoSuchVersion') {
+                // Idempotency: Object or version already absent is considered deleted
+                if (e.Key) deleted.push(e.Key);
+              } else {
+                const msg = `S3 version delete error for ${e.Key} (${e.VersionId}): ${e.Code} - ${e.Message}`;
+                console.warn(`[StorageService]: ${msg}`);
+                errors.push(msg);
+              }
+            });
+          }
+        }
+      } catch (err: any) {
+        errors.push(`S3 deleteObjectVersions critical error: ${err.message}`);
+      }
+    }
+
+    return { deleted, errors };
+  }
+
+  /**
+   * Deletes objects by key or URL across S3/B2, Firebase, and local disk.
+   * Idempotent: already absent objects (NoSuchKey / NotFound) are treated as successfully deleted.
+   */
+  async deleteObjects(
+    keysOrUrls: string[],
+    options?: { versionAware?: boolean }
+  ): Promise<{ deleted: string[]; errors: string[] }> {
     if (!keysOrUrls || keysOrUrls.length === 0) return { deleted: [], errors: [] };
 
     const normalizedKeys = Array.from(new Set(keysOrUrls.map(k => this.normalizeStorageKey(k)).filter(Boolean)));
@@ -515,9 +697,14 @@ export class StorageService {
           }
           if (response.Errors && response.Errors.length > 0) {
             response.Errors.forEach(e => {
-              const msg = `S3 delete error for ${e.Key}: ${e.Code} - ${e.Message}`;
-              console.warn(`[StorageService]: ${msg}`);
-              errors.push(msg);
+              if (e.Code === 'NoSuchKey' || e.Code === 'NotFound') {
+                // Idempotency: Object already absent is considered successfully deleted
+                if (e.Key) deleted.push(e.Key);
+              } else {
+                const msg = `S3 delete error for ${e.Key}: ${e.Code} - ${e.Message}`;
+                console.warn(`[StorageService]: ${msg}`);
+                errors.push(msg);
+              }
             });
           }
         }

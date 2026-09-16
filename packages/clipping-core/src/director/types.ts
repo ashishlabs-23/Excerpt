@@ -35,6 +35,7 @@ export interface CameraKeyframe {
   scale: number; // Default 1.0. Micro punch-ins (1.05-1.18)
   framingLevel: FramingLevel;
   layoutMode?: LayoutMode;
+  cameraMode?: 'HOLD' | 'TRACK' | 'PAN' | 'CUT';
 }
 
 export interface DirectorConfig {
@@ -48,6 +49,11 @@ export interface DirectorConfig {
   speakerSwitchThresholdDelta?: number; // Required confidence delta to trigger switch (default 0.15)
   closeUpFaceRatio?: number; // Threshold for close-up face scaling relative to target height (default 0.35)
   faceLossHoldDurationSec?: number; // Duration to hold last stable crop before neutral fallback (default 0.8s)
+  subtitleReserveRatio?: number; // Lower percentage reserved for subtitles (default 0.22)
+  deadbandRatio?: number; // Normalized deadband threshold relative to viewport width (default 0.03)
+  deadbandPx?: number; // Deadband threshold for HOLD vs TRACK (derived or explicit)
+  cutThresholdRatio?: number; // Normalized discontinuity threshold relative to viewport width (default 0.25)
+  cutThresholdPx?: number; // Discontinuity threshold for instant CUT (derived or explicit)
 }
 
 export interface CameraPlan {

@@ -12,6 +12,10 @@ export interface HysteresisState {
   rapidSwitchCount: number;
   lastStableCropBox: CameraCropBox | null;
   faceLossSinceMs: number | null;
+  lastFrameTimestampMs: number;
+  currentCameraMode: 'HOLD' | 'TRACK' | 'PAN' | 'CUT';
+  candidateCameraMode: 'HOLD' | 'TRACK' | 'PAN' | 'CUT' | null;
+  candidateModeSinceMs: number;
 }
 
 export class SmartReframeEngine {
@@ -40,6 +44,10 @@ export class SmartReframeEngine {
       rapidSwitchCount: 0,
       lastStableCropBox: null,
       faceLossSinceMs: null,
+      lastFrameTimestampMs: 0,
+      currentCameraMode: 'HOLD',
+      candidateCameraMode: null,
+      candidateModeSinceMs: 0,
     };
 
     for (const frame of sampled) {
@@ -187,56 +195,176 @@ export class SmartReframeEngine {
       level = FramingLevel.CENTER_CROP;
     }
     
-    let x = (artW - targetWidth) / 2; // Default center
+    let scale = 1.0;
+    if (config.enablePunchIn && speakerConfidence > 0.9) {
+      scale = 1.06;
+    }
+
+    const outputAspect = config.targetAspectRatio || 9 / 16;
+    const viewportHeightPx = artH / scale;
+    const viewportWidthPx = viewportHeightPx * outputAspect;
+
+    const toSourcePixels = (box: { x: number; y: number; w: number; h: number }) => {
+      const isNorm = box.w <= 1.0 && box.h <= 1.0 && box.x <= 1.0 && box.y <= 1.0;
+      return {
+        x: isNorm ? box.x * artW : box.x,
+        y: isNorm ? box.y * artH : box.y,
+        w: isNorm ? box.w * artW : box.w,
+        h: isNorm ? box.h * artH : box.h,
+      };
+    };
+
+    let x = (artW - viewportWidthPx) / 2; // Default center
     let y = 0;
 
     if (level === FramingLevel.ACTIVE_SPEAKER && targetFace) {
-      const faceCenterX = targetFace.x + (targetFace.w / 2);
-      x = faceCenterX - (targetWidth / 2);
-      x = Math.max(0, Math.min(x, artW - targetWidth));
+      const facePx = toSourcePixels(targetFace);
+      const faceCenterX = facePx.x + facePx.w / 2;
+      const idealX = faceCenterX - viewportWidthPx / 2;
+      const maxOffsetX = Math.max(0, artW - viewportWidthPx);
+      x = Math.max(0, Math.min(maxOffsetX, idealX));
+
+      // P6.4B: Feasible vertical crop region (AutoFlip + safe headroom & subtitle bounds)
+      const subtitleReserveRatio = config.subtitleReserveRatio ?? 0.22;
+      const safeTopLimit = viewportHeightPx * 0.05; // 5% minimum safe headroom
+      const subtitleZoneTop = viewportHeightPx * (1.0 - subtitleReserveRatio); // e.g. 78% of viewport height
+
+      const faceTopPx = facePx.y;
+      const faceBottomPx = facePx.y + facePx.h;
+
+      // 1. Headroom constraint: faceTopInCrop >= safeTopLimit => y <= faceTopPx - safeTopLimit
+      const yMax = faceTopPx - safeTopLimit;
+
+      // 2. Subtitle clearance: faceBottomInCrop <= subtitleZoneTop => y >= faceBottomPx - subtitleZoneTop
+      const yMin = faceBottomPx - subtitleZoneTop;
+
+      // Ideal eye-line positioning (0.33 of viewport height)
+      const eyeLineRatio = 0.33;
+      const idealY = (faceTopPx + facePx.h * 0.4) - viewportHeightPx * eyeLineRatio;
+
+      if (yMin <= yMax) {
+        // Feasible crop exists: place camera within [yMin, yMax] honoring eye-line
+        y = Math.max(yMin, Math.min(yMax, idealY));
+      } else {
+        // P6.4C Infeasible crop fallback: preserve headroom to protect eyes/head
+        y = yMax;
+      }
+      if (y < 0) y = 0;
     }
 
     let secondaryCropBox: CameraKeyframe['secondaryCropBox'] = undefined;
     if (level === FramingLevel.SPLIT_SCREEN_STACK && targetFace && secondaryFace) {
-      // Calculate top box (Speaker A) and bottom box (Speaker B)
-      const halfTargetW = targetWidth;
-      const speakerAX = Math.max(0, Math.min(targetFace.x + (targetFace.w / 2) - (halfTargetW / 2), artW - halfTargetW));
-      const speakerBX = Math.max(0, Math.min(secondaryFace.x + (secondaryFace.w / 2) - (halfTargetW / 2), artW - halfTargetW));
+      const faceA = toSourcePixels(targetFace);
+      const faceB = toSourcePixels(secondaryFace);
+      const halfTargetW = viewportWidthPx;
+      const speakerAX = Math.max(0, Math.min(faceA.x + faceA.w / 2 - halfTargetW / 2, artW - halfTargetW));
+      const speakerBX = Math.max(0, Math.min(faceB.x + faceB.w / 2 - halfTargetW / 2, artW - halfTargetW));
 
       x = speakerAX;
       secondaryCropBox = {
         x: speakerBX,
         y: 0,
         w: halfTargetW,
-        h: targetHeight
+        h: viewportHeightPx,
       };
     }
 
-    // Micro punch-in for high speaker engagement
-    let scale = 1.0;
-    if (config.enablePunchIn && speakerConfidence > 0.9) {
-      scale = 1.06;
-    }
+    const deadbandPx = viewportWidthPx * (config.deadbandRatio ?? 0.03);
+    const cutThresholdPx = viewportWidthPx * (config.cutThresholdRatio ?? 0.25);
 
-    const cropBox: CameraCropBox = { x, y, w: targetWidth, h: targetHeight };
+    const targetCropBox: CameraCropBox = { x, y, w: viewportWidthPx, h: viewportHeightPx };
+    let cropBox: CameraCropBox = { ...targetCropBox };
+    let cameraMode: 'HOLD' | 'TRACK' | 'PAN' | 'CUT' = 'HOLD';
 
-    // GAP A: Camera-motion compensation.
-    // When a camera pan is detected, the face detector sees apparent subject movement
-    // that is actually background motion. Pin crop X to the last stable position so
-    // the virtual camera does not chase the background-induced face drift.
-    // Vertical reframing, hysteresis, and face-loss logic are unaffected.
-    if (
-      context &&
-      frame.cameraMotion.available &&
-      frame.cameraMotion.data === 'pan' &&
-      context.lastStableCropBox !== null
-    ) {
-      cropBox.x = context.lastStableCropBox.x;
-    }
+    if (context) {
+      const dtSec = context.lastFrameTimestampMs > 0
+        ? Math.max(0.01, (frame.timestampMs - context.lastFrameTimestampMs) / 1000)
+        : 0.04;
+      context.lastFrameTimestampMs = frame.timestampMs;
 
-    // Record last stable crop box when active face is established
-    if (context && level === FramingLevel.ACTIVE_SPEAKER) {
-      context.lastStableCropBox = cropBox;
+      if (context.lastStableCropBox === null) {
+        context.lastStableCropBox = { ...targetCropBox };
+        context.currentCameraMode = 'HOLD';
+        cameraMode = 'HOLD';
+      } else {
+        const dx = targetCropBox.x - context.lastStableCropBox.x;
+        const dy = targetCropBox.y - context.lastStableCropBox.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        const isCameraPan = frame.cameraMotion?.available && frame.cameraMotion.data === 'pan';
+        const isSpeakerCut = context.lastSwitchTimestampMs === frame.timestampMs && dist > cutThresholdPx;
+
+        let desiredMode: 'HOLD' | 'TRACK' | 'PAN' | 'CUT';
+        if (isSpeakerCut) {
+          desiredMode = 'CUT';
+        } else if (isCameraPan) {
+          desiredMode = 'PAN';
+        } else if (dist < deadbandPx) {
+          desiredMode = 'HOLD';
+        } else {
+          desiredMode = 'TRACK';
+        }
+
+        // Camera mode persistence / hysteresis (minimum 150ms dwell time)
+        if (desiredMode === 'CUT') {
+          context.currentCameraMode = 'CUT';
+          context.candidateCameraMode = null;
+        } else if (desiredMode === context.currentCameraMode) {
+          context.candidateCameraMode = null;
+        } else {
+          if (context.candidateCameraMode !== desiredMode) {
+            context.candidateCameraMode = desiredMode;
+            context.candidateModeSinceMs = frame.timestampMs;
+          } else {
+            const dwellMs = frame.timestampMs - context.candidateModeSinceMs;
+            if (dwellMs >= 150) {
+              context.currentCameraMode = desiredMode;
+              context.candidateCameraMode = null;
+            }
+          }
+        }
+
+        cameraMode = context.currentCameraMode;
+
+        switch (cameraMode) {
+          case 'HOLD':
+            cropBox = { ...context.lastStableCropBox };
+            break;
+
+          case 'PAN':
+            // Pin horizontal translation, allow vertical safe adjustment
+            cropBox = {
+              x: context.lastStableCropBox.x,
+              y,
+              w: viewportWidthPx,
+              h: viewportHeightPx,
+            };
+            context.lastStableCropBox = cropBox;
+            break;
+
+          case 'CUT':
+            // Instantaneous cut to new target
+            cropBox = { ...targetCropBox };
+            context.lastStableCropBox = cropBox;
+            context.currentCameraMode = 'HOLD'; // Settle into hold after cut
+            break;
+
+          case 'TRACK':
+          default:
+            // Velocity-capped 2D tracking
+            const maxDelta = config.maxVelocityPxPerSec * dtSec;
+            const stepX = Math.abs(dx) > maxDelta ? Math.sign(dx) * maxDelta : dx;
+            const stepY = Math.abs(dy) > maxDelta ? Math.sign(dy) * maxDelta : dy;
+            cropBox = {
+              x: context.lastStableCropBox.x + stepX,
+              y: context.lastStableCropBox.y + stepY,
+              w: viewportWidthPx,
+              h: viewportHeightPx,
+            };
+            context.lastStableCropBox = cropBox;
+            break;
+        }
+      }
     }
 
     return {
@@ -244,7 +372,8 @@ export class SmartReframeEngine {
       cropBox,
       secondaryCropBox,
       scale,
-      framingLevel: level
+      framingLevel: level,
+      cameraMode,
     };
   }
 
@@ -260,24 +389,41 @@ export class SmartReframeEngine {
       
       if (dtSec === 0) continue;
 
+      // Preserve intentional cuts without smoothing blur
+      if (curr.cameraMode === 'CUT') {
+        smoothed.push({ ...curr });
+        continue;
+      }
+
       let newX = curr.cropBox.x;
+      let newY = curr.cropBox.y;
       const dx = curr.cropBox.x - prev.cropBox.x;
+      const dy = curr.cropBox.y - prev.cropBox.y;
       
-      // Anti-Jitter Pass
+      // Anti-Jitter Pass for micro-movements
       if (Math.abs(dx) < config.jitterThresholdPx) {
-        newX = prev.cropBox.x; // Lock position
+        newX = prev.cropBox.x;
       } else {
-        // Velocity Cap Pass
-        const velocity = dx / dtSec;
-        if (Math.abs(velocity) > config.maxVelocityPxPerSec) {
-          const maxDx = config.maxVelocityPxPerSec * dtSec * Math.sign(velocity);
+        const velocityX = dx / dtSec;
+        if (Math.abs(velocityX) > config.maxVelocityPxPerSec) {
+          const maxDx = config.maxVelocityPxPerSec * dtSec * Math.sign(velocityX);
           newX = prev.cropBox.x + maxDx;
+        }
+      }
+
+      if (Math.abs(dy) < config.jitterThresholdPx) {
+        newY = prev.cropBox.y;
+      } else {
+        const velocityY = dy / dtSec;
+        if (Math.abs(velocityY) > config.maxVelocityPxPerSec) {
+          const maxDy = config.maxVelocityPxPerSec * dtSec * Math.sign(velocityY);
+          newY = prev.cropBox.y + maxDy;
         }
       }
 
       smoothed.push({
         ...curr,
-        cropBox: { ...curr.cropBox, x: newX }
+        cropBox: { ...curr.cropBox, x: newX, y: newY }
       });
     }
 
