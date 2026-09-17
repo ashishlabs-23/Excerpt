@@ -19,6 +19,7 @@ This directory contains the authoritative architecture specifications, execution
 | [`DATA_FLOW.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/architecture/DATA_FLOW.md) | Entity Transformations | Schema progressions, coordinate normalization invariant |
 | [`RUNTIME_ARCHITECTURE.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/architecture/RUNTIME_ARCHITECTURE.md) | Process & Runtime Model | Worker lifecycles, SIGKILL watchdogs, real-time SSE sync, containers |
 | [`STORAGE_ARCHITECTURE.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/architecture/STORAGE_ARCHITECTURE.md) | Storage & Object Topology | NVMe scratch, SHA256 content-addressing, Backblaze B2 layout |
+| [`PRODUCT_TARGET_AND_INTENT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/architecture/PRODUCT_TARGET_AND_INTENT.md) | Product Strategy & Intent | ClipProject abstraction, CompositionPlan, ClipBundle, PlatformProfile |
 
 ---
 
