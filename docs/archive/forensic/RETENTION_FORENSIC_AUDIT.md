@@ -1,3 +1,13 @@
+---
+status: archived
+owner: platform
+last_reviewed: 2026-09-17
+---
+
+> [!WARNING]
+> **STATUS: ARCHIVED / NON-AUTHORITATIVE**
+> This document is preserved for historical/forensic engineering context only. It does not represent active architecture or interface contracts.
+
 # RETENTION FORENSIC AUDIT: 24-HOUR EPHEMERAL STORAGE LIFECYCLE
 
 **Audit Date**: 2026-09-07  

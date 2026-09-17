@@ -1,51 +1,99 @@
-# Excerpt Documentation & Architecture Governance
+---
+status: current
+owner: platform
+last_reviewed: 2026-09-17
+---
 
-Welcome to the Excerpt engineering documentation repository. This directory houses architectural decisions, domain invariant contracts, operational runbooks, research, and institutional archives.
+# Excerpt Documentation & Engineering Governance
+
+Welcome to the Excerpt engineering documentation repository. This directory is the canonical, authoritative system of record for Excerpt's architecture, technical contracts, security boundaries, operational runbooks, and testing methodologies.
 
 ---
 
-## 🏛️ Directory Layout
+## 🏛️ Authoritative Documentation Rule
+
+> [!IMPORTANT]
+> **AUTHORITATIVE DOCUMENTATION RULE**  
+> Each topic has **exactly one canonical document**.
+>
+> - **Architecture** $\rightarrow$ [`docs/architecture/`](file:///c:/Projects/Ashishlabs/Excerpt/docs/architecture/) *(How the system is built)*
+> - **Decision** $\rightarrow$ [`docs/adr/`](file:///c:/Projects/Ashishlabs/Excerpt/docs/adr/) *(Why architectural decisions were made)*
+> - **Contract** $\rightarrow$ [`docs/contracts/`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/) *(What each subsystem guarantees)*
+> - **Security** $\rightarrow$ [`docs/security/`](file:///c:/Projects/Ashishlabs/Excerpt/docs/security/) *(What is protected and how)*
+> - **Operations** $\rightarrow$ [`docs/operations/`](file:///c:/Projects/Ashishlabs/Excerpt/docs/operations/) *(How production is run)*
+> - **Testing** $\rightarrow$ [`docs/testing/`](file:///c:/Projects/Ashishlabs/Excerpt/docs/testing/) *(How correctness is proven)*
+> - **Research** $\rightarrow$ [`docs/research/`](file:///c:/Projects/Ashishlabs/Excerpt/docs/research/) *(What was investigated)*
+>
+> Everything else is either **generated**, **experimental**, or **archived**.
+
+---
+
+## 📁 Canonical Directory Structure
 
 ```text
-docs/
-├── architecture/         # Active architecture specifications, system baselines, and UI contracts
-├── contracts/            # Canonical stage contracts explaining non-obvious invariants and domain rules
-├── operations/           # Operational runbooks, tech debt registers, and monitoring specs
-├── research/             # Dependency evaluations, ecosystem research, and external API investigations
-└── archive/              # Preserved institutional knowledge and historical audits
-    ├── forensic/         # Forensic root-cause investigations and pipeline audits
-    ├── milestones/       # Milestone completion and acceptance test reports
-    └── superseded/       # Previous architectural revisions replaced by newer specs
+Excerpt/
+│
+├── apps/                         # Application layer (api, web)
+├── packages/                     # Pure deterministic engines (clipping-core)
+├── supabase/                     # PostgreSQL migrations and RLS policies
+│
+├── benchmarks/                   # MEASURED EVIDENCE (Outside docs/)
+│   ├── definitions/              # Test schemas and fixture manifests
+│   ├── runners/                  # Benchmark execution harnesses
+│   ├── fixtures/                 # Fixed real/synthetic media test inputs
+│   └── reports/                  # Generated benchmark outputs, metrics, and scorecards
+│
+├── datasets/                     # Gold sets, evaluation corpora, and schemas
+│   ├── gold/
+│   ├── benchmarks/
+│   ├── fixtures/
+│   └── schemas/
+│
+├── tools/                        # Developer utilities and offline tools
+│
+├── docs/                         # CANONICAL SYSTEM OF RECORD
+│   ├── README.md                 # This index and authoritative governance rule
+│   ├── architecture/             # How the system is built (System overview, pipeline, data flow)
+│   ├── adr/                      # Architectural Decision Records (ADR-001 to ADR-005)
+│   ├── contracts/                # Canonical stage contracts (Ingestion, Perception, Director, etc.)
+│   ├── security/                 # Threat model, secrets management, access control, incident response
+│   ├── operations/               # Production runbooks, frozen RetentionService, monitoring, queues
+│   ├── testing/                  # Testing strategy, acceptance gates, acceptance sign-offs
+│   ├── research/                 # Framing research, dependency audits
+│   └── archive/                  # NON-AUTHORITATIVE institutional memory
+│       ├── forensic/             # Root-cause investigations
+│       ├── historical/           # Historical milestones and past acceptance runs
+│       └── superseded/           # Deprecated contracts and prior specs
+│
+├── README.md                     # Repository overview and quickstart
+├── SECURITY.md                   # Public vulnerability reporting policy & supported versions
+├── CONTRIBUTING.md               # Developer setup, pull request, and testing standards
+├── CODE_OF_CONDUCT.md            # Contributor covenant standard
+├── CHANGELOG.md                  # Release notes and version history
+└── .gitignore
 ```
 
 ---
 
-## 📜 Documentation Governance Policy
+## 📜 Repository Governance Invariants
 
-All developers and AI agents operating within Excerpt must adhere strictly to the following governance rules:
-
-1. **No Milestone Reports in `apps/api/`**:
-   Never create benchmark scorecards, milestone summaries, or acceptance reports in the application source directories.
-2. **No Loose Documents at `docs/` Root**:
-   Do not dump one-off architecture documents at the `docs/` root. Route all documents into their proper subfolder (`architecture/`, `contracts/`, `operations/`, `research/`, or `archive/`).
-3. **Runtime Prompts Co-located with Code**:
-   Runtime `*.md` files (such as LLM evaluation prompts, ranking templates, or few-shot examples) are runtime code assets and must live inside `packages/clipping-core/src/...` beside the code that loads them.
-4. **Benchmark Reports Belong in `benchmarks/reports/`**:
-   Benchmark run outputs, scorecards, and soak reports belong under `benchmarks/reports/` (subdivided by phase: `p2/`, `p3/`, `p3.1/`, `editorial/`, `soak/`, etc.). Benchmark execution code belongs in `benchmarks/runners/`, and schemas belong in `benchmarks/definitions/`.
-5. **Historical Investigations Belong in `docs/archive/`**:
-   Do not delete investigative audits or forensic reports. Move them to `docs/archive/forensic/` or `docs/archive/milestones/` and register them in `docs/archive/README.md`.
-6. **New ADRs Must Be Linked**:
-   Any new architectural decision records (ADRs) must be cataloged in `docs/architecture/` and linked from the central architecture index.
-7. **TypeScript Contracts vs. Markdown Contracts**:
-   Never duplicate a TypeScript type or interface in Markdown unless the Markdown explains invariants, domain rationale, operational failure modes, or boundary guarantees that cannot be expressed in TypeScript types alone.
-
----
-
-## 📑 Contract Invariant Test
-
-Before creating or retaining a markdown document in `docs/contracts/`, verify:
-
-> **"Does deleting this document make it materially harder to understand a current system invariant or operational rule?"**
-
-- If **YES** (e.g., explaining why `renderJobs.length === acceptedCandidates.length`, or hash immutability requirements) $\rightarrow$ Retain in `docs/contracts/`.
-- If **NO** (mere type duplication or superseded interface) $\rightarrow$ Move to `docs/archive/superseded/` or delete.
+1. **Document Status Frontmatter**:
+   Every document in `docs/` must include YAML frontmatter:
+   ```yaml
+   ---
+   status: current | draft | experimental | deprecated | superseded | archived
+   owner: clipping-core | platform | security | api
+   last_reviewed: 2026-09-17
+   ---
+   ```
+2. **Archived Documents Are Non-Authoritative**:
+   All files under `docs/archive/` must carry a prominent warning block:
+   ```markdown
+   > [!WARNING]
+   > **STATUS: ARCHIVED / NON-AUTHORITATIVE**
+   ```
+3. **No Secrets in Code or Documentation**:
+   `docs/security/SECRETS_MANAGEMENT.md` explains operational procedures for handling secrets; it never contains actual passwords, tokens, API keys, or service-account JSON.
+4. **Benchmarks vs Testing Separation**:
+   - `benchmarks/reports/` preserves the raw generated measurements, JSON outputs, and scorecards.
+   - `docs/testing/` documents the testing strategy, acceptance gates, and sign-off conclusions.

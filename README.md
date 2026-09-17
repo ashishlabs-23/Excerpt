@@ -6,13 +6,12 @@
 
 **Transform long-form videos into viral, 9:16 vertical publishable clips — automatically.**
 
-[![Next.js](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://typescriptlang.org)
-[![Firebase](https://img.shields.io/badge/Firebase-Auth%20%26%20Firestore-FFA611?style=flat-square&logo=firebase)](https://firebase.google.com)
-[![Gemini](https://img.shields.io/badge/Gemini-3.6%20Flash-4285F4?style=flat-square&logo=google)](https://ai.google.dev)
-[![Netlify](https://img.shields.io/badge/Netlify-Deployed-00C7B7?style=flat-square&logo=netlify)](https://netlify.com)
+[![Next.js](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js)](https://nextjs.org)
+[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL%20%26%20RLS-3ECF8E?style=flat-square&logo=supabase)](https://supabase.com)
+[![Backblaze B2](https://img.shields.io/badge/Backblaze-B2%20Cloud%20Storage-E02424?style=flat-square&logo=backblaze)](https://backblaze.com)
 
-[🚀 Live Demo](#) · [📖 Architecture](#-architecture) · [🐛 Report Bug](https://github.com/ashishlabs-23/Excerpt/issues)
+[📖 Documentation](docs/README.md) · [🔒 Security](SECURITY.md) · [🤝 Contributing](CONTRIBUTING.md) · [📜 Code of Conduct](CODE_OF_CONDUCT.md) · [📝 Changelog](CHANGELOG.md)
 
 </div>
 
@@ -20,85 +19,57 @@
 
 ## 🎯 What is Excerpt?
 
-Excerpt is a **full-stack autonomous AI video clipping platform** that ingests YouTube videos and automatically detects, cuts, reframes to 9:16 vertical, captions, and prepares viral clips for social platforms (TikTok, Instagram Reels, YouTube Shorts).
+Excerpt is an **autonomous AI video clipping platform** that ingests long-form video content and automatically extracts, reframes to 9:16 vertical, captions, and prepares publication-ready clips.
 
-```
-YouTube URL ──► AI Hook Detection ──► Face Tracking Reframe ──► Smart Crop ──► Captions ──► Cloud Storage
+```text
+Source Video ──► Multimodal Perception ──► Candidate Gen ──► Contextual Director ──► 9:16 Compositing ──► B2 Delivery
 ```
 
 ---
 
-## ✨ Core Capabilities & Features
+## 🏛️ Authoritative Documentation & Architecture
 
-| Feature | Description |
-|---|---|
-| 🤖 **AI Hook Detection** | Neural multimodal pipeline detects viral hooks using **Gemini 3.6 Flash** & **Groq Qwen 3.6** |
-| 🎯 **Smart 9:16 Reframe** | Continuous face-tracking & heuristic saliency centering with smooth EMA damping |
-| 🎙️ **Voiceover Studio** | Dynamic narration & commentary generation via ElevenLabs / TTS |
-| 📊 **Editor Arena** | Reviewer scoring & comparative ranking to fine-tune viral prediction weights |
-| ⚡ **Resilient Cloud Queue** | Distributed worker orchestration with automatic failover and local JSON offline sync |
-| 🔐 **Firebase Authentication** | Secure Google OAuth and Email/Password sign-in powered by Firebase Auth |
-| 🗄️ **Cloud Firestore** | Document persistence for jobs, clips, and rendering states |
+Excerpt enforces a strict **single source of truth** documentation governance model:
+
+```text
+                    EXCERPT CANONICAL DOCS
+
+ARCHITECTURE    How the system is built     ──► docs/architecture/
+ADRs            Why decisions were made     ──► docs/adr/
+CONTRACTS       What stages guarantee       ──► docs/contracts/
+SECURITY        What is protected and how   ──► docs/security/
+OPERATIONS      How production is run       ──► docs/operations/
+TESTING         How correctness is proven   ──► docs/testing/
+RESEARCH        What was investigated       ──► docs/research/
+ARCHIVE         Historical context          ──► docs/archive/
+```
+
+See the master index in [`docs/README.md`](docs/README.md).
 
 ---
 
-## 🏗️ Architecture
+## 📁 Repository Structure
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    FRONTEND (Netlify)                    │
-│           Next.js 14 · TypeScript · Tailwind CSS        │
-│              Firebase Client SDK (Auth & Data)          │
-└────────────────────────┬────────────────────────────────┘
-                         │ REST / JSON
-┌────────────────────────▼────────────────────────────────┐
-│                  BACKEND API (Node.js)                   │
-│          Express · Firebase Admin SDK · Firestore       │
-└──────────┬────────────────────────┬─────────────────────┘
-           │                        │
-    ┌──────▼──────┐        ┌────────▼────────┐
-    │ State & Log │        │ Firebase / B2   │
-    │  Firestore  │        │  Cloud Storage  │
-    └──────┬──────┘        └─────────────────┘
-           │
-    ┌──────▼──────────────────────────────────────────────┐
-    │                   WORKER PIPELINE                   │
-    │  DownloadEngine ──► Whisper ──► Gemini 3.6 Flash    │
-    │  ──► Cinematic Reframe ──► FFmpeg 9:16 ──► Storage  │
-    └─────────────────────────────────────────────────────┘
-```
-
-### Tech Stack
-
-- **Frontend**: Next.js 14, React, TypeScript, Tailwind CSS, Firebase Client SDK
-- **Backend API**: Node.js, Express, TypeScript, Firebase Admin SDK
-- **AI & Perception**: Google Gemini 3.6 Flash, Groq (`qwen/qwen3.6-27b`, Whisper-large-v3)
-- **Video Processing**: FFmpeg, Smart Crop Planner, Dynamic Face Tracker
-- **Database & Auth**: Firebase Authentication & Cloud Firestore (Project `excerpt-d0ab8`)
-- **Storage**: Firebase Storage / Backblaze B2 (S3-compatible)
-
----
-
-## 📁 Project Structure
-
-```
+```text
 Excerpt/
 ├── apps/
-│   ├── web/                 # Next.js frontend application
-│   │   ├── src/
-│   │   │   ├── app/         # App router pages (dashboard, editor, auth, arena)
-│   │   │   ├── components/  # React UI components & player
-│   │   │   └── lib/         # Firebase client config & API client
-│   └── api/                 # Express API + Video/Render Workers
-│       ├── src/
-│       │   ├── middleware/  # Firebase Auth & Security guards
-│       │   ├── routes/      # Video, clip, and system endpoints
-│       │   ├── services/    # AI, Firebase, VideoProcessor, Storage
-│       │   └── workers/     # VideoWorker & RenderWorker pipelines
+│   ├── api/                 # Express API + Video/Render Background Workers
+│   └── web/                 # Next.js 14 frontend studio & playback reviewer
 ├── packages/
-│   ├── clipping-core/       # Core pipeline contracts, artifact validators & scoring
-│   └── ui/                  # Shared UI components
-├── temp/                    # Resilient local cache & storage mirror
+│   └── clipping-core/       # Pure deterministic clipping & framing engine
+├── benchmarks/              # Test corpora, runners, and measured output reports
+│   ├── definitions/
+│   ├── fixtures/
+│   ├── runners/
+│   └── reports/
+├── datasets/                # Evaluation datasets, gold sets, and schemas
+├── tools/                   # Offline developer utilities and diagnostics
+├── supabase/                # PostgreSQL migrations & RLS policies
+├── docs/                    # Canonical system of record
+├── SECURITY.md              # Public vulnerability reporting policy
+├── CONTRIBUTING.md          # Engineering workflow and PR guidelines
+├── CODE_OF_CONDUCT.md       # Contributor covenant standard
+├── CHANGELOG.md             # Release version history
 └── render.yaml              # Backend deployment specification
 ```
 
@@ -109,10 +80,8 @@ Excerpt/
 ### Prerequisites
 
 - Node.js 20+
-- FFmpeg installed and available on PATH
-- Google AI Studio API Key (`gemini-3.6-flash`)
-- Groq API Key
-- Firebase Project Service Account credentials (`excerpt-d0ab8`)
+- FFmpeg 6.0+ with libass on PATH
+- Supabase Project & Backblaze B2 Bucket
 
 ### 1. Clone & Install
 
@@ -122,75 +91,21 @@ cd Excerpt
 npm install
 ```
 
-### 2. Environment Configuration
-
-Create `.env` at root:
-
-```ini
-# Google AI Studio & Groq
-GOOGLE_AI_API_KEY=your_gemini_api_key
-GROQ_API_KEY=your_groq_api_key
-
-# Firebase Client Configuration
-NEXT_PUBLIC_FIREBASE_API_KEY=your_firebase_api_key
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=excerpt-d0ab8.firebaseapp.com
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=excerpt-d0ab8
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=excerpt-d0ab8.appspot.com
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
-NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
-
-# Storage (Optional / Backblaze B2)
-B2_KEY_ID=your_b2_key_id
-B2_APPLICATION_KEY=your_b2_app_key
-B2_BUCKET_NAME=excerpt-clips
-B2_REGION=us-east-005
-```
-
-Place `firebase-service-account.json` into `apps/api/` for backend Admin SDK verification.
-
-### 3. Run Development Servers
+### 2. Verify Pipeline & Tests
 
 ```bash
-# Start Web Frontend
-npm run dev --workspace=apps/web
+# Run pure clipping-core unit tests
+npm run test:core
 
-# Start API Server
-npm run dev --workspace=apps/api
+# Run API & subsystem tests
+npm run test:api
 
-# Start Video Worker (processes clip jobs)
-npx tsx apps/api/src/workers/videoWorker.ts
-
-# Start Render Worker (renders 9:16 vertical cuts)
-npx tsx apps/api/src/workers/renderWorker.ts
+# Run P6 framing benchmark
+npx tsx apps/api/scripts/benchmark_p6_framing.ts
 ```
-
----
-
-## 🌐 Deployment
-
-### Frontend → Netlify / Vercel
-
-```bash
-npm run build --workspace=apps/web
-```
-
-Set `NEXT_PUBLIC_FIREBASE_*` environment variables in your deployment dashboard.
-
-### Backend API & Workers → Render
-
-The repository includes `render.yaml` configuring:
-- `excerpt-api` (Web Service)
-- `excerpt-video-worker` (Background Worker)
-- `excerpt-render-worker` (Background Worker)
 
 ---
 
 ## 📄 License
 
 Private repository — all rights reserved © 2026 Ashish Labs.
-
-<div align="center">
-
-Built with ❤️ by **Ashish Labs**
-
-</div>

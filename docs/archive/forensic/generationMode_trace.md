@@ -1,3 +1,13 @@
+---
+status: archived
+owner: platform
+last_reviewed: 2026-09-17
+---
+
+> [!WARNING]
+> **STATUS: ARCHIVED / NON-AUTHORITATIVE**
+> This document is preserved for historical/forensic engineering context only. It does not represent active architecture or interface contracts.
+
 # Forensic Trace: `generationMode` End-to-End Audit
 
 ## Executive Summary

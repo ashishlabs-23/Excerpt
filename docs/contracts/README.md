@@ -1,27 +1,40 @@
+---
+status: current
+owner: clipping-core
+last_reviewed: 2026-09-17
+---
+
 # Excerpt Canonical Stage Contracts
 
 This directory contains the canonical stage contracts for the Excerpt clipping pipeline.
 
-> **Contract Policy**: Stage contracts are retained in Markdown **only** when they explain invariants, operational rules, domain rationale, or failure boundary conditions that cannot be expressed via TypeScript types alone.
+> [!IMPORTANT]
+> **Contract Policy**: Stage contracts define **what each subsystem guarantees**. They explain invariants, operational rules, domain rationale, or failure boundary conditions that cannot be expressed via TypeScript types alone. Do not put benchmark results here.
 
 ---
 
-## 📋 Active Stage Contracts Matrix
+## 📋 Canonical Stage Contracts Matrix
+
+```text
+Perception → Candidate Generation → Ranking → Director
+   → Caption Plan → Render Plan → Render Engine → Delivery → Validation → Recovery
+```
 
 | Stage / Area | Contract Document | Corresponding Code / Interfaces | Key Invariant / Boundary Guarantee |
 | :--- | :--- | :--- | :--- |
-| **Ingestion** | [`INGESTION_CONTRACT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/INGESTION_CONTRACT.md) | `packages/clipping-core/.../ingestion` | Shared immutable source artifact caching, Content-hash verification. |
-| **Perception** | [`PERCEPTION_CONTRACT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/PERCEPTION_CONTRACT.md) | `packages/clipping-core/.../perception` | Zero-disk memory-piped frame streaming, strict PTS alignment, bounded RSS. |
-| **Understanding** | [`UNDERSTANDING_CONTRACT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/UNDERSTANDING_CONTRACT.md) | `packages/clipping-core/.../understanding` | Multi-modal semantic context fusion and transcript chunk alignment. |
-| **Candidate Gen** | [`CANDIDATE_GENERATION_CONTRACT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/CANDIDATE_GENERATION_CONTRACT.md) | `packages/clipping-core/.../candidate-generation` | Bounded candidate window generation, minimum hook criteria, non-overlapping windows. |
-| **Evaluation** | [`EVALUATION_CONTRACT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/EVALUATION_CONTRACT.md) | `packages/clipping-core/.../evaluation` | Multi-criteria scoring, editorial safety guards, minimum engagement floor. |
-| **Ranking** | [`RANKING_CONTRACT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/RANKING_CONTRACT.md) | `packages/clipping-core/.../ranking` | Bradley-Terry tournament ranking, diversity deduplication, top-K selection. |
-| **Reward Model** | [`V5_7_REWARD_MODEL_CONTRACT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/V5_7_REWARD_MODEL_CONTRACT.md) | `apps/api/scripts/reward_model.py` | V5.7 weights, feature vector normalization, pairwise training protocol. |
-| **Director** | [`DIRECTOR_CONTRACT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/DIRECTOR_CONTRACT.md) | `packages/clipping-core/.../director` | Dynamic crop target trajectory, speaker active-camera tracking, 9:16 framing. |
-| **Caption Plan** | [`CAPTION_PLAN_CONTRACT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/CAPTION_PLAN_CONTRACT.md) | `packages/clipping-core/.../captions` | Word-level timing synchronization, subtitle line bounding, kinetic style tags. |
-| **Render Plan** | [`RENDER_PLAN_CONTRACT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/RENDER_PLAN_CONTRACT.md) | `packages/clipping-core/.../render-plan` | `renderJobs.length === acceptedCandidates.length`, filtergraph immutability. |
-| **Render Engine** | [`RENDER_ENGINE_CONTRACT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/RENDER_ENGINE_CONTRACT.md) | `apps/api/src/workers/renderWorker.ts` | Process tree killing, event-driven async fan-in, hardware acceleration fallbacks. |
-| **Validation** | [`VALIDATION_CONTRACT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/VALIDATION_CONTRACT.md) | `packages/clipping-core/.../validation` | Output video audio-sync integrity, format checks, stream sanity validations. |
-| **Delivery** | [`DELIVERY_CONTRACT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/DELIVERY_CONTRACT.md) | `packages/clipping-core/.../delivery` | Final package checksumming, multi-destination upload guarantees. |
-| **Coordinator** | [`COORDINATOR_CONTRACT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/COORDINATOR_CONTRACT.md) | `packages/clipping-core/.../executor` | Stage transition rules, partial-failure boundaries, heartbeat timeouts. |
-| **Recovery** | [`RECOVERY_ENGINE_CONTRACT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/RECOVERY_ENGINE_CONTRACT.md) | `packages/clipping-core/.../recovery` | Crash-recovery idempotency, checkpoint resume semantics. |
+| **Ingestion** | [`INGESTION.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/INGESTION.md) | `packages/clipping-core/src/ingestion` | Shared immutable source artifact caching, Content-hash (SHA256) verification. |
+| **Perception** | [`PERCEPTION.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/PERCEPTION.md) | `packages/clipping-core/src/perception` | Memory-piped frame streaming, strict PTS alignment, bounded RSS, normalized coordinates. |
+| **Candidate Gen** | [`CANDIDATE_GENERATION.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/CANDIDATE_GENERATION.md) | `packages/clipping-core/src/candidate-generation` | Bounded candidate window generation, minimum hook criteria, non-overlapping windows. |
+| **Ranking** | [`RANKING.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/RANKING.md) | `packages/clipping-core/src/ranking` | Multi-criteria scoring, editorial safety guards, diversity deduplication, top-K selection. |
+| **Director** | [`DIRECTOR.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/DIRECTOR.md) | `packages/clipping-core/src/director` | Dynamic crop trajectory, Feasible Crop Region $[y_{\min}, y_{\max}]$, $\ge 5\%$ headroom, lower $22\%$ subtitle clearance, 4-state camera arbitration (`HOLD`, `TRACK`, `PAN`, `CUT`). |
+| **Caption Plan** | [`CAPTION_PLAN.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/CAPTION_PLAN.md) | `packages/clipping-core/src/captions` | Word-level timing synchronization, subtitle line bounding, kinetic style tags. |
+| **Render Plan** | [`RENDER_PLAN.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/RENDER_PLAN.md) | `packages/clipping-core/src/render-plan` | `renderJobs.length === acceptedCandidates.length`, filtergraph immutability. |
+| **Render Engine** | [`RENDER_ENGINE.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/RENDER_ENGINE.md) | `apps/api/src/workers/renderWorker.ts` | Process tree killing, event-driven async fan-in, hardware acceleration fallbacks. |
+| **Delivery** | [`DELIVERY.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/DELIVERY.md) | `packages/clipping-core/src/delivery` | Final package checksumming, multi-destination upload guarantees. |
+| **Validation** | [`VALIDATION.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/VALIDATION.md) | `packages/clipping-core/src/validation` | Output video audio-sync integrity, format checks, stream sanity validations. |
+| **Recovery** | [`RECOVERY.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/contracts/RECOVERY.md) | `packages/clipping-core/src/recovery` | Crash-recovery idempotency, checkpoint resume semantics. |
+
+---
+
+> [!NOTE]
+> Superseded contracts (`COORDINATOR_CONTRACT.md`, `UNDERSTANDING_CONTRACT.md`, `V5_7_REWARD_MODEL_CONTRACT.md`, `EVALUATION_CONTRACT.md`) have been archived to [`docs/archive/superseded/`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/superseded/).
