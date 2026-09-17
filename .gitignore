@@ -20,6 +20,8 @@ netlify.env
 
 # Media Artifacts & Temporary Pipeline State
 public/clips/
+apps/web/public/clips/*
+!apps/web/public/clips/.gitkeep
 *.mp4
 *.webm
 *.mov

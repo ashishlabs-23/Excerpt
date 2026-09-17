@@ -591,6 +591,8 @@ export class IntelligenceOrchestrator {
 
   private resolveScriptPath(scriptName: string): string | null {
     const candidates = [
+      path.resolve(__dirname, 'engines', scriptName),
+      path.resolve(process.cwd(), 'apps', 'api', 'src', 'services', 'nexus', 'engines', scriptName),
       path.resolve(process.cwd(), 'apps', 'api', 'scripts', scriptName),
       path.resolve(__dirname, '..', '..', 'scripts', scriptName),
       path.resolve(process.cwd(), 'scripts', scriptName),
