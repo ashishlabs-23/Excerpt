@@ -69,6 +69,13 @@ interface ScenarioResult {
     pan: number;
     cut: number;
   };
+  // Trajectory Quality Metrics
+  p50DisplacementPx: number;
+  p95DisplacementPx: number;
+  p95VelocityPxSec: number;
+  p95AccelPxSec2: number;
+  holdDwellPct: number;
+  modeTransitionsPerMin: number;
   failures: FailureSample[];
 }
 
@@ -480,6 +487,11 @@ export async function runP6FramingBenchmark(): Promise<{ summary: ScenarioResult
     const deltaYs: number[] = [];
     const normCropDeltas: number[] = [];
     const pixelJitterDeltas: number[] = [];
+    const pxDistances: number[] = [];
+    const velocitiesPxSec: number[] = [];
+    const accelsPxSec2: number[] = [];
+    let modeTransitions = 0;
+    let lastDecision = 'hold';
     let cameraPanEvents = 0;
 
     const decisions = {
@@ -517,13 +529,6 @@ export async function runP6FramingBenchmark(): Promise<{ summary: ScenarioResult
       const pxDist = Math.sqrt(dx * dx + dy * dy);
       const normDelta = Math.sqrt(Math.pow(dx / W, 2) + Math.pow(dy / H, 2));
 
-      if (i > 0) {
-        deltaXs.push(absDx);
-        deltaYs.push(absDy);
-        normCropDeltas.push(normDelta);
-        pixelJitterDeltas.push(pxDist);
-      }
-
       // Camera motion state classification
       const cameraMotionState = (frame.cameraMotion?.data as string) || 'static';
       if (cameraMotionState === 'pan') {
@@ -531,14 +536,40 @@ export async function runP6FramingBenchmark(): Promise<{ summary: ScenarioResult
       }
 
       // Camera decision classification
+      let currentDecision = 'track';
       if (pxDist < 2.0) {
         decisions.hold++;
+        currentDecision = 'hold';
       } else if (pxDist > 150.0) {
         decisions.cut++;
+        currentDecision = 'cut';
       } else if (cameraMotionState === 'pan') {
         decisions.pan++;
+        currentDecision = 'pan';
       } else {
         decisions.track++;
+        currentDecision = 'track';
+      }
+
+      if (i > 0) {
+        deltaXs.push(absDx);
+        deltaYs.push(absDy);
+        normCropDeltas.push(normDelta);
+        pixelJitterDeltas.push(pxDist);
+        pxDistances.push(pxDist);
+
+        const prevTimeMs = scenario.frames[i - 1].timestampMs;
+        const dtSec = Math.max(0.01, (frame.timestampMs - prevTimeMs) / 1000);
+        const vel = pxDist / dtSec;
+        velocitiesPxSec.push(vel);
+        const prevVel = velocitiesPxSec.length > 1 ? velocitiesPxSec[velocitiesPxSec.length - 2] : 0;
+        const accel = Math.abs(vel - prevVel) / dtSec;
+        accelsPxSec2.push(accel);
+
+        if (currentDecision !== lastDecision) {
+          modeTransitions++;
+          lastDecision = currentDecision;
+        }
       }
 
       // Active speaker and face tracking
@@ -747,28 +778,50 @@ export async function runP6FramingBenchmark(): Promise<{ summary: ScenarioResult
       maxPixelJitterPx: Number(Math.max(0, ...pixelJitterDeltas).toFixed(2)),
       cameraPanEvents,
       decisions,
+      p50DisplacementPx: Number(percentile(pxDistances, 50).toFixed(2)),
+      p95DisplacementPx: Number(percentile(pxDistances, 95).toFixed(2)),
+      p95VelocityPxSec: Number(percentile(velocitiesPxSec, 95).toFixed(1)),
+      p95AccelPxSec2: Number(percentile(accelsPxSec2, 95).toFixed(1)),
+      holdDwellPct: Number(((decisions.hold / Math.max(1, scenario.frames.length)) * 100).toFixed(1)),
+      modeTransitionsPerMin: Number(((modeTransitions / Math.max(0.1, scenario.durationSec)) * 60).toFixed(1)),
       failures,
     };
 
     scenarioResults.push(result);
   }
 
-  // ─── Print Formatted Evaluation Matrix ──────────────────────────────────────
-  console.log('----------------------------------------------------------------------------------------------------------------------------------------------------------------');
-  console.log('| Corpus Scenario      | Genre       | Head Cut % | Chin Cut % | Sub Coll % | Unsafe % | Rapid Sw | Δx/frame | Δy/frame | P95 Δ Norm | Jitter (px) | Decisions     | Status |');
-  console.log('----------------------------------------------------------------------------------------------------------------------------------------------------------------');
+  // ─── Print Class 1: Hard Safety & Containment Gates ──────────────────────────
+  console.log('================================================================================================================================');
+  console.log('                                      CLASS 1: HARD SAFETY & CONTAINMENT GATES (PASS/FAIL)                                      ');
+  console.log('================================================================================================================================');
+  console.log('| Corpus Scenario      | Genre       | Head Cut % | Chin Cut % | Sub Coll % | Unsafe % | Wrong Spk | Rapid Sw | Safety Gate |');
+  console.log('--------------------------------------------------------------------------------------------------------------------------------');
 
   let allPassed = true;
   for (const r of scenarioResults) {
     const passed = r.headCutoffPct === 0 && r.chinCutoffPct === 0 && r.subtitleCollisionPct === 0 && r.rapidSwitches === 0 && r.wrongSubjectSwitches === 0;
     if (!passed) allPassed = false;
     const statusStr = passed ? '✅ PASS' : '❌ FAIL';
-    const decisionsStr = `H:${r.decisions.hold}/T:${r.decisions.track}`;
     console.log(
-      `| ${r.id.padEnd(20)} | ${r.genre.padEnd(11)} | ${String(r.headCutoffPct + '%').padStart(10)} | ${String(r.chinCutoffPct + '%').padStart(10)} | ${String(r.subtitleCollisionPct + '%').padStart(10)} | ${String(r.unsafeCropPct + '%').padStart(8)} | ${String(r.rapidSwitches).padStart(8)} | ${String(r.cropDeltaXMeanPx + 'px').padStart(8)} | ${String(r.cropDeltaYMeanPx + 'px').padStart(8)} | ${String(r.p95NormCropDelta).padStart(10)} | ${String(r.meanPixelJitterPx + 'px').padStart(11)} | ${decisionsStr.padStart(13)} | ${statusStr.padStart(6)} |`
+      `| ${r.id.padEnd(20)} | ${r.genre.padEnd(11)} | ${String(r.headCutoffPct + '%').padStart(10)} | ${String(r.chinCutoffPct + '%').padStart(10)} | ${String(r.subtitleCollisionPct + '%').padStart(10)} | ${String(r.unsafeCropPct + '%').padStart(8)} | ${String(r.wrongSubjectSwitches).padStart(9)} | ${String(r.rapidSwitches).padStart(8)} | ${statusStr.padStart(11)} |`
     );
   }
-  console.log('----------------------------------------------------------------------------------------------------------------------------------------------------------------\n');
+  console.log('--------------------------------------------------------------------------------------------------------------------------------\n');
+
+  // ─── Print Class 2: Trajectory Quality & Editorial Motion ───────────────────
+  console.log('================================================================================================================================================');
+  console.log('                                          CLASS 2: TRAJECTORY QUALITY & EDITORIAL MOTION (DIAGNOSTIC)                                           ');
+  console.log('================================================================================================================================================');
+  console.log('| Corpus Scenario      | Genre       | P50 Disp (px) | P95 Disp (px) | P95 Vel (px/s) | P95 Accel (px/s²) | Hold Dwell % | Trans/min | Mode Split  |');
+  console.log('------------------------------------------------------------------------------------------------------------------------------------------------');
+
+  for (const r of scenarioResults) {
+    const decisionsStr = `H:${r.decisions.hold}/T:${r.decisions.track}`;
+    console.log(
+      `| ${r.id.padEnd(20)} | ${r.genre.padEnd(11)} | ${String(r.p50DisplacementPx + 'px').padStart(13)} | ${String(r.p95DisplacementPx + 'px').padStart(13)} | ${String(r.p95VelocityPxSec + 'px/s').padStart(14)} | ${String(r.p95AccelPxSec2 + 'px/s²').padStart(17)} | ${String(r.holdDwellPct + '%').padStart(12)} | ${String(r.modeTransitionsPerMin).padStart(9)} | ${decisionsStr.padStart(11)} |`
+    );
+  }
+  console.log('------------------------------------------------------------------------------------------------------------------------------------------------\n');
 
   // ─── Print Harvested Defect Telemetry ───────────────────────────────────────
   const allFailures = scenarioResults.flatMap(r => r.failures);
@@ -784,7 +837,7 @@ export async function runP6FramingBenchmark(): Promise<{ summary: ScenarioResult
     });
     console.log('');
   } else {
-    console.log('✅ [ZERO DEFECTS]: All scenarios satisfied safe-zone, containment, and hysteresis invariants!\n');
+    console.log('✅ [ZERO HARD SAFETY/CONTAINMENT DEFECTS]: All scenarios satisfied safe-zone, containment, and hysteresis invariants!\n');
   }
 
   // ─── Save Results JSON Artifact ────────────────────────────────────────────
