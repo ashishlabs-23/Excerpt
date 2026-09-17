@@ -1,4 +1,4 @@
-import { BoundaryEditorialBenchmark } from '../../benchmarks/BoundaryEditorialBenchmark';
+import { BoundaryEditorialBenchmark } from '../../../../../benchmarks/runners/BoundaryEditorialBenchmark';
 
 describe('P4.6 Boundary Editorial A/B Acceptance Benchmark', () => {
   const report = BoundaryEditorialBenchmark.runBenchmark();
