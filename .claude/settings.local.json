@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(find . -type f \\\\\\(-name *.ts -o -name *.js \\\\\\) ! -path */node_modules/*)"
-    ]
-  }
-}
