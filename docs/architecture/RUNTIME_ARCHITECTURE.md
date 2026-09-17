@@ -6,7 +6,7 @@ last_reviewed: 2026-09-17
 
 # Excerpt Runtime Architecture
 
-This document describes the runtime execution model, process boundaries, frontend interaction, and worker orchestration.
+This document describes the runtime execution model, process boundaries, frontend interaction, worker orchestration, and deployment environment.
 
 ---
 
@@ -50,3 +50,11 @@ The frontend (`apps/web`) receives real-time pipeline status via Server-Sent Eve
 - `job_progress`: Incremental percentage updates and active stage labels.
 - `candidate_ready`: Early notification of detected clip candidates for user preview.
 - `clip_completed`: Signed playback URL delivery upon successful validation.
+
+---
+
+## 4. Hosting & Container Targets
+
+- **API & Workers**: Containerized on Render via [`Dockerfile`](file:///c:/Projects/Ashishlabs/Excerpt/Dockerfile) and [`render.yaml`](file:///c:/Projects/Ashishlabs/Excerpt/render.yaml) requiring Node.js 20+, FFmpeg 6.0+ with libass, and yt-dlp.
+- **Database**: Supabase PostgreSQL with schema migrations managed via `npx supabase db push`.
+- **Storage**: Backblaze B2 S3-compatible cloud storage.

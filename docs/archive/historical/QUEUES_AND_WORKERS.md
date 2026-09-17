@@ -1,5 +1,5 @@
 ---
-status: current
+status: archived
 owner: platform
 last_reviewed: 2026-09-17
 ---

@@ -1,5 +1,5 @@
 ---
-status: current
+status: archived
 owner: clipping-core
 last_reviewed: 2026-09-17
 ---

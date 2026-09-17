@@ -1,5 +1,11 @@
 # Current External Dependency Research & Constraints
 
+> [!WARNING]
+> **STATUS: ARCHIVED / NON-AUTHORITATIVE**
+> Preserved for historical research reference.
+
+
+
 **Document Status:** Approved Research Baseline  
 **Scope:** YouTube Acquisition, FFmpeg Filtergraph Architecture, libass Rendering, and Web Playback Standards.  
 **Date:** September 2026

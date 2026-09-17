@@ -1,5 +1,11 @@
 # Excerpt Repository Dependency Audit Matrix
 
+> [!WARNING]
+> **STATUS: ARCHIVED / NON-AUTHORITATIVE**
+> Preserved for historical research reference.
+
+
+
 **Audit Date**: 2026-09-09  
 **Audit Scope**: All 9 Monorepo Packages in `packages/`  
 **Standard**: Strict Zero-Tolerance Dependency Verification  

@@ -26,15 +26,24 @@ This index catalogs historical investigations, audits, milestone reports, and su
 
 ---
 
-## 🏆 Historical Milestone Reports (`docs/archive/historical/`)
+## 🏆 Historical Milestones, Acceptance & Research (`docs/archive/historical/`)
 
-| Document | Date | Reason Retained | Related Code / Architecture | Status |
+| Document | Date | Reason Retained | Related Domain | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| [`END_TO_END_ACCEPTANCE_REPORT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/END_TO_END_ACCEPTANCE_REPORT.md) | 2026-06 | Historical end-to-end acceptance test run validating baseline pipeline generation. | `apps/api/src/tests/` | **Archived Milestone** |
-| [`FRONTEND_CLIP_GEN_ACCEPTANCE_REPORT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/FRONTEND_CLIP_GEN_ACCEPTANCE_REPORT.md) | 2026-06 | Frontend clip generation workflow acceptance test outcomes and state transition validation. | `apps/web/src/` | **Archived Milestone** |
-| [`FRONTEND_CLIP_GEN_PERFORMANCE_REPORT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/FRONTEND_CLIP_GEN_PERFORMANCE_REPORT.md) | 2026-06 | Initial frontend UI latency, interaction benchmarks, and render profiling. | `apps/web/src/` | **Archived Milestone** |
-| [`FRONTEND_CLIP_GEN_STATE_COVERAGE.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/FRONTEND_CLIP_GEN_STATE_COVERAGE.md) | 2026-06 | State machine coverage analysis for clip generation modals and progress components. | `apps/web/src/` | **Archived Milestone** |
-| [`PERFORMANCE_REPORT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/PERFORMANCE_REPORT.md) | 2026-06 | Early system-wide throughput and latency baseline measurements. | `apps/api/` | **Archived Milestone** |
+| [`CAPTION_SYNC_ACCEPTANCE.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/CAPTION_SYNC_ACCEPTANCE.md) | 2026-09 | Detailed acceptance sign-off for Whisper word-level timing synchronization. | Testing | **Archived Acceptance** |
+| [`LONG_FORM_ACCEPTANCE.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/LONG_FORM_ACCEPTANCE.md) | 2026-09 | Detailed acceptance sign-off for long-form video transcode duration. | Testing | **Archived Acceptance** |
+| [`BENCHMARKING.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/BENCHMARKING.md) | 2026-09 | Early benchmark methodology specification. | Testing | **Archived Reference** |
+| [`FRAMING_RESEARCH.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/FRAMING_RESEARCH.md) | 2026-09 | Research on AutoFlip, Feasible Crop Regions, and 4-state camera arbitration. | Research | **Archived Research** |
+| [`EXTERNAL_DEPENDENCIES.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/EXTERNAL_DEPENDENCIES.md) | 2026-09 | Audit of external dependencies (FFmpeg, yt-dlp, Whisper, Supabase). | Research | **Archived Research** |
+| [`REPOSITORY_DEPENDENCIES.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/REPOSITORY_DEPENDENCIES.md) | 2026-09 | Internal package coupling audit. | Research | **Archived Research** |
+| [`BACKUP_AND_RECOVERY.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/BACKUP_AND_RECOVERY.md) | 2026-09 | Early backup topology notes (consolidated into operational runbooks). | Operations | **Archived Reference** |
+| [`QUEUES_AND_WORKERS.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/QUEUES_AND_WORKERS.md) | 2026-09 | Worker dispatch notes (consolidated into architecture and runbooks). | Operations | **Archived Reference** |
+| [`TECHNICAL_DEBT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/TECHNICAL_DEBT.md) | 2026-09 | Historical Post-P0 technical debt ledger. | Operations | **Archived Reference** |
+| [`END_TO_END_ACCEPTANCE_REPORT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/END_TO_END_ACCEPTANCE_REPORT.md) | 2026-06 | Historical end-to-end acceptance test run validating baseline pipeline generation. | Testing | **Archived Milestone** |
+| [`FRONTEND_CLIP_GEN_ACCEPTANCE_REPORT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/FRONTEND_CLIP_GEN_ACCEPTANCE_REPORT.md) | 2026-06 | Frontend clip generation workflow acceptance test outcomes. | Frontend | **Archived Milestone** |
+| [`FRONTEND_CLIP_GEN_PERFORMANCE_REPORT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/FRONTEND_CLIP_GEN_PERFORMANCE_REPORT.md) | 2026-06 | Initial frontend UI latency, interaction benchmarks, and render profiling. | Frontend | **Archived Milestone** |
+| [`FRONTEND_CLIP_GEN_STATE_COVERAGE.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/FRONTEND_CLIP_GEN_STATE_COVERAGE.md) | 2026-06 | State machine coverage analysis for clip generation modals. | Frontend | **Archived Milestone** |
+| [`PERFORMANCE_REPORT.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/archive/historical/PERFORMANCE_REPORT.md) | 2026-06 | Early system-wide throughput and latency baseline measurements. | Testing | **Archived Milestone** |
 
 ---
 

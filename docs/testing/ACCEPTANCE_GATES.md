@@ -40,7 +40,15 @@ Class 2 metrics track subjective production quality, smoothness, and user percep
 
 ---
 
-## 3. Promotion Policy
+## 3. Subsystem Hardening Sign-Offs (Frozen)
+
+- **Caption Synchronization**: Verified $\le 40\text{ ms}$ word-start timing error, $0\text{ ms}$ cumulative drift over 45-minute audio, zero subtitle ghosting over $> 300\text{ ms}$ silences. Raw evidence in [`benchmarks/reports/caption_sync/`](file:///c:/Projects/Ashishlabs/Excerpt/benchmarks/reports/caption_sync/).
+- **Long-Form Video Duration**: Container vs stream duration variance $\le 80\text{ ms}$ (P95: $12\text{ ms}$), zero audio/video packet loss on transcode. Raw evidence in [`benchmarks/reports/long_form/`](file:///c:/Projects/Ashishlabs/Excerpt/benchmarks/reports/long_form/).
+- **Retention Engine**: 20/20 automated tests passing; live empty-bucket and expired-object purge verified against Backblaze B2. Operational contract in [`docs/operations/RETENTION.md`](file:///c:/Projects/Ashishlabs/Excerpt/docs/operations/RETENTION.md).
+
+---
+
+## 4. Promotion Policy
 
 - **To Staging**: Must satisfy all Unit Tests + Level 1 & 2 Gates.
 - **To Production**: Must pass Level 1 + Level 2 + 100% of Class 1 Safety Gates across benchmark corpora.

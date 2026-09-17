@@ -40,27 +40,63 @@ Excerpt/
 ├── benchmarks/                   # MEASURED EVIDENCE (Outside docs/)
 │   ├── definitions/              # Test schemas and fixture manifests
 │   ├── runners/                  # Benchmark execution harnesses
-│   ├── fixtures/                 # Fixed real/synthetic media test inputs
 │   └── reports/                  # Generated benchmark outputs, metrics, and scorecards
 │
-├── datasets/                     # Gold sets, evaluation corpora, and schemas
+├── datasets/                     # Evaluation datasets, gold sets, and schemas
 │   ├── gold/
 │   ├── benchmarks/
-│   ├── fixtures/
 │   └── schemas/
 │
 ├── tools/                        # Developer utilities and offline tools
 │
 ├── docs/                         # CANONICAL SYSTEM OF RECORD
 │   ├── README.md                 # This index and authoritative governance rule
-│   ├── architecture/             # How the system is built (System overview, pipeline, data flow)
-│   ├── adr/                      # Architectural Decision Records (ADR-001 to ADR-005)
-│   ├── contracts/                # Canonical stage contracts (Ingestion, Perception, Director, etc.)
-│   ├── security/                 # Threat model, secrets management, access control, incident response
-│   ├── operations/               # Production runbooks, frozen RetentionService, monitoring, queues
-│   ├── testing/                  # Testing strategy, acceptance gates, acceptance sign-offs
-│   ├── research/                 # Framing research, dependency audits
+│   │
+│   ├── architecture/             # How the system is built
+│   │   ├── README.md
+│   │   ├── SYSTEM_OVERVIEW.md
+│   │   ├── PIPELINE.md
+│   │   ├── DATA_FLOW.md
+│   │   ├── RUNTIME_ARCHITECTURE.md
+│   │   └── STORAGE_ARCHITECTURE.md
+│   │
+│   ├── adr/                      # Architectural Decision Records
+│   │   ├── README.md
+│   │   └── ADR-*.md
+│   │
+│   ├── contracts/                # Canonical stage contracts
+│   │   ├── README.md
+│   │   ├── INGESTION.md
+│   │   ├── PERCEPTION.md
+│   │   ├── CANDIDATE_GENERATION.md
+│   │   ├── RANKING.md
+│   │   ├── DIRECTOR.md
+│   │   ├── CAPTION_PLAN.md
+│   │   ├── RENDER_PLAN.md
+│   │   ├── RENDER_ENGINE.md
+│   │   ├── DELIVERY.md
+│   │   ├── VALIDATION.md
+│   │   └── RECOVERY.md
+│   │
+│   ├── security/                 # Security architecture & controls
+│   │   └── README.md
+│   │
+│   ├── operations/               # Production runbooks & operations
+│   │   ├── README.md
+│   │   ├── RETENTION.md
+│   │   ├── MONITORING.md
+│   │   └── RUNBOOKS.md
+│   │
+│   ├── testing/                  # Testing strategy & acceptance gates
+│   │   ├── README.md
+│   │   ├── TEST_STRATEGY.md
+│   │   └── ACCEPTANCE_GATES.md
+│   │
+│   ├── research/                 # Active research briefs
+│   │   └── README.md
+│   │
 │   └── archive/                  # NON-AUTHORITATIVE institutional memory
+│       ├── README.md
 │       ├── forensic/             # Root-cause investigations
 │       ├── historical/           # Historical milestones and past acceptance runs
 │       └── superseded/           # Deprecated contracts and prior specs
@@ -68,7 +104,6 @@ Excerpt/
 ├── README.md                     # Repository overview and quickstart
 ├── SECURITY.md                   # Public vulnerability reporting policy & supported versions
 ├── CONTRIBUTING.md               # Developer setup, pull request, and testing standards
-├── CODE_OF_CONDUCT.md            # Contributor covenant standard
 ├── CHANGELOG.md                  # Release notes and version history
 └── .gitignore
 ```
@@ -92,8 +127,8 @@ Excerpt/
    > [!WARNING]
    > **STATUS: ARCHIVED / NON-AUTHORITATIVE**
    ```
-3. **No Secrets in Code or Documentation**:
-   `docs/security/SECRETS_MANAGEMENT.md` explains operational procedures for handling secrets; it never contains actual passwords, tokens, API keys, or service-account JSON.
+3. **No Plaintext Secrets**:
+   `docs/security/README.md` explains operational procedures for handling secrets; it never contains actual passwords, tokens, API keys, or service-account JSON.
 4. **Benchmarks vs Testing Separation**:
    - `benchmarks/reports/` preserves the raw generated measurements, JSON outputs, and scorecards.
-   - `docs/testing/` documents the testing strategy, acceptance gates, and sign-off conclusions.
+   - `docs/testing/` documents the testing strategy and acceptance gates.

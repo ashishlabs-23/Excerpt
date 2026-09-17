@@ -11,7 +11,7 @@
 [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL%20%26%20RLS-3ECF8E?style=flat-square&logo=supabase)](https://supabase.com)
 [![Backblaze B2](https://img.shields.io/badge/Backblaze-B2%20Cloud%20Storage-E02424?style=flat-square&logo=backblaze)](https://backblaze.com)
 
-[📖 Documentation](docs/README.md) · [🔒 Security](SECURITY.md) · [🤝 Contributing](CONTRIBUTING.md) · [📜 Code of Conduct](CODE_OF_CONDUCT.md) · [📝 Changelog](CHANGELOG.md)
+[📖 Documentation](docs/README.md) · [🔒 Security](SECURITY.md) · [🤝 Contributing](CONTRIBUTING.md) · [📝 Changelog](CHANGELOG.md)
 
 </div>
 
@@ -40,7 +40,7 @@ CONTRACTS       What stages guarantee       ──► docs/contracts/
 SECURITY        What is protected and how   ──► docs/security/
 OPERATIONS      How production is run       ──► docs/operations/
 TESTING         How correctness is proven   ──► docs/testing/
-RESEARCH        What was investigated       ──► docs/research/
+RESEARCH        Active research briefs      ──► docs/research/
 ARCHIVE         Historical context          ──► docs/archive/
 ```
 
@@ -52,25 +52,35 @@ See the master index in [`docs/README.md`](docs/README.md).
 
 ```text
 Excerpt/
-├── apps/
-│   ├── api/                 # Express API + Video/Render Background Workers
-│   └── web/                 # Next.js 14 frontend studio & playback reviewer
-├── packages/
-│   └── clipping-core/       # Pure deterministic clipping & framing engine
+│
+├── apps/                    # Application layer (api, web)
+├── packages/                # Pure deterministic engines (clipping-core)
 ├── benchmarks/              # Test corpora, runners, and measured output reports
 │   ├── definitions/
-│   ├── fixtures/
 │   ├── runners/
 │   └── reports/
 ├── datasets/                # Evaluation datasets, gold sets, and schemas
+│   ├── gold/
+│   ├── benchmarks/
+│   └── schemas/
 ├── tools/                   # Offline developer utilities and diagnostics
 ├── supabase/                # PostgreSQL migrations & RLS policies
-├── docs/                    # Canonical system of record
+│
+├── docs/                    # CANONICAL SYSTEM OF RECORD
+│   ├── architecture/
+│   ├── adr/
+│   ├── contracts/
+│   ├── security/
+│   ├── operations/
+│   ├── testing/
+│   ├── research/
+│   └── archive/
+│
+├── README.md                # Repository overview and quickstart
 ├── SECURITY.md              # Public vulnerability reporting policy
 ├── CONTRIBUTING.md          # Engineering workflow and PR guidelines
-├── CODE_OF_CONDUCT.md       # Contributor covenant standard
 ├── CHANGELOG.md             # Release version history
-└── render.yaml              # Backend deployment specification
+└── .gitignore
 ```
 
 ---

@@ -1,4 +1,10 @@
 # EXCERPT — POST-P0 TECHNICAL DEBT LEDGER
+
+> [!WARNING]
+> **STATUS: ARCHIVED / NON-AUTHORITATIVE**
+> Preserved for historical reference. Active operational runbooks reside in docs/operations/.
+
+
 *Target Milestone: Post-P0 Hardening Architecture Modernization*
 *Date: September 2026*
 

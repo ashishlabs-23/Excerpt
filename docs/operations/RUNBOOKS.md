@@ -6,7 +6,7 @@ last_reviewed: 2026-09-17
 
 # Excerpt Operational Runbooks
 
-Standard Operating Procedures (SOP) for on-call engineers responding to production alerts.
+Standard Operating Procedures (SOP) for on-call engineers responding to production alerts, job stalls, storage flushes, and disaster recovery.
 
 ---
 
@@ -50,4 +50,20 @@ Alert fires indicating NVMe scratch disk usage $> 85\%$.
 3. Run an emergency retention dry run to verify candidate deletions:
    ```bash
    npm run sweep:retention
+   ```
+
+---
+
+## 3. Database Recovery & Migration Rollback
+
+### Point-in-Time Recovery (PITR)
+1. Restore database snapshot via Supabase Console to target recovery timestamp.
+2. Verify table integrity:
+   ```sql
+   SELECT count(*) FROM jobs;
+   SELECT count(*) FROM clips;
+   ```
+3. Reapply migrations if needed:
+   ```bash
+   npx supabase db push
    ```
