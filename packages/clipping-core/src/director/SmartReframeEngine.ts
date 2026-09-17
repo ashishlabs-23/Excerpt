@@ -2,6 +2,7 @@ import { PerceptionFrame } from '../perception/types';
 import { MediaArtifact } from '../ingestion/types';
 import { CameraPlan, CameraKeyframe, CameraCropBox, DirectorConfig, FramingLevel, LayoutMode } from './types';
 import { ComputeCeiling } from './ComputeCeiling';
+import { createSingleSubjectComposition, createSplitStackComposition } from '../composition/CompositionPlan';
 
 export interface HysteresisState {
   currentSpeakerId: string | null;
@@ -69,10 +70,32 @@ export class SmartReframeEngine {
       }
     }
 
+    // Synthesize structured CompositionPlan
+    let composition = undefined;
+    const splitKeyframe = smoothed.find(k => k.secondaryCropBox);
+    const primaryCrop = splitKeyframe ? splitKeyframe.cropBox : (smoothed[0]?.cropBox || { x: 0, y: 0, w: 1080, h: 1920 });
+    const secondaryCrop = splitKeyframe?.secondaryCropBox || primaryCrop;
+
+    if (layoutMode === 'split_screen_stack') {
+      composition = createSplitStackComposition(
+        { x: primaryCrop.x, y: primaryCrop.y, width: primaryCrop.w, height: primaryCrop.h },
+        { x: secondaryCrop.x, y: secondaryCrop.y, width: secondaryCrop.w, height: secondaryCrop.h },
+        1080,
+        1920
+      );
+    } else {
+      composition = createSingleSubjectComposition(
+        { x: primaryCrop.x, y: primaryCrop.y, width: primaryCrop.w, height: primaryCrop.h },
+        1080,
+        1920
+      );
+    }
+
     return {
       schemaVersion: '1.1.0',
       layoutMode,
-      keyframes: smoothed
+      keyframes: smoothed,
+      composition,
     };
   }
 

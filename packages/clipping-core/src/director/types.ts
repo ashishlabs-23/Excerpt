@@ -56,10 +56,13 @@ export interface DirectorConfig {
   cutThresholdPx?: number; // Discontinuity threshold for instant CUT (derived or explicit)
 }
 
+import { CompositionPlan } from '../composition/CompositionPlan';
+
 export interface CameraPlan {
   schemaVersion: string;
   layoutMode: LayoutMode;
   keyframes: CameraKeyframe[];
+  composition?: CompositionPlan;
 }
 
 export interface ContextualIntervention {

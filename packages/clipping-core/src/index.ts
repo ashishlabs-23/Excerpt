@@ -49,3 +49,7 @@ export * from './job/types';
 export * from './errors/FailureClassification';
 export * from './executor/StageExecutor';
 export * from './executor/types';
+export * from './composition/CompositionPlan';
+export * from './project/HookPlan';
+export * from './project/ClipProject';
+export * from './project/ClipBundle';

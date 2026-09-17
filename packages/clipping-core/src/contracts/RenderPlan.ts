@@ -3,6 +3,8 @@ export type RenderFormat = 'mp4';
 export type GenerationMode = 'draft' | 'quality';
 export type RenderQuality = 'high' | 'draft' | 'quality';
 
+import { CompositionPlan } from '../composition/CompositionPlan';
+
 export interface RenderJobPlan {
   id: string;
   clipId: string;
@@ -10,6 +12,7 @@ export interface RenderJobPlan {
   format: RenderFormat;
   quality: RenderQuality;
   generationMode?: GenerationMode;
+  composition?: CompositionPlan;
   expectedOutputs: {
     video: boolean;
     thumbnail: boolean;
@@ -54,7 +57,7 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
 export function createRenderPlan(params: {
   jobId: string;
   requestedClips: number;
-  acceptedClips: Array<{ id: string }>;
+  acceptedClips: Array<{ id: string; composition?: CompositionPlan }>;
   aspectRatio?: AspectRatio;
   quality?: RenderQuality;
   generationMode?: GenerationMode;
@@ -86,6 +89,7 @@ export function createRenderPlan(params: {
     format: 'mp4',
     quality,
     generationMode: effectiveGenerationMode,
+    composition: clip.composition,
     expectedOutputs: {
       video: true,
       thumbnail: true,

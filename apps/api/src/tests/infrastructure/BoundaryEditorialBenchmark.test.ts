@@ -1,4 +1,5 @@
-import { BoundaryEditorialBenchmark } from '../../../../../benchmarks/runners/BoundaryEditorialBenchmark';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { BoundaryEditorialBenchmark } = require('../../../../../benchmarks/runners/BoundaryEditorialBenchmark');
 
 describe('P4.6 Boundary Editorial A/B Acceptance Benchmark', () => {
   const report = BoundaryEditorialBenchmark.runBenchmark();
@@ -20,7 +21,7 @@ describe('P4.6 Boundary Editorial A/B Acceptance Benchmark', () => {
   });
 
   it('Gate 4: Scenario 1 (Complete Thought) prioritizes 13.2s thought over 15.0s forced clamping', () => {
-    const sc1 = report.evaluations.find(e => e.scenarioId === 'scenario_1_complete_thought');
+    const sc1 = report.evaluations.find((e: any) => e.scenarioId === 'scenario_1_complete_thought');
     expect(sc1).toBeDefined();
     expect(sc1?.winner).toBe('canonical');
     // Canonical ends at ~13.2s-13.4s without cutting into Tomorrow's sentence
@@ -34,7 +35,7 @@ describe('P4.6 Boundary Editorial A/B Acceptance Benchmark', () => {
   });
 
   it('Gate 5: Scenario 2 (Preamble Stripping) removes throat-clearing "So basically," to hook on thesis', () => {
-    const sc2 = report.evaluations.find(e => e.scenarioId === 'scenario_2_preamble_hook');
+    const sc2 = report.evaluations.find((e: any) => e.scenarioId === 'scenario_2_preamble_hook');
     expect(sc2).toBeDefined();
     // Canonical starts on core thesis clause at ~0.95s-1.1s (stripping "So basically,")
     expect(sc2?.canonical.startSec).toBeGreaterThanOrEqual(0.95);

@@ -2092,12 +2092,17 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         wordsAreAbsolute: true,
         cropPlan: (clip as any)?.metadata?.nexus?.crop_plan || (rawClip as any)?.metadata?.nexus?.crop_plan || (clip as any)?.cropPlan || null,
         jumpCutPlan: (clip as any)?.metadata?.jump_cut_plan || (rawClip as any)?.jump_cut_plan || null,
+        composition: rj.composition || null,
         aspectRatio: rj.aspectRatio,
         quality: rj.quality,
         caption_style: (clip as any)?.metadata?.caption_style || requestedCaptionStyle,
         captionPolicy: renderPlan.captionPolicy,
         // Phase E: Hook text for editorial hook card
         hookText: (clip as any)?.metadata?.hook || (rawClip as any)?.hook || '',
+        title: clip?.title || rawClip?.title || '',
+        description: (clip as any)?.metadata?.description || (clip as any)?.caption || rawClip?.content || '',
+        hashtags: (clip as any)?.metadata?.hashtags || (rawClip as any)?.hashtags || [],
+        viralityScore: (clip as any)?.virality_score || (rawClip as any)?.virality_score || 0,
       };
 
       const renderJobData = {

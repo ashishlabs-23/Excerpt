@@ -29,6 +29,12 @@ import { GenerativeVisualEngine } from '../services/intelligence/GenerativeVisua
 
 import { firebaseDb } from '../services/firebaseService';
 import { JobFinalizerService } from '../services/render/JobFinalizerService';
+import {
+  createClipProject,
+  compileClipBundleMetadata,
+  createSingleSubjectComposition,
+  createDefaultHookPlan,
+} from '@excerpt/clipping-core';
 
 const PHASE_E_BROLL_ENABLED = process.env.ENABLE_PHASE_E_BROLL === 'true';
 const generativeVisualEngine = new GenerativeVisualEngine();
@@ -349,6 +355,68 @@ export async function processRenderJob(renderJob: any) {
       const [videoUrl, cleanVideoUrl, thumbUrl] = await Promise.all(uploadTasks);
       uploadMs = Date.now() - uploadStart;
 
+      // 4b. Non-destructive ClipProject and ClipBundle packaging
+      const projectStorageKey = `jobs/${renderJob.job_id}/${clipId}-project.json`;
+      const metadataStorageKey = `jobs/${renderJob.job_id}/${clipId}-metadata.json`;
+      const projectLocalPath = path.join(tempDir, `${clipId}-project.json`);
+      const metadataLocalPath = path.join(tempDir, `${clipId}-metadata.json`);
+
+      let projectUrl: string | undefined;
+      let metadataUrl: string | undefined;
+
+      try {
+        const rawComp = payload.composition;
+        const compositionPlan = rawComp || (payload.cropPlan ? createSingleSubjectComposition({
+          x: payload.cropPlan.cropBox?.x ?? 0,
+          y: payload.cropPlan.cropBox?.y ?? 0,
+          width: payload.cropPlan.cropBox?.w ?? 1080,
+          height: payload.cropPlan.cropBox?.h ?? 1920,
+        }) : undefined);
+
+        const titleCandidates = [payload.title, payload.hookText].filter(Boolean);
+        if (titleCandidates.length === 0) {
+          titleCandidates.push(`Clip ${clipId}`);
+        }
+
+        const clipProject = createClipProject({
+          id: clipId,
+          jobId: renderJob.job_id,
+          sourceMediaId: payload.sourceStorageKey || payload.videoUrl || '',
+          startTime: clipStart,
+          endTime: clipEnd,
+          composition: compositionPlan,
+          words: (clipWords || []).map((w: any) => ({
+            word: w.word || '',
+            start: typeof w.start === 'number' ? w.start : 0,
+            end: typeof w.end === 'number' ? w.end : 0,
+            score: w.score,
+          })),
+          titles: titleCandidates,
+          hook: hookText ? createDefaultHookPlan(clipStart, clipEnd, hookText) : undefined,
+        });
+
+        const bundleMeta = compileClipBundleMetadata({
+          titleCandidates,
+          description: payload.description || '',
+          hashtags: payload.hashtags || [],
+          videoId: renderJob.job_id,
+          start: clipStart,
+          end: clipEnd,
+          predictedViralityScore: payload.viralityScore || 0,
+        });
+
+        fs.writeFileSync(projectLocalPath, JSON.stringify(clipProject, null, 2), 'utf8');
+        fs.writeFileSync(metadataLocalPath, JSON.stringify(bundleMeta, null, 2), 'utf8');
+
+        [projectUrl, metadataUrl] = await Promise.all([
+          storage.uploadFile(projectLocalPath, projectStorageKey),
+          storage.uploadFile(metadataLocalPath, metadataStorageKey),
+        ]);
+        console.log(`[RenderWorker]: ClipBundle artifacts generated for ${clipId}: project=${projectStorageKey}, meta=${metadataStorageKey}`);
+      } catch (bundleErr: any) {
+        console.warn(`[RenderWorker]: Non-fatal - ClipBundle generation warning:`, bundleErr.message);
+      }
+
       // 5. Update Clip in Local Queue & DB
       try {
         const queue = firebaseDb.readQueue();
@@ -392,6 +460,16 @@ export async function processRenderJob(renderJob: any) {
           caption_burned: hasCaptions,
           caption_verified: hasCaptions && fs.existsSync(outputPath),
           caption_policy: captionPolicy,
+          clip_bundle: {
+            bundle_version: '1.0.0',
+            project_storage_key: projectStorageKey,
+            project_url: projectUrl,
+            metadata_storage_key: metadataStorageKey,
+            metadata_url: metadataUrl,
+            video_clean_url: cleanVideoUrl,
+            video_captioned_url: videoUrl,
+            thumbnail_url: thumbUrl,
+          },
           source_artifact: {
             source_storage_key: (renderJob.payload as any)?.sourceStorageKey || null,
             source_video_url: (renderJob.payload as any)?.videoUrl || null,
@@ -411,6 +489,7 @@ export async function processRenderJob(renderJob: any) {
           error: clipUpdateErr?.message || null,
           storageKey,
           cleanStorageKey,
+          projectStorageKey,
         });
       } catch (dbErr: any) {
         console.warn(`[RenderWorker]: Clip Supabase update fallback:`, dbErr.message);
@@ -431,6 +510,8 @@ export async function processRenderJob(renderJob: any) {
         if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
         if (fs.existsSync(thumbnailPath)) fs.unlinkSync(thumbnailPath);
         if (fs.existsSync(assFilePath)) fs.unlinkSync(assFilePath);
+        if (fs.existsSync(projectLocalPath)) fs.unlinkSync(projectLocalPath);
+        if (fs.existsSync(metadataLocalPath)) fs.unlinkSync(metadataLocalPath);
       } catch (err) {
         console.warn(`[RenderWorker]: Cleanup warning:`, err);
       }

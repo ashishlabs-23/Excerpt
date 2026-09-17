@@ -183,10 +183,11 @@ interface SmartCropPoint {
 }
 
 export interface SmartCropPlan {
-  mode: 'center' | 'static' | 'dynamic';
+  mode: 'center' | 'static' | 'dynamic' | 'split_stack';
   xExpression: string;
   yExpression: string;
   debug: string;
+  composition?: any;
 }
 
 export interface SinglePassRenderOptions {
@@ -592,6 +593,7 @@ export class VideoProcessor {
     duration: number,
     nexusCropPlan?: any
   ): Promise<{ cropFilter: string; cropPlan: SmartCropPlan }> {
+    let cropFilter = '';
     let cropPlan: SmartCropPlan;
 
     const contentType = nexusCropPlan?.content_type || 'mixed';
@@ -623,19 +625,41 @@ export class VideoProcessor {
       console.warn(`[VideoProcessor]: Dimension lookup failed, forcing safe crop bounds: ${e.message}`);
     }
 
-    let cropFilter = '';
+    const isSplitStack =
+      nexusCropPlan?.composition?.mode === 'split_stack' ||
+      nexusCropPlan?.layoutMode === 'split_screen_stack' ||
+      nexusCropPlan?.layout === 'split_screen_stack' ||
+      nexusCropPlan?.layout === 'dual_split' ||
+      contentType === 'dual_split' ||
+      contentType === 'podcast_split';
 
-    if (contentType === 'dual_split' || contentType === 'podcast_split' || nexusCropPlan?.layout === 'dual_split') {
-      // SOTA Dual-Speaker Stacked Split Layout (Top: Host / Speaker A, Bottom: Guest / Speaker B)
-      console.log(`[VideoProcessor]: Applying SOTA Dual-Speaker Stacked Split Layout (1080x960 Top + 1080x960 Bottom)...`);
-      const s1X = nexusCropPlan?.speaker1_x ?? 0;
-      const s2X = nexusCropPlan?.speaker2_x ?? 0.5;
-      cropFilter = `split[s1][s2];[s1]crop=iw*0.5:ih:iw*${s1X}:0,scale=${cropWidth}:${cropHeight/2}:flags=lanczos[top];[s2]crop=iw*0.5:ih:iw*${s2X}:0,scale=${cropWidth}:${cropHeight/2}:flags=lanczos[bot];[top][bot]vstack=inputs=2,setsar=1`;
+    if (isSplitStack) {
+      // SOTA Dual-Speaker Stacked Split Layout (Top: Primary Speaker, Bottom: Secondary Speaker)
+      console.log(`[VideoProcessor]: Realizing Stacked Split-Screen Composition (1080x960 Top + 1080x960 Bottom)...`);
+      const comp = nexusCropPlan?.composition;
+      const topTrack = comp?.tracks?.find((t: any) => t.role === 'primary_speaker') || comp?.tracks?.[0];
+      const botTrack = comp?.tracks?.find((t: any) => t.role === 'secondary_speaker') || comp?.tracks?.[1];
+
+      let topCropExpr: string;
+      let botCropExpr: string;
+
+      if (topTrack && botTrack && topTrack.sourceCrop && botTrack.sourceCrop) {
+        topCropExpr = `crop=${Math.round(topTrack.sourceCrop.width)}:${Math.round(topTrack.sourceCrop.height)}:${Math.round(topTrack.sourceCrop.x)}:${Math.round(topTrack.sourceCrop.y)}`;
+        botCropExpr = `crop=${Math.round(botTrack.sourceCrop.width)}:${Math.round(botTrack.sourceCrop.height)}:${Math.round(botTrack.sourceCrop.x)}:${Math.round(botTrack.sourceCrop.y)}`;
+      } else {
+        const s1X = nexusCropPlan?.speaker1_x ?? 0;
+        const s2X = nexusCropPlan?.speaker2_x ?? 0.5;
+        topCropExpr = `crop=iw*0.5:ih:iw*${s1X}:0`;
+        botCropExpr = `crop=iw*0.5:ih:iw*${s2X}:0`;
+      }
+
+      cropFilter = `split[s1][s2];[s1]${topCropExpr},scale=${cropWidth}:${cropHeight / 2}:flags=bicubic[top];[s2]${botCropExpr},scale=${cropWidth}:${cropHeight / 2}:flags=bicubic[bot];[top][bot]vstack=inputs=2,setsar=1`;
       cropPlan = {
-        mode: 'static',
+        mode: 'split_stack',
         xExpression: '0',
         yExpression: '0',
-        debug: 'dual-speaker stacked split (1080x1920)',
+        debug: 'dual-speaker stacked split composition (1080x1920)',
+        composition: comp,
       };
     } else if (contentType === 'screen_recording' || contentType === 'presentation') {
       // Content-Focused Screen Mode: Fit 16:9 screen/slides inside 9:16 frame with High-Speed Ambient Blurred Video Backdrop

@@ -2,10 +2,7 @@ import { CategoryAdapter } from './adapters/BaseAdapter';
 import { ContentCategory } from './PipelineContext';
 import { FootballAdapter } from './adapters/FootballAdapter';
 import { CricketAdapter } from './adapters/CricketAdapter';
-import { BasketballAdapter } from './adapters/BasketballAdapter';
-import { MMAAdapter } from './adapters/MMAAdapter';
 import { PodcastAdapter } from './adapters/PodcastAdapter';
-import { VlogAdapter } from './adapters/VlogAdapter';
 
 export class AdapterRegistry {
   private static instance: AdapterRegistry;
@@ -37,9 +34,6 @@ export class AdapterRegistry {
   public registerDefaults(): void {
     this.register(new FootballAdapter());
     this.register(new CricketAdapter());
-    this.register(new BasketballAdapter());
-    this.register(new MMAAdapter());
     this.register(new PodcastAdapter());
-    this.register(new VlogAdapter());
   }
 }
