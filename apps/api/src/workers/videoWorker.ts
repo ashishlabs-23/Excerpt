@@ -81,7 +81,14 @@ import { learningSubsystem } from '../services/intelligence/LearningSubsystem';
 import { editorialPlanEvaluator } from '../services/intelligence/EditorialPlanEvaluator';
 import { IntelligenceOrchestrator, OrchestrationContext } from '../services/nexus/IntelligenceOrchestrator';
 import { classifyPipelineError } from '../utils/errorClassifier';
-import { createRenderPlan, DeliveryValidator, DEFAULT_PIPELINE_CONFIG } from '@excerpt/clipping-core';
+import {
+  createRenderPlan,
+  DeliveryValidator,
+  DEFAULT_PIPELINE_CONFIG,
+  createClipProject,
+  createPublicationPlan,
+  createSingleSubjectComposition,
+} from '@excerpt/clipping-core';
 import { TimelineEvent, JobDebugData, JobPerformanceMetrics } from '../types/diagnostics';
 import { firebaseDb } from '../services/firebaseService';
 
@@ -2061,6 +2068,85 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     }
 
 
+    // ─── Step 3.5: Canonical Editorial State (ClipProject v1 & PublicationPlan) ─────
+    const tempProjDir = path.join(process.cwd(), 'temp', jobId);
+    if (!fs.existsSync(tempProjDir)) fs.mkdirSync(tempProjDir, { recursive: true });
+
+    for (const clip of dbClips) {
+      try {
+        const rawClip = clips.find((c: any) => c.id === clip.id || c.metadata?.id === clip.id);
+        const startTime = clip.start_time ?? rawClip?.start_time ?? 0;
+        const endTime = clip.end_time ?? rawClip?.end_time ?? 0;
+        const clipWords = (clip as any)?.words || (rawClip as any)?.words || (clip as any)?.metadata?.words || (words || []).filter(
+          (w: any) => typeof w.start === 'number' && typeof w.end === 'number' && w.end > startTime && w.start < endTime
+        );
+
+        const cropData = (clip as any)?.metadata?.nexus?.crop_plan || (clip as any)?.cropPlan;
+        const compositionPlan = cropData?.composition || createSingleSubjectComposition({
+          x: cropData?.cropBox?.x ?? 0,
+          y: cropData?.cropBox?.y ?? 0,
+          width: cropData?.cropBox?.w ?? 1080,
+          height: cropData?.cropBox?.h ?? 1920,
+        });
+
+        const clipProject = createClipProject({
+          id: clip.id,
+          jobId,
+          sourceMediaId: sourceManifest?.storageKey || videoUrl,
+          startTime,
+          endTime,
+          composition: compositionPlan,
+          words: clipWords,
+          titles: [clip.title, (clip as any)?.metadata?.hook || rawClip?.hook].filter(Boolean),
+          description: (clip as any)?.metadata?.description || (clip as any)?.caption || rawClip?.content || '',
+          hashtags: (clip as any)?.metadata?.hashtags || (rawClip as any)?.hashtags || [],
+          hook: (clip as any)?.metadata?.hook || rawClip?.hook ? {
+            headline: (clip as any)?.metadata?.hook || rawClip?.hook,
+          } : undefined,
+        });
+
+        const pubPlan = createPublicationPlan({
+          id: `pub_${clip.id}_yt`,
+          projectId: clipProject.projectId,
+          clipId: clip.id,
+          targetPlatform: 'youtube_shorts',
+          title: clip.title || 'Highlight Moment',
+          description: (clip as any)?.metadata?.description || '',
+          hashtags: (clip as any)?.metadata?.hashtags || ['#shorts'],
+        });
+
+        const localProjPath = path.join(tempProjDir, `${clip.id}-v1.json`);
+        const localPubPath = path.join(tempProjDir, `${clip.id}-pub.json`);
+        fs.writeFileSync(localProjPath, JSON.stringify(clipProject, null, 2), 'utf8');
+        fs.writeFileSync(localPubPath, JSON.stringify(pubPlan, null, 2), 'utf8');
+
+        const projectStorageKey = `jobs/${jobId}/projects/${clip.id}/v1.json`;
+        const pubStorageKey = `jobs/${jobId}/publications/${clip.id}.json`;
+
+        await Promise.all([
+          storage.uploadFile(localProjPath, projectStorageKey).catch(() => null),
+          storage.uploadFile(localPubPath, pubStorageKey).catch(() => null),
+        ]);
+
+        try { if (fs.existsSync(localProjPath)) fs.unlinkSync(localProjPath); } catch {}
+        try { if (fs.existsSync(localPubPath)) fs.unlinkSync(localPubPath); } catch {}
+
+        try {
+          await db.getSupabase().from('clips').update({
+            metadata: {
+              ...((clip as any).metadata || {}),
+              project_id: clipProject.projectId,
+              project_version: 1,
+              project_storage_key: projectStorageKey,
+              publication_storage_key: pubStorageKey,
+            }
+          }).eq('id', clip.id);
+        } catch {}
+      } catch (projErr: any) {
+        console.warn(`[Worker]: Non-fatal project initialization warning: ${projErr.message}`);
+      }
+    }
+
     // ─── Step 4: Render Subsystem & RenderPlan Contract ────────────────────
     const requestedCaptionStyle = (data as any)?.caption_style || (data as any)?.caption_preset || 'submagic';
     const renderPlan = createRenderPlan({
@@ -2099,10 +2185,6 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         captionPolicy: renderPlan.captionPolicy,
         // Phase E: Hook text for editorial hook card
         hookText: (clip as any)?.metadata?.hook || (rawClip as any)?.hook || '',
-        title: clip?.title || rawClip?.title || '',
-        description: (clip as any)?.metadata?.description || (clip as any)?.caption || rawClip?.content || '',
-        hashtags: (clip as any)?.metadata?.hashtags || (rawClip as any)?.hashtags || [],
-        viralityScore: (clip as any)?.virality_score || (rawClip as any)?.virality_score || 0,
       };
 
       const renderJobData = {

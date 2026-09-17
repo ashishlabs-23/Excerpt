@@ -58,36 +58,57 @@ export class SmartReframeEngine {
 
     const smoothed = this.applyTemporalSmoothing(keyframes, config);
 
-    // Determine overall layout mode
-    let layoutMode: LayoutMode = config.preferredLayout && config.preferredLayout !== 'auto'
-      ? config.preferredLayout
-      : 'single_speaker';
+    // Multi-Speaker Editorial Candidate Evaluation:
+    // Do not automatically trigger split-screen purely on count >= 2.
+    // Require sustained co-presence (> 40% of frames), prominent face scale, and spatial relevance.
+    const splitFramesCount = smoothed.filter(k => k.framingLevel === FramingLevel.SPLIT_SCREEN_STACK).length;
+    const splitRatio = smoothed.length > 0 ? splitFramesCount / smoothed.length : 0;
+    const hasEditorialSplitValue = splitRatio >= 0.40;
 
-    if (config.preferredLayout === 'auto' || !config.preferredLayout) {
-      const splitFramesCount = smoothed.filter(k => k.framingLevel === FramingLevel.SPLIT_SCREEN_STACK).length;
-      if (splitFramesCount > smoothed.length * 0.4) {
-        layoutMode = 'split_screen_stack';
-      }
+    let layoutMode: LayoutMode = 'single_speaker';
+    if (config.preferredLayout === 'split_screen_stack') {
+      layoutMode = 'split_screen_stack';
+    } else if (config.preferredLayout === 'single_speaker') {
+      layoutMode = 'single_speaker';
+    } else if (hasEditorialSplitValue) {
+      layoutMode = 'split_screen_stack';
+    } else {
+      layoutMode = 'single_speaker';
     }
 
-    // Synthesize structured CompositionPlan
+    // Synthesize structured CompositionPlan with dynamic time-varying camera paths
     let composition = undefined;
-    const splitKeyframe = smoothed.find(k => k.secondaryCropBox);
-    const primaryCrop = splitKeyframe ? splitKeyframe.cropBox : (smoothed[0]?.cropBox || { x: 0, y: 0, w: 1080, h: 1920 });
-    const secondaryCrop = splitKeyframe?.secondaryCropBox || primaryCrop;
+    const primaryKeyframes = smoothed.map(k => ({
+      timestampMs: k.timestampMs,
+      crop: { x: k.cropBox.x, y: k.cropBox.y, width: k.cropBox.w, height: k.cropBox.h },
+    }));
 
     if (layoutMode === 'split_screen_stack') {
+      const splitKeyframe = smoothed.find(k => k.secondaryCropBox) || smoothed[0];
+      const primaryCrop = splitKeyframe.cropBox;
+      const secondaryCrop = splitKeyframe.secondaryCropBox || primaryCrop;
+      const secondaryKeyframes = smoothed
+        .filter(k => k.secondaryCropBox)
+        .map(k => ({
+          timestampMs: k.timestampMs,
+          crop: { x: k.secondaryCropBox!.x, y: k.secondaryCropBox!.y, width: k.secondaryCropBox!.w, height: k.secondaryCropBox!.h },
+        }));
+
       composition = createSplitStackComposition(
         { x: primaryCrop.x, y: primaryCrop.y, width: primaryCrop.w, height: primaryCrop.h },
         { x: secondaryCrop.x, y: secondaryCrop.y, width: secondaryCrop.w, height: secondaryCrop.h },
         1080,
-        1920
+        1920,
+        primaryKeyframes,
+        secondaryKeyframes.length > 0 ? secondaryKeyframes : primaryKeyframes
       );
     } else {
+      const firstCrop = smoothed[0]?.cropBox || { x: 0, y: 0, w: 1080, h: 1920 };
       composition = createSingleSubjectComposition(
-        { x: primaryCrop.x, y: primaryCrop.y, width: primaryCrop.w, height: primaryCrop.h },
+        { x: firstCrop.x, y: firstCrop.y, width: firstCrop.w, height: firstCrop.h },
         1080,
-        1920
+        1920,
+        primaryKeyframes
       );
     }
 
@@ -156,13 +177,27 @@ export class SmartReframeEngine {
       context.faceLossSinceMs = null;
     }
 
-    // 2. Multi-Speaker Turn-Taking / Split-Screen Check
-    if (facesData.length >= 2 && (!config.preferredLayout || config.preferredLayout === 'auto' || config.preferredLayout === 'split_screen_stack')) {
+    // 2. Multi-Speaker Co-Presence & Editorial Relevance Check
+    // Exclude background bystanders / tiny faces (w < 0.08)
+    const prominentFaces = facesData.filter((f: any) => ((f.w ?? f.width ?? 0) >= 0.08));
+
+    if (
+      prominentFaces.length >= 2 &&
+      (!config.preferredLayout || config.preferredLayout === 'auto' || config.preferredLayout === 'split_screen_stack')
+    ) {
       // Sort faces by horizontal X coordinate (left to right)
-      const sortedFaces = [...facesData].sort((a, b) => a.x - b.x);
-      targetFace = sortedFaces[0];
-      secondaryFace = sortedFaces[1];
-      level = FramingLevel.SPLIT_SCREEN_STACK;
+      const sortedFaces = [...prominentFaces].sort((a, b) => a.x - b.x);
+      const horizontalSeparation = Math.abs(sortedFaces[1].x - sortedFaces[0].x);
+
+      // Require meaningful spatial separation (distinct participants, not overlapping/crowded)
+      if (horizontalSeparation >= 0.18 || config.preferredLayout === 'split_screen_stack') {
+        targetFace = sortedFaces[0];
+        secondaryFace = sortedFaces[1];
+        level = FramingLevel.SPLIT_SCREEN_STACK;
+      } else {
+        targetFace = sortedFaces[0];
+        level = FramingLevel.ACTIVE_SPEAKER;
+      }
     } else if (facesData.length >= 2 && config.preferredLayout === 'single_speaker') {
       // Single speaker layout requested in multi-face scene: Apply Two-State Hysteresis
       level = FramingLevel.ACTIVE_SPEAKER;

@@ -53,3 +53,4 @@ export * from './composition/CompositionPlan';
 export * from './project/HookPlan';
 export * from './project/ClipProject';
 export * from './project/ClipBundle';
+export * from './project/PublicationPlan';

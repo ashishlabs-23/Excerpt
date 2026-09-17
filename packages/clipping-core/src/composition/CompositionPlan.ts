@@ -14,6 +14,11 @@ export type CompositionMode =
   | 'gameplay_plus_face'
   | 'full_frame_broll';
 
+export type OverlapPolicy =
+  | 'forbidden'
+  | 'allowed'
+  | 'allowed_within_parent';
+
 export interface PixelBounds {
   x: number;
   y: number;
@@ -36,6 +41,11 @@ export type TrackRole =
   | 'broll'
   | 'neutral_scene';
 
+export interface CameraPathKeyframe {
+  timestampMs: number;
+  crop: PixelBounds;
+}
+
 export interface CompositionTrack {
   id: string;
   sourceId: string;
@@ -43,6 +53,10 @@ export interface CompositionTrack {
   sourceCrop: PixelBounds;
   canvasPlacement: PixelBounds;
   zIndex: number;
+  overlapPolicy: OverlapPolicy;
+  cameraPath?: {
+    keyframes: CameraPathKeyframe[];
+  };
 }
 
 export interface CompositionSafeZone {
@@ -84,7 +98,8 @@ export const DEFAULT_9_16_SAFE_ZONES: CompositionSafeZone[] = [
 export function createSingleSubjectComposition(
   cropBox: PixelBounds,
   canvasWidth: number = 1080,
-  canvasHeight: number = 1920
+  canvasHeight: number = 1920,
+  cameraKeyframes?: CameraPathKeyframe[]
 ): CompositionPlan {
   return {
     mode: 'single_subject',
@@ -106,6 +121,8 @@ export function createSingleSubjectComposition(
           height: canvasHeight,
         },
         zIndex: 0,
+        overlapPolicy: 'forbidden',
+        cameraPath: cameraKeyframes && cameraKeyframes.length > 0 ? { keyframes: cameraKeyframes } : undefined,
       },
     ],
     safeZones: DEFAULT_9_16_SAFE_ZONES,
@@ -121,7 +138,9 @@ export function createSplitStackComposition(
   primaryCrop: PixelBounds,
   secondaryCrop: PixelBounds,
   canvasWidth: number = 1080,
-  canvasHeight: number = 1920
+  canvasHeight: number = 1920,
+  topKeyframes?: CameraPathKeyframe[],
+  bottomKeyframes?: CameraPathKeyframe[]
 ): CompositionPlan {
   const halfHeight = Math.floor(canvasHeight / 2);
 
@@ -145,6 +164,8 @@ export function createSplitStackComposition(
           height: halfHeight,
         },
         zIndex: 0,
+        overlapPolicy: 'forbidden',
+        cameraPath: topKeyframes && topKeyframes.length > 0 ? { keyframes: topKeyframes } : undefined,
       },
       {
         id: 'track_bottom',
@@ -158,6 +179,8 @@ export function createSplitStackComposition(
           height: halfHeight,
         },
         zIndex: 1,
+        overlapPolicy: 'forbidden',
+        cameraPath: bottomKeyframes && bottomKeyframes.length > 0 ? { keyframes: bottomKeyframes } : undefined,
       },
     ],
     safeZones: DEFAULT_9_16_SAFE_ZONES,
@@ -170,7 +193,69 @@ export function createSplitStackComposition(
 }
 
 /**
+ * Creates a picture-in-picture screen + talking head composition.
+ * Base: screen recording (fullscreen or top 65%).
+ * Overlay: presenter talking head floating in corner or bottom inset.
+ */
+export function createScreenPlusFaceComposition(
+  screenCrop: PixelBounds,
+  faceCrop: PixelBounds,
+  canvasWidth: number = 1080,
+  canvasHeight: number = 1920
+): CompositionPlan {
+  return {
+    mode: 'screen_plus_face',
+    canvas: {
+      width: canvasWidth,
+      height: canvasHeight,
+      aspectRatio: '9:16',
+    },
+    tracks: [
+      {
+        id: 'track_screen',
+        sourceId: 'source_screen',
+        role: 'screen',
+        sourceCrop: { ...screenCrop },
+        canvasPlacement: {
+          x: 0,
+          y: 0,
+          width: canvasWidth,
+          height: canvasHeight,
+        },
+        zIndex: 0,
+        overlapPolicy: 'allowed',
+      },
+      {
+        id: 'track_face_pip',
+        sourceId: 'source_face',
+        role: 'primary_speaker',
+        sourceCrop: { ...faceCrop },
+        canvasPlacement: {
+          x: canvasWidth - 360 - 40, // 40px margin right
+          y: canvasHeight - 480 - 160, // 160px above bottom captions
+          width: 360,
+          height: 480,
+        },
+        zIndex: 10,
+        overlapPolicy: 'allowed',
+      },
+    ],
+    safeZones: DEFAULT_9_16_SAFE_ZONES,
+  };
+}
+
+function doRectanglesIntersect(r1: PixelBounds, r2: PixelBounds): boolean {
+  return !(
+    r1.x + r1.width <= r2.x ||
+    r2.x + r2.width <= r1.x ||
+    r1.y + r1.height <= r2.y ||
+    r2.y + r2.height <= r1.y
+  );
+}
+
+/**
  * Validates invariant integrity of a CompositionPlan.
+ * Supports OverlapPolicy ('forbidden' | 'allowed' | 'allowed_within_parent') with zIndex ordering.
  */
 export function validateCompositionPlan(plan: CompositionPlan): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
@@ -193,6 +278,29 @@ export function validateCompositionPlan(plan: CompositionPlan): { valid: boolean
     }
     if (track.canvasPlacement.width <= 0 || track.canvasPlacement.height <= 0) {
       errors.push(`Track ${track.id} has invalid canvasPlacement dimensions: ${track.canvasPlacement.width}x${track.canvasPlacement.height}`);
+    }
+  }
+
+  // Validate track overlap constraints
+  const tracks = plan.tracks || [];
+  for (let i = 0; i < tracks.length; i++) {
+    for (let j = i + 1; j < tracks.length; j++) {
+      const t1 = tracks[i];
+      const t2 = tracks[j];
+
+      if (doRectanglesIntersect(t1.canvasPlacement, t2.canvasPlacement)) {
+        // Overlap is permitted if either track explicitly permits it or is an overlay with distinct zIndex
+        const permitsOverlap =
+          t1.overlapPolicy === 'allowed' ||
+          t2.overlapPolicy === 'allowed' ||
+          t1.overlapPolicy === 'allowed_within_parent' ||
+          t2.overlapPolicy === 'allowed_within_parent' ||
+          (t1.zIndex !== t2.zIndex && (plan.mode === 'screen_plus_face' || plan.mode === 'gameplay_plus_face'));
+
+        if (!permitsOverlap) {
+          errors.push(`Collision: Track ${t1.id} and Track ${t2.id} overlap on canvas but overlapPolicy is forbidden.`);
+        }
+      }
     }
   }
 

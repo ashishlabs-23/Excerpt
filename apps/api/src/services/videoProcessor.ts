@@ -640,18 +640,31 @@ export class VideoProcessor {
       const topTrack = comp?.tracks?.find((t: any) => t.role === 'primary_speaker') || comp?.tracks?.[0];
       const botTrack = comp?.tracks?.find((t: any) => t.role === 'secondary_speaker') || comp?.tracks?.[1];
 
-      let topCropExpr: string;
-      let botCropExpr: string;
+      const buildTrackCrop = (track: any, defaultX: number) => {
+        if (!track || !track.sourceCrop) {
+          return `crop=iw*0.5:ih:iw*${defaultX}:0`;
+        }
+        const w = Math.round(track.sourceCrop.width);
+        const h = Math.round(track.sourceCrop.height);
 
-      if (topTrack && botTrack && topTrack.sourceCrop && botTrack.sourceCrop) {
-        topCropExpr = `crop=${Math.round(topTrack.sourceCrop.width)}:${Math.round(topTrack.sourceCrop.height)}:${Math.round(topTrack.sourceCrop.x)}:${Math.round(topTrack.sourceCrop.y)}`;
-        botCropExpr = `crop=${Math.round(botTrack.sourceCrop.width)}:${Math.round(botTrack.sourceCrop.height)}:${Math.round(botTrack.sourceCrop.x)}:${Math.round(botTrack.sourceCrop.y)}`;
-      } else {
-        const s1X = nexusCropPlan?.speaker1_x ?? 0;
-        const s2X = nexusCropPlan?.speaker2_x ?? 0.5;
-        topCropExpr = `crop=iw*0.5:ih:iw*${s1X}:0`;
-        botCropExpr = `crop=iw*0.5:ih:iw*${s2X}:0`;
-      }
+        // Check for dynamic camera path keyframes
+        const kfs = track.cameraPath?.keyframes;
+        if (Array.isArray(kfs) && kfs.length > 1) {
+          const firstKf = kfs[0];
+          const lastKf = kfs[kfs.length - 1];
+          const deltaX = lastKf.crop.x - firstKf.crop.x;
+          // If movement occurs across keyframes, interpolate dynamically across clip duration
+          if (Math.abs(deltaX) > 10 && duration > 0) {
+            const startX = Math.round(firstKf.crop.x);
+            const speed = (deltaX / duration).toFixed(2);
+            return `crop=${w}:${h}:'min(iw-${w},max(0,${startX}+(${speed}*t)))':${Math.round(track.sourceCrop.y)}`;
+          }
+        }
+        return `crop=${w}:${h}:${Math.round(track.sourceCrop.x)}:${Math.round(track.sourceCrop.y)}`;
+      };
+
+      const topCropExpr = buildTrackCrop(topTrack, nexusCropPlan?.speaker1_x ?? 0);
+      const botCropExpr = buildTrackCrop(botTrack, nexusCropPlan?.speaker2_x ?? 0.5);
 
       cropFilter = `split[s1][s2];[s1]${topCropExpr},scale=${cropWidth}:${cropHeight / 2}:flags=bicubic[top];[s2]${botCropExpr},scale=${cropWidth}:${cropHeight / 2}:flags=bicubic[bot];[top][bot]vstack=inputs=2,setsar=1`;
       cropPlan = {

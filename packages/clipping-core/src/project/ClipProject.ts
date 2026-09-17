@@ -3,10 +3,11 @@
  *
  * Implements the 3-state architectural invariant:
  *   1. SOURCE:   Immutable source video media.
- *   2. PROJECT:  Editable decision & styling state (ClipProject).
+ *   2. PROJECT:  Editable decision & styling state (ClipProject) with immutable version lineage.
  *   3. ARTIFACT: Derived rendered media (ClipBundle).
  */
 
+import crypto from 'crypto';
 import { CompositionPlan } from '../composition/CompositionPlan';
 import { HookPlan } from './HookPlan';
 
@@ -27,11 +28,17 @@ export type CaptionPresetStyle =
   | 'tiktok'
   | 'neon';
 
+export type ProjectEditState = 'draft' | 'reviewed' | 'approved' | 'published';
+
 export interface ClipProject {
   id: string;
+  projectId: string;
   jobId: string;
   sourceMediaId: string;
   version: number;
+  parentVersion: number | null;
+  contentHash: string;
+  editState: ProjectEditState;
 
   timing: {
     startTime: number;
@@ -60,7 +67,6 @@ export interface ClipProject {
     suggestedTitles: string[];
     description: string;
     hashtags: string[];
-    viralityRationale?: string;
     selectedPosterTimestamp?: number;
   };
 
@@ -68,8 +74,24 @@ export interface ClipProject {
   updatedAt: string;
 }
 
+export function computeProjectContentHash(project: Partial<ClipProject>): string {
+  const canonical = {
+    id: project.id,
+    jobId: project.jobId,
+    sourceMediaId: project.sourceMediaId,
+    version: project.version,
+    parentVersion: project.parentVersion ?? null,
+    timing: project.timing,
+    composition: project.composition,
+    transcript: project.transcript,
+    hook: project.hook,
+    packaging: project.packaging,
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex').slice(0, 16);
+}
+
 /**
- * Factory for creating a canonical initial ClipProject.
+ * Factory for creating a canonical initial ClipProject (Version 1).
  */
 export function createClipProject(params: {
   id: string;
@@ -86,6 +108,7 @@ export function createClipProject(params: {
 }): ClipProject {
   const duration = Math.max(0, params.endTime - params.startTime);
   const now = new Date().toISOString();
+  const projectId = `proj_${params.id}`;
 
   const words: TranscriptWordToken[] = (params.words || []).map((w, index) => ({
     id: `token_${index}_${Math.round(w.start * 1000)}`,
@@ -110,11 +133,14 @@ export function createClipProject(params: {
     openingMode: params.hook?.openingMode || 'claim',
   };
 
-  return {
+  const candidate: Omit<ClipProject, 'contentHash'> = {
     id: params.id,
+    projectId,
     jobId: params.jobId,
     sourceMediaId: params.sourceMediaId,
     version: 1,
+    parentVersion: null,
+    editState: 'draft',
     timing: {
       startTime: params.startTime,
       endTime: params.endTime,
@@ -130,17 +156,76 @@ export function createClipProject(params: {
     },
     hook,
     packaging: {
-      suggestedTitles: params.titles || ['Viral Moment'],
+      suggestedTitles: params.titles || ['Moment Highlight'],
       description: params.description || '',
-      hashtags: params.hashtags || ['#shorts', '#viral'],
+      hashtags: params.hashtags || ['#shorts'],
     },
     createdAt: now,
     updatedAt: now,
+  };
+
+  const contentHash = computeProjectContentHash(candidate);
+  return {
+    ...candidate,
+    contentHash,
+  };
+}
+
+/**
+ * Derives the next immutable version of a ClipProject.
+ *
+ * NOTE: Operates in O(1) time for in-memory token and metadata updates.
+ * Persistence complexity depends on the storage backend and serialization strategy.
+ */
+export function deriveNextProjectVersion(
+  currentProject: ClipProject,
+  changes: {
+    words?: TranscriptWordToken[];
+    composition?: CompositionPlan;
+    hook?: HookPlan;
+    suggestedTitles?: string[];
+    description?: string;
+    hashtags?: string[];
+    editState?: ProjectEditState;
+  }
+): ClipProject {
+  const nextVersion = currentProject.version + 1;
+  const now = new Date().toISOString();
+
+  const nextTranscript = changes.words
+    ? { ...currentProject.transcript, words: changes.words }
+    : currentProject.transcript;
+
+  const nextPackaging = {
+    ...currentProject.packaging,
+    ...(changes.suggestedTitles ? { suggestedTitles: changes.suggestedTitles } : {}),
+    ...(changes.description !== undefined ? { description: changes.description } : {}),
+    ...(changes.hashtags ? { hashtags: changes.hashtags } : {}),
+  };
+
+  const candidate: Omit<ClipProject, 'contentHash'> = {
+    ...currentProject,
+    version: nextVersion,
+    parentVersion: currentProject.version,
+    composition: changes.composition || currentProject.composition,
+    hook: changes.hook || currentProject.hook,
+    transcript: nextTranscript,
+    packaging: nextPackaging,
+    editState: changes.editState || currentProject.editState,
+    updatedAt: now,
+  };
+
+  const contentHash = computeProjectContentHash(candidate);
+  return {
+    ...candidate,
+    contentHash,
   };
 }
 
 /**
  * Updates a word token in a ClipProject non-destructively without altering video timing.
+ *
+ * NOTE: O(1) in-memory token lookup & update; persistence complexity depends on the storage/versioning strategy.
  */
 export function updateProjectTranscriptWord(
   project: ClipProject,
@@ -151,13 +236,5 @@ export function updateProjectTranscriptWord(
     w.id === tokenId ? { ...w, word: newWord } : w
   );
 
-  return {
-    ...project,
-    version: project.version + 1,
-    updatedAt: new Date().toISOString(),
-    transcript: {
-      ...project.transcript,
-      words: updatedWords,
-    },
-  };
+  return deriveNextProjectVersion(project, { words: updatedWords });
 }
