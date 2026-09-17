@@ -85,3 +85,5 @@ Thumbs.db
 *service-account*.json
 firebase-service-account.json
 apps/api/data/retention/*.json
+data/
+

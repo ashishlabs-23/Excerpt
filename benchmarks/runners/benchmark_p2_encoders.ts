@@ -5,7 +5,7 @@ import { execFile } from 'child_process';
 import util from 'util';
 import { VideoProcessor, getBinaryPath, EncoderBackend, GenerationMode } from '../src/services/videoProcessor';
 import { CaptionService } from '../src/services/captionService';
-import { computeScheduler } from '../src/services/compute/ComputeScheduler';
+import { computeScheduler } from './compute/ComputeScheduler';
 
 const execFileAsync = util.promisify(execFile);
 

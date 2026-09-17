@@ -1,6 +1,6 @@
 import fs from 'fs';
 import { NEXUS_FEATURES, isMultiModalEnabled } from '../config/features';
-import { getRankingWeightsForCategory } from './intelligence/RankingProfiles';
+import { getRankingWeightsForCategory } from '@excerpt/clipping-core';
 import { PipelineContext } from './intelligence/PipelineContext';
 
 interface RankingWeights {

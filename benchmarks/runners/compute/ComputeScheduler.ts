@@ -2,7 +2,7 @@ import os from 'os';
 import { execFile } from 'child_process';
 import util from 'util';
 import pLimit, { Limit } from 'p-limit';
-import { getBinaryPath } from '../binaryPath';
+import { getBinaryPath } from '../../../apps/api/src/services/videoProcessor';
 
 const execFileAsync = util.promisify(execFile);
 

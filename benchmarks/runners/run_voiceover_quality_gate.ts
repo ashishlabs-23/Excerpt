@@ -15,8 +15,8 @@ import {
   VoiceoverQualityGate,
   VoiceoverQualityReport,
   QUALITY_GATE_WEIGHTS
-} from '../src/services/voiceover/VoiceoverQualityGate';
-import { VOICEOVER_BENCHMARK_CORPUS, BenchmarkCorpusItem } from '../src/services/voiceover/VoiceoverBenchmarkCorpus';
+} from './voiceover/VoiceoverQualityGate';
+import { VOICEOVER_BENCHMARK_CORPUS, BenchmarkCorpusItem } from './voiceover/VoiceoverBenchmarkCorpus';
 import { getBinaryPath } from '../src/services/videoProcessor';
 import { PlaybackValidator } from '../../../packages/clipping-core/src/evaluation/PlaybackValidator';
 
