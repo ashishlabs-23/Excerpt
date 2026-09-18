@@ -43,9 +43,12 @@ export class EventGraph {
     this.links.push(link);
   }
 
-  public getEventsInRange(start: number, end: number): EventNode[] {
-    return Array.from(this.events.values()).filter(
-      (e) => e.timestamp >= start && (e.timestamp + e.duration) <= end
-    );
+  public getEventsInRange(start: number, end: number, strict = false): EventNode[] {
+    return Array.from(this.events.values()).filter((e) => {
+      if (strict) {
+        return e.timestamp >= start && (e.timestamp + e.duration) <= end;
+      }
+      return e.timestamp < end && (e.timestamp + e.duration) > start;
+    });
   }
 }

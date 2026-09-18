@@ -31,16 +31,21 @@ export class SceneCutSnapper {
         const output = [stdout, stderr].join('\n');
         const cuts: SceneCutPoint[] = [];
 
-        // Match pts_time values or scene_score in metadata output
-        const regex = /pts_time:([0-9.]+)/g;
-        let match;
-        while ((match = regex.exec(output)) !== null) {
-          const relativeTime = parseFloat(match[1]);
-          if (!isNaN(relativeTime)) {
+        const lines = output.split(/\r?\n/);
+        let currentPts: number | null = null;
+        for (const line of lines) {
+          const ptsMatch = line.match(/pts_time:([0-9.]+)/);
+          if (ptsMatch) {
+            currentPts = parseFloat(ptsMatch[1]);
+          }
+          const scoreMatch = line.match(/lavfi\.scene_score=([0-9.]+)/);
+          if (currentPts !== null) {
+            const score = scoreMatch ? parseFloat(scoreMatch[1]) : 0.8;
             cuts.push({
-              timestampSec: Number((windowStartSec + relativeTime).toFixed(3)),
-              score: 0.8,
+              timestampSec: Number((windowStartSec + currentPts).toFixed(3)),
+              score: Number(score.toFixed(3)),
             });
+            currentPts = null;
           }
         }
 

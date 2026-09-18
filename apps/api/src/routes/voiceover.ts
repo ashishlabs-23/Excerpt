@@ -1,5 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { DatabaseService } from '../services/supabaseService';
+import { firebaseDb } from '../services/firebaseService';
+import { clipRepository } from '../services/repositories/ClipRepository';
+import { voiceoverRepository } from '../services/repositories/VoiceoverRepository';
 import { requireUserJWT } from '../middleware/firebaseAuth';
 import { denyUnlessOwner, getClipOwnerId } from '../middleware/ownership';
 import { verifyUploadedMedia } from '../validation/fileValidation';
@@ -303,7 +306,7 @@ router.post('/clip/:clipId', requireUserJWT, async (req: Request, res: Response)
     const { provider, voice, narrationText, scriptMode, timeline, segments, originalAudioPolicy, duckingPolicy, voiceConfig, captions } = req.body;
 
     // Verify clip ownership
-    const clip = await db.getClip(clipId);
+    const clip = await clipRepository.getClip(clipId);
     if (!clip || !denyUnlessOwner(getClipOwnerId(clip), userId, res, 'clip')) {
        return;
     }

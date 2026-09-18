@@ -405,6 +405,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           transform: isActive ? 'scale(1.08)' : 'scale(1)',
         };
         break;
+      case 'neon':
+        styleObj = {
+          ...base,
+          color: isActive ? (captionColor || '#00ffff') : '#ffffff',
+          textShadow: isActive
+            ? '0 0 12px rgba(0,255,255,0.8), 0 4px 14px rgba(0,0,0,0.9), 2px 2px 0 #000, -2px -2px 0 #000'
+            : base.textShadow,
+          transform: isActive ? 'scale(1.08)' : 'scale(1)',
+        };
+        break;
       case 'minimal':
         styleObj = {
           ...base,

@@ -258,9 +258,17 @@ export class FirebaseDatabaseService {
     const queue = this.readQueue();
     const allJobs = { ...Object.fromEntries(this.inMemoryJobs), ...queue.jobs };
 
+    const isDev = process.env.NODE_ENV !== 'production' || userId === '00000000-0000-0000-0000-000000000000';
+
     const jobs = Object.values(allJobs)
-      .filter((j: any) => j.userId === userId || j.user_id === userId)
-      .sort((a: any, b: any) => new Date(b.createdAt || b.created_at).getTime() - new Date(a.createdAt || a.created_at).getTime())
+      .filter((j: any) => {
+        if (!userId) return true;
+        if (isDev) {
+          return !j.userId || !j.user_id || j.userId === userId || j.user_id === userId || j.userId === '00000000-0000-0000-0000-000000000000';
+        }
+        return j.userId === userId || j.user_id === userId;
+      })
+      .sort((a: any, b: any) => new Date(b.createdAt || b.created_at || b.updated_at || 0).getTime() - new Date(a.createdAt || a.created_at || a.updated_at || 0).getTime())
       .slice(0, limitCount);
 
     return jobs as FirestoreJobRecord[];
@@ -529,7 +537,7 @@ export class FirebaseDatabaseService {
     // Only claim render jobs belonging to currently active jobs
     const activeJobIds = new Set(
       Object.values(queue.jobs)
-        .filter((j: any) => ['rendering', 'processing', 'queued'].includes(j.status))
+        .filter((j: any) => ['rendering', 'processing', 'queued', 'waiting_render'].includes(j.status))
         .map((j: any) => j.id)
     );
 

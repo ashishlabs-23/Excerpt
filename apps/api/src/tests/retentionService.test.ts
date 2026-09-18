@@ -447,4 +447,91 @@ describe('Hardened RetentionService Architectural & Production Edge-Case Suite',
       expect(telemetry).toHaveProperty('protectionBreakdown');
     });
   });
+
+  describe('Edge Case 11: Capacity-Based LRU Eviction ("Storage Full" Requirement)', () => {
+    it('does not evict clips if total storage is below max quota threshold', async () => {
+      const mockSupabase = {
+        from: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnThis(),
+          order: jest.fn().mockReturnThis(),
+          limit: jest.fn().mockResolvedValue({ data: [], error: null })
+        })
+      };
+
+      const telemetry: RetentionTelemetry = {
+        lastSweep: new Date().toISOString(),
+        startedAt: new Date().toISOString(),
+        completedAt: null,
+        objectsScanned: 0,
+        bytesScanned: 0,
+        eligible: 0,
+        protected: 0,
+        deleted: 0,
+        retrying: 0,
+        unknown: 0,
+        keysRemoved: [],
+        protectionBreakdown: {},
+        durationMs: 0,
+        lastError: null,
+      };
+
+      // Mock storage usage to 100 MB, with 850 MB max
+      jest.spyOn((retentionService as any).storage, 'listCurrentObjects').mockResolvedValueOnce([
+        { key: 'clips/sample.mp4', size: 100 * 1024 * 1024, lastModified: new Date() }
+      ]);
+
+      // evictClipsToSatisfyQuota is now a deprecated shim (2 args only).
+      const freed = await retentionService.evictClipsToSatisfyQuota(
+        mockSupabase as any,
+        telemetry
+      );
+
+      // Shim delegates to QuotaEvictionEngine; since usage < trigger threshold the engine
+      // will also return 0 freed bytes (storage is within safe limits).
+      expect(freed).toBe(0);
+      expect(telemetry.deleted).toBe(0);
+    });
+
+    it('delegates to QuotaEvictionEngine via the deprecated shim safely', async () => {
+      const deleteMock = jest.fn().mockResolvedValue({ error: null });
+      const mockSupabase = {
+        from: jest.fn(() => ({
+          select: jest.fn().mockReturnThis(),
+          order: jest.fn().mockReturnThis(),
+          limit: jest.fn().mockResolvedValue({ data: [], error: null }),
+          update: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          delete: deleteMock,
+        }))
+      };
+
+      const telemetry: RetentionTelemetry = {
+        lastSweep: new Date().toISOString(),
+        startedAt: new Date().toISOString(),
+        completedAt: null,
+        objectsScanned: 0,
+        bytesScanned: 0,
+        eligible: 0,
+        protected: 0,
+        deleted: 0,
+        retrying: 0,
+        unknown: 0,
+        keysRemoved: [],
+        protectionBreakdown: {},
+        durationMs: 0,
+        lastError: null,
+      };
+
+      const sweepSpy = jest.spyOn(retentionService as any, 'runQuotaPolicySweep');
+      const freed = await retentionService.evictClipsToSatisfyQuota(
+        mockSupabase as any,
+        telemetry
+      );
+
+      // Shim delegates to runQuotaPolicySweep without error.
+      // Substantive minimal-eviction stopping at target is thoroughly tested in quotaEvictionEngine.test.ts.
+      expect(sweepSpy).toHaveBeenCalledWith(mockSupabase, telemetry);
+      expect(freed).toBe(0);
+    });
+  });
 });

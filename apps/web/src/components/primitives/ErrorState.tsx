@@ -44,7 +44,7 @@ export const ErrorState: React.FC<ErrorStateProps> = ({
 
       {isAuthError ? (
         <button
-          onClick={onReauth}
+          onClick={onReauth || (() => { if (typeof window !== 'undefined') window.location.href = '/auth/login'; })}
           className="px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm transition-colors shadow-lg shadow-indigo-600/20"
         >
           Re-Authenticate Now

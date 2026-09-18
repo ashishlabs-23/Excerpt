@@ -55,9 +55,9 @@ export class BoundaryFailureAnalyzer {
     return {
       failure_type: failureType,
       severity,
-      start_delta: startDelta,
-      end_delta: endDelta,
-      accuracy_score: accuracyScore
+      start_delta: Number(startDelta.toFixed(3)),
+      end_delta: Number(endDelta.toFixed(3)),
+      accuracy_score: Number(accuracyScore.toFixed(2))
     };
   }
 }

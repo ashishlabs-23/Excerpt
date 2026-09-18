@@ -7,6 +7,8 @@ import fs from 'fs';
 import { Readable } from 'stream';
 import { DatabaseService, supabase } from '../services/supabaseService';
 import { firebaseDb } from '../services/firebaseService';
+import { clipRepository } from '../services/repositories/ClipRepository';
+import { jobRepository } from '../services/repositories/JobRepository';
 import { VideoProcessor } from '../services/videoProcessor';
 import { CaptionService } from '../services/captionService';
 import { StorageService } from '../services/storageService';
@@ -824,7 +826,7 @@ router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
   // 1. Try Firestore (primary)
   try {
     const firestoreJobs = await firebaseDb.listJobsForUser(userId, 15);
-    if (firestoreJobs && firestoreJobs.length >= 0) {
+    if (firestoreJobs && firestoreJobs.length > 0) {
       // Normalize Firestore field names to match frontend expectations
       const normalized = await Promise.all(firestoreJobs.map(async (j: any) => {
         let clips = await firebaseDb.getClipsForJob(j.id);
@@ -899,7 +901,7 @@ router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
 
 router.get('/jobs/active', requireUserJWT, async (req: Request, res: Response) => {
   const userId = req.user.id || req.user.uid;
-  const activeStatuses = ['queued', 'processing', 'retrying', 'transcribing', 'detecting_clips', 'recovering', 'cutting', 'captioning', 'rendering'];
+  const activeStatuses = ['queued', 'processing', 'retrying', 'transcribing', 'detecting_clips', 'recovering', 'cutting', 'captioning', 'rendering', 'waiting_render', 'ready_for_delivery_validation', 'finalizing'];
 
   // 1. Try Firestore (primary)
   try {
@@ -949,13 +951,18 @@ router.get('/clips', requireUserJWT, async (req: Request, res: Response) => {
       if (queue.clips) {
         for (const [id, c] of Object.entries(queue.clips)) {
           const clip: any = c;
+          const videoUrl = clip.videoUrl || clip.video_url || clip.storage_path;
+          // Ignore test fixtures, mock URLs, or invalid clips without playable media
+          if (!videoUrl || videoUrl.includes('storage.local') || id.startsWith('clip_dup_') || id.includes('test')) {
+            continue;
+          }
           if (!seenClipIds.has(id)) {
             seenClipIds.add(id);
             allClips.push({
               ...clip,
               id: clip.id || id,
               job_id: clip.jobId || clip.job_id,
-              video_url: clip.videoUrl || clip.video_url || clip.storage_path,
+              video_url: videoUrl,
               created_at: clip.createdAt || clip.created_at,
             });
           }
@@ -1194,6 +1201,30 @@ router.get('/clips', requireUserJWT, async (req: Request, res: Response) => {
 });
 
 /**
+ * @route   GET /api/video/clip/:clipId
+ * @desc    Get a specific clip by ID
+ */
+router.get('/clip/:clipId', requireUserJWT, async (req: Request, res: Response) => {
+  const clipId = String(req.params.clipId);
+  try {
+    const clip = await fetchClipAnywhere(clipId);
+    if (!clip) {
+      return res.status(404).json({ error: 'Clip not found' });
+    }
+
+    if (!denyUnlessOwner(getClipOwnerId(clip), req.user.id, res, 'clip')) {
+      return;
+    }
+
+    const signed = await signClips([clip]);
+    return res.json(signed[0] || clip);
+  } catch (error: any) {
+    console.error(`[VideoRoute]: Failed to fetch clip ${clipId}:`, error);
+    return res.status(500).json({ error: 'Failed to fetch clip' });
+  }
+});
+
+/**
  * @route   GET /api/video/download/:clipId
  * @desc    Proxy download for a clip to bypass CORS/security restrictions.
  *          Hardened: Accept-Ranges, keep-alive, client-disconnect cleanup,
@@ -1205,37 +1236,7 @@ router.get('/clips', requireUserJWT, async (req: Request, res: Response) => {
  * rejecting clips that have passed their 24-hour expiration.
  */
 async function fetchClipAnywhere(clipId: string): Promise<any> {
-  let clip: any = null;
-
-  // 1. Try Firebase / local queue
-  try {
-    const fbClip: any = await firebaseDb.getClip(clipId);
-    if (fbClip) {
-      clip = {
-        ...fbClip,
-        id: fbClip.id || clipId,
-        job_id: fbClip.jobId || fbClip.job_id,
-        user_id: fbClip.userId || fbClip.user_id,
-        video_url: fbClip.videoUrl || fbClip.video_url,
-      };
-    }
-  } catch {}
-
-  // 2. Try Supabase
-  if (!clip) {
-    try {
-      const db = new DatabaseService();
-      const sbClip = await db.getClip(clipId);
-      if (sbClip) clip = sbClip;
-    } catch {}
-  }
-
-  if (clip && isClipExpired(clip)) {
-    console.log(`[VideoRoute]: Clip ${clipId} accessed but is expired under 24h retention policy.`);
-    return null;
-  }
-
-  return clip;
+  return await clipRepository.getClip(clipId);
 }
 
 router.post('/play-token/:clipId', requireUserJWT, async (req: Request, res: Response) => {

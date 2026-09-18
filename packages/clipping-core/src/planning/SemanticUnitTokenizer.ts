@@ -31,7 +31,16 @@ export class SemanticUnitTokenizer {
    */
   public static tokenize(
     rawWords: Array<{ word: string; start: number; end: number; confidence?: number }>,
-    segments: Array<{ text: string; start: number; end: number; speaker?: string }> = []
+    segments: Array<{ text: string; start: number; end: number; speaker?: string }> = [],
+    options: {
+      /**
+       * Minimum inter-word silence (ms) required to treat a pause as a sentence boundary.
+       * Default 650ms — chosen because intra-sentence pauses (breath, emphasis) in
+       * conversational speech regularly hit 400–700ms.
+       * Pass profile.sentenceBreakPauseMs for content-type-aware thresholds.
+       */
+      minSentenceBreakMs?: number;
+    } = {}
   ): SentenceUnit[] {
     if (!rawWords || rawWords.length === 0) {
       return [];
@@ -62,7 +71,7 @@ export class SemanticUnitTokenizer {
 
       const nextWord = words[i + 1];
       const isTerminalWord = /[.!?]$/.test(currentWord.text) && !/^(mr|mrs|dr|ms|prof|inc|ltd|e\.g|i\.e)\.$/i.test(currentWord.text);
-      const isLargePause = nextWord ? (nextWord.startSec - currentWord.endSec) >= 0.55 : true;
+      const isLargePause = nextWord ? (nextWord.startSec - currentWord.endSec) >= ((options.minSentenceBreakMs ?? 650) / 1000) : true;
       const isLastWord = i === words.length - 1;
 
       // Check for speaker change if segments available

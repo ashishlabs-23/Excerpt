@@ -102,9 +102,12 @@ export class MicroJumpCutter {
       let matched = false;
 
       for (const seg of edlSegments) {
-        if (w.start >= seg.startSec && w.end <= seg.endSec + 0.05) {
-          const offsetInSeg = Math.max(0, w.start - seg.startSec);
-          const wordDuration = w.end - w.start;
+        // Check if word falls into or overlaps this segment
+        if (w.start < seg.endSec && w.end > seg.startSec) {
+          const clampedStart = Math.max(seg.startSec, w.start);
+          const clampedEnd = Math.min(seg.endSec, w.end);
+          const offsetInSeg = clampedStart - seg.startSec;
+          const wordDuration = Math.max(0.05, clampedEnd - clampedStart);
           retimedWords.push({
             word: w.word,
             start: Number((accumulatedTime + offsetInSeg).toFixed(3)),
@@ -114,15 +117,6 @@ export class MicroJumpCutter {
           break;
         }
         accumulatedTime += seg.durationSec;
-      }
-
-      if (!matched && edlSegments.length > 0) {
-        // Assign to nearest segment if boundary edge case
-        retimedWords.push({
-          word: w.word,
-          start: Number(accumulatedTime.toFixed(3)),
-          end: Number((accumulatedTime + (w.end - w.start)).toFixed(3)),
-        });
       }
     }
 
@@ -174,9 +168,11 @@ export class MicroJumpCutter {
     const concatInputs: string[] = [];
 
     edlSegments.forEach((seg, idx) => {
+      const fadeDur = Math.min(0.015, Math.max(0.005, Number((seg.durationSec * 0.05).toFixed(3))));
+      const fadeOutStart = Math.max(0, Number((seg.durationSec - fadeDur).toFixed(3)));
       filterSegments.push(
         `[0:v]trim=start=${seg.startSec}:end=${seg.endSec},setpts=PTS-STARTPTS[v${idx}]`,
-        `[0:a]atrim=start=${seg.startSec}:end=${seg.endSec},asetpts=PTS-STARTPTS[a${idx}]`
+        `[0:a]atrim=start=${seg.startSec}:end=${seg.endSec},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=${fadeDur}:curve=hsin,afade=t=out:st=${fadeOutStart}:d=${fadeDur}:curve=hsin[a${idx}]`
       );
       concatInputs.push(`[v${idx}][a${idx}]`);
     });

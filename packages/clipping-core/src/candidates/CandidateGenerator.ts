@@ -72,6 +72,116 @@ export class CandidateGenerator {
   }
 
   /**
+   * Deterministic, zero-GPU Prosodic & Semantic Saliency Window Discovery.
+   * Scans word-level transcripts for speech-rate acceleration (WPM bursts)
+   * and high-impact curiosity hook triggers to pre-filter candidate regions.
+   */
+  static discoverSalientWindows(
+    words: Array<{ word: string; start: number; end: number }>,
+    options: {
+      windowDurationSec?: number;
+      stepSec?: number;
+      minWordsPerWindow?: number;
+    } = {}
+  ): Array<{
+    startSec: number;
+    endSec: number;
+    wordCount: number;
+    wordsPerMinute: number;
+    prosodicSurgeScore: number;
+    hookKeywordCount: number;
+    saliencyScore: number;
+  }> {
+    if (!words || words.length === 0) return [];
+
+    const windowDur = options.windowDurationSec ?? 30.0;
+    const step = options.stepSec ?? 5.0;
+    const minWords = options.minWordsPerWindow ?? 15;
+
+    // Calculate active speech duration (excluding dead-air gaps > 1.5s)
+    let activeSpeechDuration = 0;
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      const wordDur = Math.max(0.05, w.end - w.start);
+      activeSpeechDuration += wordDur;
+      if (i > 0) {
+        const gap = w.start - words[i - 1].end;
+        if (gap > 0 && gap <= 1.5) {
+          activeSpeechDuration += gap;
+        }
+      }
+    }
+    const safeActiveDuration = Math.max(1, activeSpeechDuration);
+    const baselineWpm = (words.length / safeActiveDuration) * 60;
+
+    const hookKeywords = new Set([
+      'why', 'how', 'secret', 'never', 'always', 'mistake', 'truth', 'look',
+      'listen', 'stop', 'reason', 'crazy', 'insane', 'proven', 'shocking',
+      'imagine', 'nobody', 'everyone', 'biggest', 'worst', 'best', 'watch'
+    ]);
+
+    const results: Array<{
+      startSec: number;
+      endSec: number;
+      wordCount: number;
+      wordsPerMinute: number;
+      prosodicSurgeScore: number;
+      hookKeywordCount: number;
+      saliencyScore: number;
+    }> = [];
+
+    const maxTime = words[words.length - 1].end;
+    for (let t = words[0].start; t + windowDur <= maxTime + step; t += step) {
+      const windowStart = t;
+      const windowEnd = t + windowDur;
+
+      const windowWords = words.filter(w => w.end > windowStart && w.start < windowEnd);
+      if (windowWords.length < minWords) continue;
+
+      const actualDuration = Math.max(1, windowWords[windowWords.length - 1].end - windowWords[0].start);
+      const wpm = (windowWords.length / actualDuration) * 60;
+
+      // Prosodic surge: speaking rate acceleration above conversational baseline
+      const surgeRatio = baselineWpm > 0 ? (wpm - baselineWpm) / baselineWpm : 0;
+      const prosodicSurgeScore = Math.min(1.0, Math.max(0.0, surgeRatio * 1.5 + 0.3));
+
+      // Hook keyword triggers in opening clause
+      let hookKeywordCount = 0;
+      const openingWords = windowWords.slice(0, 10);
+      for (const w of openingWords) {
+        const clean = (w.word || '').toLowerCase().replace(/[^a-z]/g, '');
+        if (hookKeywords.has(clean)) {
+          hookKeywordCount++;
+        }
+      }
+      const hookKeywordScore = Math.min(1.0, hookKeywordCount * 0.35);
+
+      // Density score
+      const densityScore = Math.min(1.0, windowWords.length / 80);
+
+      // Saliency composite
+      const saliencyScore = Number((
+        prosodicSurgeScore * 0.40 +
+        hookKeywordScore * 0.40 +
+        densityScore * 0.20
+      ).toFixed(3));
+
+      results.push({
+        startSec: Number(windowStart.toFixed(2)),
+        endSec: Number(windowEnd.toFixed(2)),
+        wordCount: windowWords.length,
+        wordsPerMinute: Number(wpm.toFixed(1)),
+        prosodicSurgeScore: Number(prosodicSurgeScore.toFixed(2)),
+        hookKeywordCount,
+        saliencyScore,
+      });
+    }
+
+    // Sort by saliency descending
+    return results.sort((a, b) => b.saliencyScore - a.saliencyScore);
+  }
+
+  /**
    * Calculates the temporal overlap percentage of segment A relative to its own duration.
    */
   private static calculateOverlapPercentage(a: ScoredSegment, b: ScoredSegment): number {

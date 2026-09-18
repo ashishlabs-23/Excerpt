@@ -129,15 +129,40 @@ export class GraphBuilderService {
     return this.transcriptionService.transcribe(videoPath);
   }
 
+  /**
+   * Calculates an adaptive frame budget based on video duration to prevent
+   * visual blindspots on long videos while avoiding frame explosion.
+   */
+  public calculateAdaptiveMaxFrames(durationSec: number): number {
+    const envOverride = process.env.EXCERPT_MAX_ANALYSIS_FRAMES;
+    if (envOverride) {
+      const parsed = parseInt(envOverride, 10);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+
+    if (durationSec <= 60) {
+      return Math.min(120, Math.max(45, Math.round(durationSec * 2))); // ~2 fps for very short
+    } else if (durationSec <= 300) {
+      return Math.min(200, Math.max(90, Math.round(durationSec * 0.75))); // ~0.75 fps for up to 5 mins
+    } else if (durationSec <= 900) {
+      return Math.min(270, Math.max(150, Math.round(durationSec * 0.35))); // ~0.35 fps for up to 15 mins
+    } else if (durationSec <= 3600) {
+      return Math.min(360, Math.max(200, Math.round(durationSec * 0.15))); // up to 1 hr
+    } else {
+      return Math.min(480, Math.max(250, Math.round(durationSec * 0.08))); // capped at 480 for >1 hr
+    }
+  }
+
   private async extractVisual(videoPath: string, duration: number, tempDir: string) {
     const VISUAL_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
     const start = Date.now();
-    console.log(`[GraphBuilder]: [VISUAL_START] frames+cropEngine launching ts=${new Date().toISOString()}`);
+    const adaptiveMaxFrames = this.calculateAdaptiveMaxFrames(duration);
+    console.log(`[GraphBuilder]: [VISUAL_START] frames+cropEngine launching (budget: ${adaptiveMaxFrames} frames) ts=${new Date().toISOString()}`);
 
     return Promise.race([
       (async () => {
-        // Capped / windowed frame analysis (max 120 frames across duration) to eliminate frame explosion
-        await this.processor.extractAnalysisFrames(videoPath, 0, duration, tempDir, { maxFrames: 120 });
+        // Adaptive frame analysis based on duration to eliminate visual blindspots
+        await this.processor.extractAnalysisFrames(videoPath, 0, duration, tempDir, { maxFrames: adaptiveMaxFrames });
         console.log(`[GraphBuilder]: [VISUAL_FRAMES_DONE] elapsedMs=${Date.now() - start} ts=${new Date().toISOString()}`);
         // Run Python tracking logic over the extracted frames
         return this.cropEngine.analyze(tempDir, duration);

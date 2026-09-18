@@ -29,6 +29,7 @@ import { GenerativeVisualEngine } from '../services/intelligence/GenerativeVisua
 
 import { firebaseDb } from '../services/firebaseService';
 import { JobFinalizerService } from '../services/render/JobFinalizerService';
+import { StorageCapacityManager, storageCapacityManager } from '../services/StorageCapacityManager';
 
 const PHASE_E_BROLL_ENABLED = process.env.ENABLE_PHASE_E_BROLL === 'true';
 const generativeVisualEngine = new GenerativeVisualEngine();
@@ -96,6 +97,37 @@ export async function processRenderJob(renderJob: any) {
     const { clipStart, clipEnd, clipWords, cropPlan } = payload;
     const hookText: string = payload.hookText || '';
     const generationMode = (payload.generationMode as 'draft' | 'quality') || (payload.generation_mode as 'draft' | 'quality') || (process.env.RENDER_MODE === 'draft' ? 'draft' : 'quality');
+
+    // ─── 0. Pre-render capacity reservation ────────────────────────────────────
+    // Must happen BEFORE ensureSourceVideo/FFmpeg to block over-capacity renders.
+    // The reservation is held atomically in Postgres so multiple workers share truth.
+    const durationSec = (clipEnd ?? 0) - (clipStart ?? 0);
+    const estimatedBytes = StorageCapacityManager.estimateRenderBytes(durationSec, generationMode);
+    const reservation = await storageCapacityManager.requestReservation(
+      estimatedBytes,
+      renderJob.job_id,
+      workerInstanceId
+    );
+
+    if (!reservation.canProceed) {
+      // Storage is at capacity — defer without consuming compute
+      console.warn(
+        `[RenderWorker]: ⏸ Deferring render job ${renderJob.id} — storage capacity unavailable ` +
+        `(reason=${reservation.reason}, effective=${reservation.effectiveUsageBytes ? (reservation.effectiveUsageBytes / (1024 * 1024)).toFixed(1) + ' MB' : 'unknown'})`
+      );
+      await db.updateRenderJob(renderJob.id, {
+        status: 'storage_deferred',
+        last_error: `Storage capacity unavailable: ${reservation.reason ?? 'CRITICAL_PRESSURE'}`,
+      });
+      clearInterval(heartbeatInterval);
+      await db.getSupabase().from('render_worker_heartbeats').upsert({
+        worker_id: workerInstanceId,
+        last_heartbeat: new Date().toISOString(),
+        status: 'idle',
+      });
+      return;
+    }
+    // ──────────────────────────────────────────────────────────────────────────
     
     // Path Normalization: Reconstruct absolute paths dynamically
     const tempDir = path.join(process.cwd(), 'temp', renderJob.job_id);
@@ -268,33 +300,33 @@ export async function processRenderJob(renderJob: any) {
         }
       }
 
-      console.log(`[RenderWorker]: Executing clean base render (${generationMode}) for clip ${clipId}...`);
+      console.log(`[RenderWorker]: Executing unified single-pass render (${generationMode}) for clip ${clipId} (clean + captioned)...`);
       const renderStart = Date.now();
+      const subtitleToBurn = (hasCaptions && fs.existsSync(assFilePath)) ? assFilePath : undefined;
+
       await processor.renderSinglePassClip({
         inputPath: videoPath,
-        outputPath: cleanOutputPath,
+        outputPath: outputPath,
+        cleanOutputPath: cleanOutputPath,
         start: clipStart,
         duration: clipDurationSec,
         cropPlan,
-        subtitlePath: undefined, // Pristine clean clip for studio editor & clean downloads
+        subtitlePath: subtitleToBurn,
         bRollClips: renderedClips.length > 0 ? renderedClips : undefined,
         hookText: (PHASE_E_BROLL_ENABLED && hookText) ? hookText : undefined,
         totalDurationSec: actualRenderedDurationSec,
         generationMode,
       });
       cropMs = Date.now() - renderStart;
+      captionMs = 0; // Unified into single pass
 
-      if (hasCaptions && fs.existsSync(assFilePath)) {
-        console.log(`[RenderWorker]: Burning styled captions onto clip ${clipId}...`);
-        const capStart = Date.now();
-        await processor.burnInSubtitles(cleanOutputPath, outputPath, assFilePath);
-        captionMs = Date.now() - capStart;
-      } else {
-        if (isCaptionRequired && !allowFallback && wordsToCaption && wordsToCaption.length > 0) {
-          throw new Error(`[RenderWorker]: Terminal failure - Subtitle burn-in bypassed for clip ${clipId} under compulsory caption contract.`);
-        }
-        fs.copyFileSync(cleanOutputPath, outputPath);
-        captionMs = 0;
+      if (isCaptionRequired && !allowFallback && wordsToCaption && wordsToCaption.length > 0 && (!hasCaptions || !fs.existsSync(assFilePath))) {
+        throw new Error(`[RenderWorker]: Terminal failure - Subtitle burn-in bypassed for clip ${clipId} under compulsory caption contract.`);
+      }
+
+      // Ensure clean copy exists even if fallback occurred
+      if (!fs.existsSync(cleanOutputPath) && fs.existsSync(outputPath)) {
+        try { fs.copyFileSync(outputPath, cleanOutputPath); } catch {}
       }
 
       if (bRollDir) {
@@ -328,6 +360,26 @@ export async function processRenderJob(renderJob: any) {
       // 3. Thumbnail Generation
       const thumbnailPath = path.join(tempDir, `thumb-${clipId}.jpg`);
       await processor.generateThumbnail(outputPath, thumbnailPath, 1);
+
+      // 3b. Settle Storage Reservation with Actual Rendered Size
+      // Measures actual bytes of all produced deliverables before initiating upload
+      let actualRenderedBytes = 0;
+      if (fs.existsSync(outputPath)) actualRenderedBytes += fs.statSync(outputPath).size;
+      if (fs.existsSync(cleanOutputPath)) actualRenderedBytes += fs.statSync(cleanOutputPath).size;
+      if (fs.existsSync(thumbnailPath)) actualRenderedBytes += fs.statSync(thumbnailPath).size;
+
+      if (reservation.reservationId) {
+        const settleResult = await storageCapacityManager.settleReservation(
+          reservation.reservationId,
+          actualRenderedBytes
+        );
+        if (!settleResult.success) {
+          throw new Error(
+            `Render aborted before upload: actual artifact size (${(actualRenderedBytes / (1024 * 1024)).toFixed(1)} MB) ` +
+            `exceeds admission ceiling (${settleResult.reason})`
+          );
+        }
+      }
 
       // 4. Upload Assets to Storage
       await db.updateClipStatus(clipId, 'uploading');
@@ -536,6 +588,10 @@ export async function processRenderJob(renderJob: any) {
       });
     } finally {
       clearInterval(heartbeatInterval);
+      // Always release the storage reservation (success, failure, or cancellation)
+      if (reservation.reservationId) {
+        await storageCapacityManager.releaseReservation(reservation.reservationId);
+      }
       try {
         await db.getSupabase()
           .from('render_worker_heartbeats')

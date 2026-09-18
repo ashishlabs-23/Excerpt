@@ -142,9 +142,24 @@ export const highQualityEncodeArgs = (mode?: GenerationMode) => {
     ];
   }
 
+  if (hwAccel === 'qsv') {
+    return [
+      '-c:v', 'h264_qsv',
+      '-preset', isDraft ? 'veryfast' : 'medium',
+      '-global_quality', isDraft ? '25' : '20',
+      '-pix_fmt', 'nv12',
+      '-c:a', 'aac',
+      '-b:a', isDraft ? '192k' : '320k',
+      '-ar', '48000',
+      '-movflags', '+faststart'
+    ];
+  }
+
+  // CPU libx264 - Baseline tested profile with multi-threading
   return [
     '-c:v', 'libx264',
     '-preset', isDraft ? 'veryfast' : 'fast',
+    '-threads', '0',
     '-crf', isDraft ? '22' : '18',
     '-maxrate', isDraft ? '8M' : '12M',
     '-bufsize', isDraft ? '12M' : '16M',
@@ -193,6 +208,7 @@ export interface SmartCropPlan {
 export interface SinglePassRenderOptions {
   inputPath: string;
   outputPath: string;
+  cleanOutputPath?: string;
   start: number;
   duration: number;
   cropPlan?: any;
@@ -948,6 +964,18 @@ export class VideoProcessor {
           }
         }
 
+        const isDualOutput = Boolean(options.cleanOutputPath && subtitlePath && fs.existsSync(subtitlePath));
+        let cleanV = currentV;
+
+        if (isDualOutput) {
+          // Split clean video stream before burning subtitles so we can output both clean and captioned in a single pass
+          const nextClean = '[v_clean_out]';
+          const nextForCaps = '[v_for_caps]';
+          filterParts.push(`${currentV}split${nextClean}${nextForCaps}`);
+          cleanV = nextClean;
+          currentV = nextForCaps;
+        }
+
         // 2. ASS Subtitle Burn-in
         if (subtitlePath && fs.existsSync(subtitlePath)) {
           const safeAssPath = path.resolve(subtitlePath).replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\\\'");
@@ -988,29 +1016,64 @@ export class VideoProcessor {
         ].join(',');
 
         const hasAudio = await this.hasAudioStream(inputPath);
-        let audioMap = '[outa]';
-        if (hasAudio) {
-          filterParts.push(`[0:a]${audioFilter}[outa]`);
+        let audioCleanMap = '[outa]';
+        let audioCaptionedMap = '[outa]';
+        if (isDualOutput) {
+          audioCleanMap = '[outa1]';
+          audioCaptionedMap = '[outa2]';
+          if (hasAudio) {
+            filterParts.push(`[0:a]${audioFilter},asplit[outa1][outa2]`);
+          } else {
+            filterParts.push(`anullsrc=r=48000:cl=stereo,atrim=0:${duration},asplit[outa1][outa2]`);
+          }
         } else {
-          filterParts.push(`anullsrc=r=48000:cl=stereo,atrim=0:${duration}[outa]`);
+          if (hasAudio) {
+            filterParts.push(`[0:a]${audioFilter}[outa]`);
+          } else {
+            filterParts.push(`anullsrc=r=48000:cl=stereo,atrim=0:${duration}[outa]`);
+          }
         }
 
         const filterGraph = filterParts.join(';');
 
-        const args = [
-          ...inputs,
-          '-filter_complex', filterGraph,
-          '-map', currentV,
-          '-map', audioMap,
-          '-avoid_negative_ts', 'make_zero',
-          '-t', String(duration),
-          ...highQualityEncodeArgs(generationMode),
-          '-y',
-          outputPath
-        ];
+        let args: string[] = [];
+        if (isDualOutput && options.cleanOutputPath) {
+          args = [
+            ...inputs,
+            '-filter_complex', filterGraph,
+            // Clean output branch
+            '-map', cleanV,
+            '-map', audioCleanMap,
+            '-avoid_negative_ts', 'make_zero',
+            '-t', String(duration),
+            ...highQualityEncodeArgs(generationMode),
+            '-y',
+            options.cleanOutputPath,
+            // Captioned output branch
+            '-map', currentV,
+            '-map', audioCaptionedMap,
+            '-avoid_negative_ts', 'make_zero',
+            '-t', String(duration),
+            ...highQualityEncodeArgs(generationMode),
+            '-y',
+            outputPath
+          ];
+        } else {
+          args = [
+            ...inputs,
+            '-filter_complex', filterGraph,
+            '-map', currentV,
+            '-map', audioCleanMap,
+            '-avoid_negative_ts', 'make_zero',
+            '-t', String(duration),
+            ...highQualityEncodeArgs(generationMode),
+            '-y',
+            outputPath
+          ];
+        }
 
         const runner = context.processRunner || new ProductionProcessRunner();
-        console.log(`[VideoProcessor]: Executing unified single-pass render (${generationMode || 'draft'}) -> ${outputPath}`);
+        console.log(`[VideoProcessor]: Executing unified single-pass render (${generationMode || 'draft'}) -> ${outputPath}${isDualOutput ? ` + ${options.cleanOutputPath}` : ''}`);
         const managed = runner.spawn(bin, args);
         context.registerProcess(managed);
 
@@ -1027,10 +1090,19 @@ export class VideoProcessor {
             rootCause: output.stderr,
           });
         }
+
+        // If cleanOutputPath was requested without subtitles (clean copy), mirror directly
+        if (options.cleanOutputPath && !isDualOutput && fs.existsSync(outputPath)) {
+          try { fs.copyFileSync(outputPath, options.cleanOutputPath); } catch {}
+        }
+
         console.log('[VideoProcessor]: Unified single-pass render complete');
         return outputPath;
       },
-      validateOutput: (outPath) => fs.existsSync(outPath) && fs.statSync(outPath).size > 0,
+      validateOutput: (outPath) =>
+        fs.existsSync(outPath) &&
+        fs.statSync(outPath).size > 0 &&
+        (!options.cleanOutputPath || (fs.existsSync(options.cleanOutputPath) && fs.statSync(options.cleanOutputPath).size > 0)),
     });
   }
 

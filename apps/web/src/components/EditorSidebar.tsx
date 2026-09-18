@@ -66,6 +66,7 @@ const CAPTION_THEMES = [
   { id: 'TikTok', name: 'TikTok Style', desc: 'High contrast yellow stroke', style: 'text-[#facc15] font-black tracking-tight' },
   { id: 'Hormozi', name: 'Alex Hormozi', desc: 'Yellow italic pop & rotation', style: 'text-[#eab308] font-black italic' },
   { id: 'MrBeast', name: 'MrBeast Neon', desc: 'Neon green bold outline', style: 'text-[#22c55e] font-black uppercase' },
+  { id: 'Neon', name: 'Cyber Neon', desc: 'Electric cyan glow effect', style: 'text-[#00ffff] font-black tracking-wider' },
   { id: 'Minimal', name: 'Minimalist', desc: 'Clean, elegant, white subtitle', style: 'text-white font-medium' },
 ];
 

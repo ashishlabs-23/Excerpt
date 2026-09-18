@@ -28,4 +28,48 @@ export class TemporalConsistencyEngine {
             type: this.currentStableLayout
         };
     }
+
+    /**
+     * Stabilizes horizontal & vertical focal center tracking for active speakers.
+     * Enforces the Cinematic Hard-Cut vs Pan rule:
+     * - Shift < 8%: Deadband (camera locked, 0 jitter)
+     * - Shift 8-18%: Smooth subtle tracking
+     * - Shift > 18%: Instantaneous Hard Cut (avoids nauseating pans across multi-speaker interviews)
+     */
+    public stabilizeFocalPoint(
+        previousPoint: { x: number; y: number },
+        proposedPoint: { x: number; y: number }
+    ): { x: number; y: number; transition: 'locked' | 'smooth_pan' | 'hard_cut' } {
+        const dx = Math.abs(proposedPoint.x - previousPoint.x);
+        const dy = Math.abs(proposedPoint.y - previousPoint.y);
+
+        // 1. Deadband threshold: subtle micro-movement is locked to eliminate jitter
+        if (dx <= 0.08 && dy <= 0.08) {
+            return {
+                x: previousPoint.x,
+                y: previousPoint.y,
+                transition: 'locked'
+            };
+        }
+
+        // 2. Hard-cut threshold: major speaker switch or large position change
+        if (dx >= 0.18 || dy >= 0.25) {
+            return {
+                x: Number(proposedPoint.x.toFixed(4)),
+                y: Number(proposedPoint.y.toFixed(4)),
+                transition: 'hard_cut'
+            };
+        }
+
+        // 3. Smooth tracking range: exponential moving average
+        const smoothAlpha = 0.30;
+        const smoothedX = previousPoint.x + (proposedPoint.x - previousPoint.x) * smoothAlpha;
+        const smoothedY = previousPoint.y + (proposedPoint.y - previousPoint.y) * smoothAlpha;
+
+        return {
+            x: Number(smoothedX.toFixed(4)),
+            y: Number(smoothedY.toFixed(4)),
+            transition: 'smooth_pan'
+        };
+    }
 }

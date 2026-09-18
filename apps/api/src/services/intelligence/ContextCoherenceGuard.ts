@@ -43,6 +43,12 @@ export class ContextCoherenceGuard {
     ['literally'],
     ['you', 'see'],
     ['i', 'think', 'that'],
+    ['see', 'you', 'then'],
+    ['see', 'you', 'later'],
+    ['see', 'ya'],
+    ['all', 'right', 'then'],
+    ['okay', 'bye'],
+    ['bye', 'bye'],
   ];
 
   /**

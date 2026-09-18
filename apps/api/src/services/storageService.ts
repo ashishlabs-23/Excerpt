@@ -387,10 +387,18 @@ export class StorageService {
   }
 
   async checkObjectExists(key: string): Promise<boolean> {
-    // 0. Check local filesystem first
+    // 0. Check local filesystem first across standard local clip paths
     try {
-      const localPath = path.resolve(process.cwd(), 'temp', key);
-      if (fs.existsSync(localPath)) return true;
+      const cleanKey = key.startsWith('clips/') ? key.substring(6) : key;
+      const candidates = [
+        path.resolve(process.cwd(), 'temp', key),
+        path.resolve(process.cwd(), 'temp', 'clips', key),
+        path.resolve(process.cwd(), 'temp', cleanKey),
+        path.resolve(process.cwd(), 'temp', 'clips', cleanKey),
+      ];
+      for (const p of candidates) {
+        if (fs.existsSync(p)) return true;
+      }
     } catch {}
 
     const firebaseBucket = this.getFirebaseBucket();

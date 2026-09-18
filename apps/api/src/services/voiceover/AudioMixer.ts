@@ -192,8 +192,9 @@ export class AudioMixer {
     const fadeStart = Math.max(0, targetDuration - fadeDuration);
     const masteringFilter = [
       'highpass=f=80',
-      `afade=t=in:st=0:d=${fadeDuration}`,
-      `afade=t=out:st=${fadeStart.toFixed(2)}:d=${fadeDuration}`,
+      'equalizer=f=6500:t=q:w=2.0:g=-2.5',
+      `afade=t=in:st=0:d=${fadeDuration}:curve=hsin`,
+      `afade=t=out:st=${fadeStart.toFixed(2)}:d=${fadeDuration}:curve=hsin`,
       'loudnorm=I=-16:TP=-1.5:LRA=11'
     ].join(',');
 
@@ -208,17 +209,18 @@ export class AudioMixer {
         masteredAudioPath
       ]);
     } else {
-      // Intelligent Sidechain Ducking
+      // Intelligent Sidechain Ducking with Isolated Sidechain Control
       console.log(`[AudioMixer]: Applying sidechain ducking to original video audio track...`);
-      const duckThreshold = 0.08;
-      const duckRatio = 4.0;
+      const duckThreshold = 0.04;
+      const duckRatio = 5.0;
       const attack = plan.duckingPolicy?.attackMs ?? 25;
       const release = plan.duckingPolicy?.releaseMs ?? 250;
 
       // [0:a] is original video audio, [1:a] is assembled voiceover track
       const duckingFilterGraph = [
-        `[0:a][1:a]sidechaincompress=threshold=${duckThreshold}:ratio=${duckRatio}:attack=${attack}:release=${release}[ducked_bg]`,
-        `[ducked_bg][1:a]amix=inputs=2:duration=first:weights=0.8 1.2:dropout_transition=0,${masteringFilter}[master_out]`
+        `[1:a]asplit=2[vo_sc][vo_in]`,
+        `[0:a][vo_sc]sidechaincompress=threshold=${duckThreshold}:ratio=${duckRatio}:attack=${attack}:release=${release}[ducked_bg]`,
+        `[ducked_bg][vo_in]amix=inputs=2:duration=first:weights=0.85 1.15:dropout_transition=0,${masteringFilter}[master_out]`
       ].join(';');
 
       await this.runCommand(ffmpegBin, [

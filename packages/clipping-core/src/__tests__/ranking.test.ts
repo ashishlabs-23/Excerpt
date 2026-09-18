@@ -1,5 +1,5 @@
 import { ClipRankingEngine } from '../ranking/ClipRankingEngine';
-import { STANDARD_PROFILE, PODCAST_PROFILE, validateProfile } from '../ranking/profiles';
+import { STANDARD_PROFILE, PODCAST_PROFILE, VIRAL_RETENTION_PROFILE, validateProfile } from '../ranking/profiles';
 import { AuditableEvaluation } from '../evaluation/types';
 import { createCorrelationId } from '../types/correlation';
 
@@ -111,5 +111,17 @@ describe('ClipRankingEngine (Pure Core Component)', () => {
     // Standard profile gives higher weight to visual/hook than info density relative to podcast
     // Just verify the ordering is different because of data-driven profiles
     expect(standardPlan.renderJobs[0].candidateId).not.toBe(podcastPlan.renderJobs[0].candidateId);
+  });
+
+  it('5. VIRAL_RETENTION_PROFILE satisfies dominance ceiling and prioritizes hook & story', () => {
+    // Validate dominance ceiling (<30%)
+    expect(() => validateProfile(VIRAL_RETENTION_PROFILE)).not.toThrow();
+
+    // High hook candidate vs low hook candidate
+    const cHook = mockBaseEvaluation('high-hook', 0, { hook: 0.95, storyCompleteness: 0.85, emotion: 0.8 }, 0.9, true);
+    const cLowHook = mockBaseEvaluation('low-hook', 60000, { hook: 0.30, storyCompleteness: 0.85, emotion: 0.8 }, 0.9, true);
+
+    const plan = ClipRankingEngine.rank([cLowHook, cHook], VIRAL_RETENTION_PROFILE, 2);
+    expect(plan.renderJobs[0].candidateId).toBe('high-hook');
   });
 });

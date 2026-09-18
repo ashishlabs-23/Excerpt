@@ -133,7 +133,12 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
         const response = await authFetch('/api/video/clips');
         if (response.ok) {
           const data = await response.json();
-          const valid = Array.isArray(data) ? data.filter((c: any) => Boolean(c.video_url || c.video_file || c.storage_path) && c.status !== 'pending') : [];
+          const valid = Array.isArray(data) ? data.filter((c: any) => 
+            Boolean(c.video_url || c.video_file || c.storage_path) && 
+            c.status !== 'pending' &&
+            !String(c.video_url || '').includes('storage.local') &&
+            !String(c.id || '').startsWith('clip_dup_')
+          ) : [];
           setAllClips(valid);
         }
       }
@@ -317,6 +322,12 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
           <AnimatePresence mode="popLayout">
             {allClips.map((clip, index) => {
               const generationMode = clip.metadata?.generation_mode || "ai";
+              const rawDuration = typeof clip.end_time === 'number' && typeof clip.start_time === 'number'
+                ? clip.end_time - clip.start_time
+                : null;
+              const clipDuration = (rawDuration !== null && !isNaN(rawDuration) && rawDuration > 0)
+                ? `${Math.round(rawDuration)}s`
+                : null;
 
               return (
               <motion.div 
@@ -351,9 +362,11 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
                   
                   <div className="absolute top-6 left-6 right-6 flex justify-between items-start">
                     <div className="flex flex-col gap-2">
-                      <span className="px-3 py-1.5 rounded-full glass-card border-white/10 text-[10px] font-black tracking-[0.2em] text-white uppercase backdrop-blur-2xl">
-                        {Math.round(clip.end_time - clip.start_time)}s DURATION
-                      </span>
+                      {clipDuration && (
+                        <span className="px-3 py-1.5 rounded-full glass-card border-white/10 text-[10px] font-black tracking-[0.2em] text-white uppercase backdrop-blur-2xl">
+                          {clipDuration} DURATION
+                        </span>
+                      )}
                       <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full glass-card border-emerald-500/20 text-[10px] font-black tracking-[0.2em] text-emerald-400 uppercase backdrop-blur-2xl">
                         <TrendingUp size={10} /> {clip.metadata?.virality_score || 94}% VIRAL
                       </div>
@@ -449,7 +462,7 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
                 <div className="p-5 sm:p-8 pb-7 sm:pb-10 flex flex-col flex-grow">
                   <div className="flex flex-col gap-3 mb-6">
                     <h3 className="text-xl font-bold text-white tracking-tight group-hover:text-primary transition-colors duration-300">
-                      {clip.title || clip.metadata?.title || "Clip #"+clip.id.slice(0,4)}
+                      {clip.title || clip.metadata?.title || `Clip #${clip.id.replace(/^clip_/, '').slice(0, 6) || clip.id}`}
                     </h3>
                     <p className="text-[11px] text-white/40 font-medium leading-relaxed line-clamp-2">
                       {clip.content}

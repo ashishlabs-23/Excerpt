@@ -14,6 +14,10 @@ describe('P4.4 Event-Driven Render Fan-In Coordination', () => {
     firebaseDb.clearAllJobs();
   });
 
+  afterAll(() => {
+    firebaseDb.clearAllJobs();
+  });
+
   it('correctly tracks terminal states and only claims when all jobs terminate', async () => {
     const singleJobId = `job_fan_in_seq_${Date.now()}`;
     // Seed parent job

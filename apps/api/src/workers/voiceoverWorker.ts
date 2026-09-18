@@ -10,6 +10,8 @@ import { AudioMixer } from '../services/voiceover/AudioMixer';
 import { VoiceoverPlan, buildVoiceoverPlan } from '../services/voiceover/VoiceoverPlan';
 import { VoiceQualityEngine } from '../services/VoiceQualityEngine';
 
+import { firebaseDb } from '../services/firebaseService';
+
 dotenv.config();
 
 const db = new DatabaseService();
@@ -29,22 +31,21 @@ async function processVoiceoverClip(vc: any) {
 
   const updateStage = async (stage: string) => {
     console.log(`[VoiceoverWorker]: Stage -> ${stage}`);
-    await db.getSupabase().from('voiceover_clips').update({
-      status: stage,
-      updated_at: new Date().toISOString()
-    }).eq('id', vcId);
+    try {
+      await db.getSupabase().from('voiceover_clips').update({
+        status: stage,
+        updated_at: new Date().toISOString()
+      }).eq('id', vcId);
+    } catch {}
   };
 
   try {
-    // 1. Fetch original clip to get the video url and durations
-    const { data: clipData, error: clipErr } = await db.getSupabase()
-      .from('clips')
-      .select('video_url, storage_path, start_time, end_time')
-      .eq('id', vc.source_clip_id)
-      .single();
+    // 1. Fetch original clip to get the video url and durations (with mirror fallback)
+    const clipData = (await db.getClip(vc.source_clip_id).catch(() => null)) ||
+                     (await firebaseDb.getClip(vc.source_clip_id).catch(() => null));
 
-    if (clipErr || !clipData) {
-      throw new Error(`Source clip not found: ${clipErr?.message}`);
+    if (!clipData) {
+      throw new Error(`Source clip not found: ${vc.source_clip_id}`);
     }
 
     const sourceVideoUrl = clipData.storage_path || clipData.video_url;

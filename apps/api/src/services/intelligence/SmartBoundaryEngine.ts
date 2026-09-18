@@ -49,18 +49,12 @@ export class SmartBoundaryEngine {
       };
     }
 
-    const bounds = context.storyGraph && 'getNarrativeBounds' in context.storyGraph ? (context.storyGraph as any).getNarrativeBounds(null) : null;
+    const baseBounds = (context.storyGraph && 'getNarrativeBounds' in context.storyGraph)
+      ? (context.storyGraph as any).getNarrativeBounds(null) || { start: event.start, end: event.end }
+      : { start: event.start, end: event.end };
 
-    if (!bounds) {
-      return {
-        start: Number(event.start.toFixed(2)),
-        end: Number(event.end.toFixed(2)),
-        duration: Number((event.end - event.start).toFixed(2))
-      };
-    }
-
-    let renderStart = bounds.start;
-    let renderEnd = bounds.end;
+    let renderStart = baseBounds.start;
+    let renderEnd = baseBounds.end;
     let shadowBounds = undefined;
 
     if (context.topNarratives && context.topNarratives.length > 0) {
@@ -73,8 +67,8 @@ export class SmartBoundaryEngine {
       if (candidatePolicy) {
         shadowBounds = {
           candidateId: candidatePolicy.id,
-          candidateStart: bounds.start - candidatePolicy.avg_pre_context,
-          candidateEnd: bounds.end + candidatePolicy.avg_post_context
+          candidateStart: baseBounds.start - candidatePolicy.avg_pre_context,
+          candidateEnd: baseBounds.end + candidatePolicy.avg_post_context
         };
       }
 

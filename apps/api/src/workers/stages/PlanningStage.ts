@@ -86,9 +86,10 @@ export class PlanningStage implements PipelineStage<PlanningInput, PlanningOutpu
         );
         (clip as any).words = rawClipWords;
 
-        // Plan micro jump-cuts to eliminate pauses
+        // Plan micro jump-cuts to eliminate pauses (bypassed for documentary/macro narrative to preserve dramatic pacing)
+        const isDocumentary = generationMode === 'documentary' || (clip as any).scale_type === 'macro';
         let jumpCutPlan: any = null;
-        if (rawClipWords && rawClipWords.length > 0) {
+        if (rawClipWords && rawClipWords.length > 0 && !isDocumentary) {
           try {
             const plan = this.jumpCutter.planJumpCuts(rawClipWords, renderStart, renderEnd);
             jumpCutPlan = {

@@ -4,6 +4,15 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { DatabaseService } from './supabaseService';
 import { StorageService, StorageObjectMetadata } from './storageService';
 import { firebaseDb } from './firebaseService';
+import {
+  EXPIRATION_HOURS_PROCESSING,
+  STORAGE_EVICTION_TRIGGER_BYTES,
+  classifyPressure,
+  getStoragePolicyConfigSummary,
+} from './StoragePolicyConfig';
+import { StorageCapacityManager } from './StorageCapacityManager';
+import { QuotaEvictionEngine } from './QuotaEvictionEngine';
+import { EligibilityContext } from './EvictionEligibility';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hardened RetentionService (Gen-4 Architectural Specification)
@@ -35,7 +44,13 @@ import { firebaseDb } from './firebaseService';
 //    DISCOVERED -> ELIGIBLE -> (PROTECTED with audit reason | EXPIRING) -> DELETE_REQUESTED -> DELETED / RETRY.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const RETENTION_HOURS = parseInt(process.env.RETENTION_HOURS ?? '24', 10);
+// DEPRECATED: RETENTION_HOURS applied to all clips — now only applies to processing artifacts
+// Use EXPIRATION_HOURS_PROCESSING from StoragePolicyConfig for the explicit processing prefix set.
+// Creator clips are NOT subject to time-based expiration (only explicit expires_at or quota eviction).
+export const RETENTION_HOURS = EXPIRATION_HOURS_PROCESSING;
+// DEPRECATED: Use STORAGE_EVICTION_TRIGGER_BYTES / STORAGE_TARGET_BYTES from StoragePolicyConfig
+export const STORAGE_MAX_BYTES = STORAGE_EVICTION_TRIGGER_BYTES;
+export const STORAGE_TARGET_FREE_BYTES = 0; // unused — eviction target now in StoragePolicyConfig
 const BATCH_SIZE = 50; // max rows processed per sweep cycle
 const LOCK_LEASE_MS = 5 * 60 * 1000; // 5-minute maximum lock hold
 const DURABLE_RETRY_FALLBACK = path.resolve(process.cwd(), 'data', 'retention', 'retention_retry_queue.json');
@@ -84,6 +99,7 @@ export interface RetentionTelemetry {
   deleted: number;
   retrying: number;
   unknown: number;
+  quotaEvicted?: number;
   keysRemoved: string[];
   protectionBreakdown: Record<string, number>;
   durationMs: number;
@@ -175,10 +191,16 @@ export class RetentionService {
     const startTime = Date.now();
     const now = new Date();
     const nowIso = now.toISOString();
-    const cutoffDate = new Date(now.getTime() - RETENTION_HOURS * 60 * 60 * 1000);
+    // Expiration cutoff applies ONLY to processing artifacts (jobs/, sources/, test_*/)
+    // Creator clips are excluded — they expire only via explicit expires_at or quota eviction
+    const cutoffDate = new Date(now.getTime() - EXPIRATION_HOURS_PROCESSING * 60 * 60 * 1000);
     const cutoffIso = cutoffDate.toISOString();
 
-    console.log(`[Retention]: 🧹 Starting hardened 24h retention sweep (policy: ${RETENTION_HOURS}h, cutoff: ${cutoffIso})`);
+    console.log(
+      `[Retention]: 🧹 Starting storage control plane sweep ` +
+      `(processing_expiration=${EXPIRATION_HOURS_PROCESSING}h, cutoff=${cutoffIso}, ` +
+      `policy=${JSON.stringify(getStoragePolicyConfigSummary())})`
+    );
 
     const telemetry: RetentionTelemetry = {
       lastSweep: nowIso,
@@ -220,6 +242,9 @@ export class RetentionService {
       await this.reconcileStorageJobs(telemetry, cutoffDate, activeJobIds);
       await this.reconcileStorageSources(telemetry, cutoffDate, activeSourceHashes, referencedSourceHashes);
       await this.reconcileTestArtifacts(telemetry, cutoffDate);
+
+      // 7. Quota Policy Sweep (two-stage: WARNING logs, EVICTION delegates to QuotaEvictionEngine)
+      await this.runQuotaPolicySweep(supabase, telemetry);
 
       telemetry.completedAt = new Date().toISOString();
       telemetry.durationMs = Date.now() - startTime;
@@ -865,6 +890,101 @@ export class RetentionService {
     }
 
     return false;
+  }
+
+  /**
+   * Capacity-based LRU Eviction:
+   * If total storage exceeds STORAGE_MAX_BYTES (default: 850 MB for Supabase Free Tier),
+   * DEPRECATED: Replaced by QuotaEvictionEngine.evictToTarget() (artifact-level).
+   * Kept as a shim so existing test references compile; delegates to the new engine.
+   * @deprecated Use runQuotaPolicySweep() via RetentionService.run() instead.
+   */
+  public async evictClipsToSatisfyQuota(
+    supabase: SupabaseClient,
+    telemetry: RetentionTelemetry
+  ): Promise<number> {
+    console.warn('[Retention]: evictClipsToSatisfyQuota() is deprecated. Delegating to QuotaEvictionEngine.');
+    await this.runQuotaPolicySweep(supabase, telemetry);
+    return telemetry.quotaEvicted ?? 0;
+  }
+
+  /**
+   * Quota Policy Sweep — the authoritative two-stage capacity management path.
+   *
+   * NORMAL   (<75%)  → log, no eviction
+   * WARNING  (75–85%) → log elevated warning
+   * EVICTION (>85%)  → delegate to QuotaEvictionEngine.evictToTarget()
+   * CRITICAL (>95%)  → evict + set canAcceptRender=false flag
+   */
+  private async runQuotaPolicySweep(
+    supabase: SupabaseClient,
+    telemetry: RetentionTelemetry
+  ): Promise<void> {
+    try {
+      const capacityManager = StorageCapacityManager.getInstance();
+      const report = await capacityManager.getCapacityReport();
+      const { pressureLevel, effectiveUsageBytes, percentUsed } = report;
+
+      console.log(
+        `[Retention/Quota]: Storage pressure=${pressureLevel} ` +
+        `(${(effectiveUsageBytes / (1024 * 1024)).toFixed(1)} MB effective, ${percentUsed}%)`
+      );
+
+      if (pressureLevel === 'NORMAL') return;
+
+      if (pressureLevel === 'WARNING') {
+        console.warn(
+          `[Retention/Quota]: ⚠️ Storage at WARNING (${percentUsed}%). ` +
+          `No eviction yet — monitoring.`
+        );
+        return;
+      }
+
+      // EVICTION or CRITICAL — delegate to artifact-level engine
+      if (pressureLevel === 'EVICTION' || pressureLevel === 'CRITICAL') {
+        if (pressureLevel === 'CRITICAL') {
+          console.error(
+            `[Retention/Quota]: 🚨 Storage CRITICAL (${percentUsed}%). ` +
+            `New renders will be deferred until eviction recovers headroom.`
+          );
+        }
+
+        // Build eligibility context from active workloads
+        const { activeJobIds } = await this.resolveActiveWorkloads(supabase);
+        const context: EligibilityContext = {
+          activeJobIds: new Set(activeJobIds),
+          activeClipProjectIds: new Set<string>(),   // TODO: load from ClipProject table when built
+          pendingPublicationClipIds: new Set<string>(),
+        };
+
+        const evictionEngine = QuotaEvictionEngine.getInstance();
+        const evictionReport = await evictionEngine.evictToTarget(
+          supabase,
+          effectiveUsageBytes,
+          context
+        );
+
+        telemetry.quotaEvicted = (telemetry.quotaEvicted ?? 0) + evictionReport.evictedCount;
+        telemetry.deleted += evictionReport.evictedCount;
+
+        if (evictionReport.blocked) {
+          console.error(
+            `[Retention/Quota]: 🚫 CAPACITY_BLOCKED — ${evictionReport.evictedCount} artifacts evicted ` +
+            `(${(evictionReport.bytesFreed / (1024 * 1024)).toFixed(1)} MB freed) ` +
+            `but deficit not satisfied. Render jobs will remain storage_deferred.`
+          );
+          telemetry.lastError = 'CAPACITY_BLOCKED: insufficient evictable capacity';
+        } else {
+          console.log(
+            `[Retention/Quota]: ✅ Quota eviction complete — ` +
+            `evicted=${evictionReport.evictedCount} artifacts, ` +
+            `freed=${(evictionReport.bytesFreed / (1024 * 1024)).toFixed(1)} MB`
+          );
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[Retention/Quota]: Quota sweep error: ${err.message}`);
+    }
   }
 
   private async expireQueueClips(

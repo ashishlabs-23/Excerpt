@@ -11,8 +11,22 @@ export function mapDbClipsToResult(clips: any[] = []) {
       title: clip.title || clip.metadata?.title || 'Generated Short',
       caption: clip.caption || clip.content || clip.metadata?.caption || 'AI Generated Clip',
       content: clip.content || clip.caption || clip.metadata?.caption || 'AI Generated Clip',
-      start_time: typeof clip.start_time === 'number' ? clip.start_time : (clip.startTime || 0),
-      end_time: typeof clip.end_time === 'number' ? clip.end_time : (clip.endTime || 60),
+      start_time: typeof clip.start_time === 'number'
+        ? clip.start_time
+        : typeof clip.startTime === 'number'
+        ? clip.startTime
+        : typeof clip.startMs === 'number'
+        ? clip.startMs / 1000
+        : 0,
+      end_time: typeof clip.end_time === 'number'
+        ? clip.end_time
+        : typeof clip.endTime === 'number'
+        ? clip.endTime
+        : typeof clip.endMs === 'number'
+        ? clip.endMs / 1000
+        : typeof clip.durationMs === 'number'
+        ? ((clip.startMs || 0) + clip.durationMs) / 1000
+        : 60,
       metadata: clip.metadata,
       status: clip.status || 'uploaded',
     }));

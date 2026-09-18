@@ -18,7 +18,7 @@ export class SituationEngine {
     // Extract context from orchestration if available
     const scoreboardData = (context as any).orch_scoreboard || {};
     const baseSituationContext = {
-      minute: scoreboardData.minute || Math.floor(Math.random() * 90),
+      minute: scoreboardData.minute !== undefined ? scoreboardData.minute : 0,
       scoreDiff: scoreboardData.score_diff !== undefined ? scoreboardData.score_diff : 0,
       matchState: scoreboardData.match_state || 'playing',
       aggregateScore: scoreboardData.aggregate_score || undefined,

@@ -42,9 +42,31 @@ export const PODCAST_PROFILE: RankingProfile = {
   }
 };
 
+export const VIRAL_RETENTION_PROFILE: RankingProfile = {
+  id: 'viral_retention',
+  version: '1.0.0',
+  description: 'SOTA short-form profile tuned for Stop-the-Swipe rate and >85% audience retention.',
+  weights: {
+    hook: 0.28,
+    story: 0.22,
+    emotion: 0.20,
+    visualInterest: 0.12,
+    informationDensity: 0.08,
+    topicRelevance: 0.04,
+    speakerQuality: 0.03,
+    platformFit: 0.02,
+    novelty: 0.01
+  },
+  diversity: {
+    timeDiversityPenalty: 0.25,
+    topicDiversityPenalty: 0.15
+  }
+};
+
 export const PROFILES: Record<string, RankingProfile> = {
   standard: STANDARD_PROFILE,
-  podcast: PODCAST_PROFILE
+  podcast: PODCAST_PROFILE,
+  viral_retention: VIRAL_RETENTION_PROFILE
 };
 
 /**

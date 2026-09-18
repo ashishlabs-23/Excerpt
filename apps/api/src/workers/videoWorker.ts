@@ -64,7 +64,7 @@ import { validateClip } from '../services/clipValidator';
 import { broadcastGraphicsDetector } from '../services/intelligence/BroadcastGraphicsDetector';
 import { visualDebugger } from '../services/intelligence/VisualDebugger';
 import { narrativeIntelligenceEngine } from '../services/intelligence/NarrativeIntelligenceEngine';
-import { AcousticBoundarySnapper, BoundaryPlanner, SemanticUnitTokenizer, PerceptionSnapshot } from '@excerpt/clipping-core';
+import { AcousticBoundarySnapper, BoundaryPlanner, SemanticUnitTokenizer, PerceptionSnapshot, STANDARD_BOUNDARY_PROFILES, DURATION_PROFILE_TARGETS } from '@excerpt/clipping-core';
 import { ContextCoherenceGuard } from '../services/intelligence/ContextCoherenceGuard';
 import { SceneCutSnapper } from '../services/intelligence/SceneCutSnapper';
 import { MultiScaleStoryEngine } from '../services/intelligence/MultiScaleStoryEngine';
@@ -79,6 +79,7 @@ import { viewerSatisfactionEngine } from '../services/intelligence/ViewerSatisfa
 import { universalWowMomentEngineV2 } from '../services/intelligence/UniversalWowMomentEngineV2';
 import { learningSubsystem } from '../services/intelligence/LearningSubsystem';
 import { editorialPlanEvaluator } from '../services/intelligence/EditorialPlanEvaluator';
+import { boundaryPolicyLoader } from '../services/intelligence/BoundaryPolicyLoader';
 import { IntelligenceOrchestrator, OrchestrationContext } from '../services/nexus/IntelligenceOrchestrator';
 import { classifyPipelineError } from '../utils/errorClassifier';
 import {
@@ -1126,7 +1127,15 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     // Align all detected clips to natural speech & visual scene boundaries via Canonical BoundaryPlanner
     if (words && words.length > 0) {
       console.log(`[Worker]: Tokenizing semantic units and generating canonical boundaries with BoundaryPlanner...`);
-      const semanticUnits = SemanticUnitTokenizer.tokenize(words as any, segments);
+      const detectedCategory = (pipelineContext?.category?.category || 'default').toLowerCase();
+      const profile = (detectedCategory.includes('podcast') || detectedCategory.includes('talk'))
+        ? STANDARD_BOUNDARY_PROFILES.podcast
+        : (detectedCategory.includes('interview') ? STANDARD_BOUNDARY_PROFILES.interview
+        : (detectedCategory.includes('sport') || detectedCategory.includes('football') ? STANDARD_BOUNDARY_PROFILES.sports
+        : (detectedCategory.includes('tutorial') || detectedCategory.includes('code') ? STANDARD_BOUNDARY_PROFILES.tutorial
+        : (detectedCategory.includes('vlog') ? STANDARD_BOUNDARY_PROFILES.vlog : STANDARD_BOUNDARY_PROFILES.default))));
+
+      const semanticUnits = SemanticUnitTokenizer.tokenize(words as any, segments, { minSentenceBreakMs: profile.sentenceBreakPauseMs });
 
       // Construct PerceptionSnapshot from VideoIntelligenceGraph & AudioEvents
       const vigGraph = pipelineContext.vig;
@@ -1189,37 +1198,58 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         let endCandidate = winning.endSec;
 
         // 2. Canonical BoundaryPlanner (Soft Target Window + Silence Landings + Zero-Truncation)
-        // Fix 5 (revised): Derive target from semantic intent, not a universal 15s floor.
-        //
-        //   hook_adjusted  → compact hook clip  → target ~15s   (opening thesis)
-        //   payoff_extended → resolution story   → target ~35s   (needs full arc)
-        //   raw, complete terminal              → target = editorial duration
-        //
-        // Rule: duration is a preference; semantic completeness is primary.
-        // BoundaryPlanner will honour minDurationSec/maxDurationSec hard constraints
-        // while targeting the semantically appropriate length.
+        // Derive target from semantic intent using duration profile targets.
+        // User targetDuration > semantic variant target (hook / story) > editorial duration window.
         const editorialDuration = endCandidate - startCandidate;
         const endQuality = winning.end_boundary_quality;
         let targetDur: number;
         if (targetDuration && targetDuration > 0) {
-          targetDur = Math.max(minClipDuration, Math.min(editorialDuration, maxClipDuration));
+          // User-specified override: respect the exact requested duration.
+          targetDur = Math.max(minClipDuration, Math.min(targetDuration, maxClipDuration));
         } else if (winning.variantId === 'hook_adjusted') {
-          targetDur = Math.max(minClipDuration, Math.min(editorialDuration, maxClipDuration));
+          // Hook clips: compact, punchy opening thesis — prefer hookTargetSec (~22s).
+          targetDur = Math.min(editorialDuration, Math.max(minClipDuration, DURATION_PROFILE_TARGETS.hookTargetSec));
         } else if (winning.variantId === 'payoff_extended' || endQuality === 'extended_resolution') {
-          targetDur = Math.max(minClipDuration, Math.min(editorialDuration, maxClipDuration));
+          // Resolution / full-arc stories need the complete narrative — prefer storyTargetSec (~55s).
+          targetDur = Math.max(minClipDuration, Math.min(editorialDuration, DURATION_PROFILE_TARGETS.storyTargetSec));
         } else {
+          // Default: stay close to the AI's editorial window.
           targetDur = Math.max(minClipDuration, Math.min(editorialDuration, maxClipDuration));
         }
+
+        // Ingest visual scene cuts into perceptionSnapshot as candidate evidence
+        let detectedSceneCuts: any[] = [];
+        try {
+          const searchWindowStart = Math.max(0, startCandidate - 1.0);
+          const searchWindowDur = Math.max(1.0, (endCandidate - startCandidate) + 2.0);
+          detectedSceneCuts = await sceneSnapper.detectSceneCuts(inputPath, searchWindowStart, searchWindowDur, profile.sceneCutThreshold ?? 0.30);
+        } catch (sceneErr: any) {
+          console.warn(`[Worker]: Scene cut detection skipped for candidate ${clip.id}: ${sceneErr.message}`);
+        }
+
+        const clipPerceptionSnapshot: PerceptionSnapshot = {
+          ...perceptionSnapshot,
+          scenes: {
+            events: detectedSceneCuts.map(c => ({
+              startSec: c.timestampSec,
+              endSec: c.timestampSec,
+              score: c.score,
+            })),
+          },
+        };
+
         const canonicalBoundary = BoundaryPlanner.planBoundary(
           { startSec: startCandidate, endSec: endCandidate, targetDurationSec: targetDur },
-          perceptionSnapshot,
+          clipPerceptionSnapshot,
           semanticUnits,
           {
+            profile,
             durationPolicy,
             targetDurationSec: targetDur,
             preferredWindowMarginSec: durationPolicy.toleranceSec ?? 4.0,
             minDurationSec: durationPolicy.minSec,
-            maxDurationSec: durationPolicy.maxSec,
+            softMaxDurationSec: durationPolicy.maxSec,
+            hardMaxDurationSec: durationPolicy.hardMaxSec ?? Math.max(durationPolicy.maxSec, 60.0),
           }
         );
 
@@ -1227,23 +1257,21 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         const finalStart = canonicalBoundary.startSec;
         const finalEnd = canonicalBoundary.endSec;
         (clip as any).durationFitScore = canonicalBoundary.durationFitScore;
-        let sceneCutResult: any = null;
-
-        // Visual Scene-Cut validation & telemetry (non-mutating)
-        try {
-          const windowDuration = Math.max(0.5, finalEnd - finalStart);
-          const sceneCuts = await sceneSnapper.detectSceneCuts(inputPath, finalStart, windowDuration);
-          if (sceneCuts.length > 0) {
-            sceneCutResult = sceneSnapper.snapBoundariesToSceneCut(finalStart, finalEnd, sceneCuts, 0.35, { words: words as any });
-          }
-        } catch (sceneErr: any) {
-          console.warn(`[Worker]: Scene cut detection skipped for clip: ${sceneErr.message}`);
-        }
 
         // 4. Multi-Scale Narrative Mapping
         const clipDuration = finalEnd - finalStart;
         const scaleType = clipDuration <= 35 ? '30s_hook' : clipDuration <= 70 ? '60s_story' : '90s_insight';
         const matchedArc = multiScaleArcs.find(a => a.scaleType === scaleType) || multiScaleArcs[0];
+
+        const sceneCutTelemetry = (canonicalBoundary.startSnappedTo === 'visual_cut' || canonicalBoundary.endSnappedTo === 'visual_cut')
+          ? {
+              snapped: true,
+              startCut: canonicalBoundary.startSnappedTo === 'visual_cut',
+              endCut: canonicalBoundary.endSnappedTo === 'visual_cut',
+              startSec: finalStart,
+              endSec: finalEnd,
+            }
+          : null;
 
         return {
           ...clip,
@@ -1260,7 +1288,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
             composite_score: winning.compositeScore,
             explanation: winning.explanation,
           },
-          scene_cut_snapped: sceneCutResult,
+          scene_cut_snapped: sceneCutTelemetry,
         };
       }));
 
@@ -1819,13 +1847,24 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         duration = renderEnd - renderStart;
       }
       
-      if (duration < 14.9 && !clip.isRecovery && sourceDuration >= 30) {
-        console.warn(`[Worker]: HARDWARE LOCK TRIPPED - Clip ${clipIndex + 1} (${duration.toFixed(1)}s) violated the 15s protocol. Discarding.`);
-        continue;
+      // Intelligent boundary clamp: If candidate was snapped slightly below minDuration,
+      // expand boundaries symmetrically within [0, sourceDuration] to preserve the clip rather than discarding.
+      if (duration < minDuration && sourceDuration >= minDuration) {
+        const deficit = minDuration - duration;
+        const expandBack = Math.min(renderStart, deficit / 2);
+        const expandForward = Math.min(sourceDuration - renderEnd, deficit - expandBack);
+        const remainingDeficit = deficit - (expandBack + expandForward);
+        const finalBack = Math.min(renderStart, expandBack + remainingDeficit);
+
+        renderStart = Math.max(0, Number((renderStart - finalBack).toFixed(3)));
+        renderEnd = Math.min(sourceDuration, Number((renderEnd + expandForward).toFixed(3)));
+        duration = renderEnd - renderStart;
+
+        console.log(`[Worker]: Clamped sub-${minDuration}s clip ${clipIndex + 1} from ${clip.start_time.toFixed(1)}s-${clip.end_time.toFixed(1)}s to ${renderStart}s-${renderEnd}s (${duration.toFixed(1)}s).`);
       }
 
       if (duration < minDuration) {
-        console.warn(`[Worker]: Clip ${clipIndex + 1} (${duration.toFixed(1)}s) is too short to render safely. Discarding.`);
+        console.warn(`[Worker]: Clip ${clipIndex + 1} (${duration.toFixed(1)}s) cannot reach ${minDuration}s within source bounds (${sourceDuration}s). Discarding.`);
         continue;
       }
 
@@ -2574,6 +2613,13 @@ export const startWorker = async () => {
 
   isPolling = true;
   console.log(`[Worker]: 🚀 Gen-4 Cloud-Polling Worker Starting with Concurrency ${MAX_CONCURRENT_WORKERS}...`);
+
+  // Pre-warm intelligence boundary policies to avoid cold-start race conditions
+  try {
+    await boundaryPolicyLoader.ensureInitialized();
+  } catch (policyErr: any) {
+    console.warn('[Worker]: Boundary policy pre-warming warning (fallback defaults active):', policyErr?.message || policyErr);
+  }
 
   // Start the stale job reclamation sweeper periodically (every 5 minutes)
   const sweeperInterval = setInterval(async () => {
