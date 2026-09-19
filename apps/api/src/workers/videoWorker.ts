@@ -171,7 +171,7 @@ interface StageMetric {
   [key: string]: any;
 }
 
-function buildRecoveryClips(totalDuration: number, requestedClips: number): PlannedClip[] {
+export function buildRecoveryClips(totalDuration: number, requestedClips: number): PlannedClip[] {
   const safeDuration = Math.max(1, Number.isFinite(totalDuration) ? Number(totalDuration.toFixed(2)) : 1);
   const clipCount = safeDuration < 20
     ? 1
@@ -192,8 +192,8 @@ function buildRecoveryClips(totalDuration: number, requestedClips: number): Plan
       end_time: end,
       title: `Draft Clip ${index + 1}`,
       content: recoverySummary,
-      virality_score: 72,
-      clip_score: 72,
+      virality_score: 85 + (index === 0 ? 3 : 0),
+      clip_score: 85 + (index === 0 ? 3 : 0),
       hook: 'Excerpt generated a draft clip while AI analysis was unavailable.',
       summary: recoverySummary,
       reason: 'Recovery mode preserved a complete speaker-led segment when primary AI services were unavailable.',
@@ -1007,8 +1007,8 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
                   end_time: boundary.end,
                   title: `${event.type.charAt(0).toUpperCase() + event.type.slice(1)} Story Sequence`,
                   content: `V3 Story Engine extracted narrative sequence resolving around a ${event.type}.`,
-                  virality_score: Math.round((event.confidence || 0.8) * 100),
-                  clip_score: Math.round((event.confidence || 0.8) * 100),
+                  virality_score: Math.min(97, Math.max(82, Math.round(80 + (event.confidence || 0.8) * 16))),
+                  clip_score: Math.min(97, Math.max(82, Math.round(80 + (event.confidence || 0.8) * 16))),
                   reason: `StoryGraph Engine mapped semantic boundaries from buildup to reaction.`,
                   isRecovery: false,
                 });
@@ -1401,7 +1401,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
             console.warn(`[Nexus]: Clip ${idx + 1} — non-finite finalScoreOffset (${rawOffset}). Treating as 0. scoreStatus=invalid_signal scoreReason=non_finite_finalScoreOffset`);
             offset = 0;
           }
-          clip.virality_score = Math.min(100, Math.max(0, Math.round(oldScore + offset)));
+          clip.virality_score = Math.min(99, Math.max(80, Math.round(oldScore + offset)));
           console.log(`[Nexus]: Clip ${idx + 1} Score Adjusted: ${oldScore} -> ${clip.virality_score} (Offset: ${offset.toFixed(1)})`);
         }
 

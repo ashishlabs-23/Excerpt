@@ -190,35 +190,51 @@ export async function exportCustomClip(
     words?: any[];
   }
 ): Promise<void> {
-  const response = await authFetch(`/api/video/export-clip/${clipId}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 180_000); // 3-minute hard ceiling for complex video rendering
 
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || `Export failed (HTTP ${response.status})`);
+  try {
+    const response = await authFetch(`/api/video/export-clip/${clipId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      if (response.status === 504) {
+        throw new Error("Export timed out on server. Please try exporting a shorter trim or standard quality.");
+      }
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `Export failed (HTTP ${response.status})`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const blob = new Blob([arrayBuffer], { type: "video/mp4" });
+    const objectUrl = URL.createObjectURL(blob);
+
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = fileName;
+    anchor.rel = "noopener";
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+
+    window.setTimeout(() => {
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+    }, 5000);
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      throw new Error("Export request timed out after 3 minutes. Please try a shorter duration.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const arrayBuffer = await response.arrayBuffer();
-  const blob = new Blob([arrayBuffer], { type: "video/mp4" });
-  const objectUrl = URL.createObjectURL(blob);
-
-  const anchor = document.createElement("a");
-  anchor.href = objectUrl;
-  anchor.download = fileName;
-  anchor.rel = "noopener";
-  anchor.style.display = "none";
-  document.body.appendChild(anchor);
-  anchor.click();
-
-  window.setTimeout(() => {
-    anchor.remove();
-    URL.revokeObjectURL(objectUrl);
-  }, 5000);
 }
 
 export type ApiResult<T> =

@@ -425,6 +425,31 @@ export class DatabaseService {
     await this.clearUserContent('00000000-0000-0000-0000-000000000000');
   }
 
+  async getRecentJobs(userId: string, limit = 50) {
+    const workerEnv = process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development');
+    let { data, error } = await this.db
+      .from('jobs')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('environment', workerEnv)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error && (this.isMissingColumnError(error, 'environment') || error.message?.includes('environment'))) {
+      const fallback = await this.db
+        .from('jobs')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      data = fallback.data;
+      error = fallback.error;
+    }
+
+    if (error) throw error;
+    return data || [];
+  }
+
   async getRecentClips(userId: string, limit = 10) {
     const devModeBypass = process.env.DISABLE_OWNERSHIP_CHECKS === 'true';
     const workerEnv = process.env.WORKER_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development');
@@ -488,31 +513,38 @@ export class DatabaseService {
 
 
   async getClip(id: string) {
-    const { data: clip, error } = await this.db
-      .from('clips')
-      .select('*, jobs(user_id, video_url)')
-      .eq('id', id)
-      .single();
-    if (error && error.code !== 'PGRST116') throw error;
-    
-    if (clip) return clip;
+    try {
+      const { data: clip, error } = await this.db
+        .from('clips')
+        .select('*, jobs(user_id, video_url)')
+        .eq('id', id)
+        .single();
+      if (!error && clip) return clip;
+    } catch {}
 
     // Fallback to voiceover clips for download compatibility
-    const { data: voiceoverClip, error: voError } = await this.db
-      .from('voiceover_clips')
-      .select('*')
-      .eq('id', id)
-      .single();
-      
-    if (voError && voError.code !== 'PGRST116') throw voError;
-    
-    if (voiceoverClip) {
-      return {
-        ...voiceoverClip,
-        storage_path: voiceoverClip.video_path || voiceoverClip.audio_path,
-        video_url: voiceoverClip.video_path || voiceoverClip.audio_path
-      };
-    }
+    try {
+      const { data: voiceoverClip, error: voError } = await this.db
+        .from('voiceover_clips')
+        .select('*')
+        .eq('id', id)
+        .single();
+        
+      if (!voError && voiceoverClip) {
+        return {
+          ...voiceoverClip,
+          storage_path: voiceoverClip.video_path || voiceoverClip.audio_path,
+          video_url: voiceoverClip.video_path || voiceoverClip.audio_path
+        };
+      }
+    } catch {}
+
+    // Fallback to Firebase/local queue
+    try {
+      const fbClip = await firebaseDb.getClip(id);
+      if (fbClip) return fbClip;
+    } catch {}
+
     return null;
   }
 

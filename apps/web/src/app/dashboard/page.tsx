@@ -48,18 +48,19 @@ export default function DashboardPage() {
     authFetch('/api/video/jobs')
       .then(r => r.json())
       .then((jobs: any[]) => {
-        const now = Date.now();
-        const detectedJob = Array.isArray(jobs) ? jobs.find(j => {
-          if (TERMINAL_JOB_STATUSES.has(j.status)) return false;
-          // Ignore orphaned jobs whose heartbeat or creation is older than 10 minutes
-          const lastActiveAt = new Date(j.heartbeat_at || j.updated_at || j.created_at).getTime();
-          return (now - lastActiveAt) < 10 * 60 * 1000;
-        }) : null;
-        if (detectedJob) {
-          console.log('[Dashboard]: Auto-detected active job:', detectedJob.id);
-          setLastJobId(detectedJob.id);
-          setActiveJob(detectedJob);
-          setShowProcessingOverlay(true);
+        if (Array.isArray(jobs) && jobs.length > 0) {
+          const detectedJob = jobs.find(j => !TERMINAL_JOB_STATUSES.has(j.status));
+          if (detectedJob) {
+            console.log('[Dashboard]: Auto-detected active job:', detectedJob.id);
+            setLastJobId(detectedJob.id);
+            setActiveJob(detectedJob);
+            setShowProcessingOverlay(true);
+          } else {
+            // All previous jobs are completed/historical. Set latest job as activeJob for immediate clip visibility
+            const latestJob = jobs[0];
+            setActiveJob(latestJob);
+            setShowProcessingOverlay(false);
+          }
         }
       })
       .catch(() => {})
@@ -99,13 +100,12 @@ export default function DashboardPage() {
         if (!response.ok || data.error) {
           if (response.status === 404) {
             consecutive404s.current += 1;
-            console.warn(`[Dashboard]: Job not found (Trial ${consecutive404s.current}/10)`);
-            
-            if (consecutive404s.current > 10) {
-              localStorage.removeItem("lastJobId");
-              setLastJobId(null);
-              setActiveJob(null);
-              setShowProcessingOverlay(false);
+            // Allow up to 5 consecutive 404s before failing (queue latency tolerance)
+            if (consecutive404s.current > 5) {
+              setActiveJob((prev: any) => ({ ...prev, status: 'failed', error: 'Job not found or timed out' }));
+              setTimeout(() => {
+                setShowProcessingOverlay(false);
+              }, 2000);
               return;
             }
           }
@@ -120,17 +120,25 @@ export default function DashboardPage() {
         baseDelay = 3000;
         
         if (data.status === "completed") {
-          console.log("[Dashboard]: Job completed successfully. Validating result fields...");
-          const rawResult = Array.isArray(data.result) ? data.result : [];
-          const validClips = rawResult.filter((c: any) => Boolean(c.video_file || c.video_url || c.storage_path) && c.status !== "pending");
+          console.log("[Dashboard]: Job reached terminal state 'completed'. Final response payload:", data);
+          const rawClips = Array.isArray(data.result)
+            ? data.result
+            : Array.isArray(data.clips)
+              ? data.clips
+              : [];
+          const validClips = rawClips.filter((clip: any) => 
+            Boolean(clip.video_url || clip.video_file || clip.storage_path) &&
+            clip.status !== 'pending' &&
+            !String(clip.video_url || '').includes('storage.local')
+          );
           
           if (validClips.length > 0) {
             const firstClip = validClips[0];
             const requiredFields = [
-              { key: "video_file", valid: Boolean(firstClip.video_file || firstClip.video_url || firstClip.storage_path) },
-              { key: "thumbnail", valid: Boolean(firstClip.thumbnail || firstClip.thumbnail_file || firstClip.thumbnail_url || firstClip.storage_path) },
-              { key: "title", valid: Boolean(firstClip.title) },
-              { key: "caption", valid: Boolean(firstClip.caption || firstClip.content) },
+              { key: "video", valid: Boolean(firstClip.video_file || firstClip.video_url) },
+              { key: "thumbnail", valid: Boolean(firstClip.thumbnail || firstClip.thumbnail_file) },
+              { key: "title", valid: Boolean(firstClip.title && firstClip.title.trim().length > 0) },
+              { key: "caption", valid: Boolean(firstClip.caption && firstClip.caption.trim().length > 0) }
             ];
             const missing = requiredFields.filter((field) => !field.valid).map((field) => field.key);
             
@@ -178,27 +186,44 @@ export default function DashboardPage() {
   const hydrateTerminalStatus = async (targetJobId: string) => {
     try {
       const response = await authFetch(`/api/video/status/${targetJobId}`, {
+        cache: 'no-store'
       });
+      if (!response.ok) return;
       const data = await response.json();
-      if (response.ok && !data.error) {
+      if (data && data.status) {
         setActiveJob(data);
       }
-    } catch (error) {
-      console.error("[Dashboard]: Final status hydration failed:", error);
+    } catch (e) {
+      console.warn('[Dashboard]: Failed to re-hydrate terminal job state:', e);
     } finally {
       setLastJobId(null);
     }
   };
 
-  useRealtimeSync(lastJobId, (row) => {
-    setActiveJob((previous: any) => ({
-      ...(previous || {}),
-      ...row,
-      id: row.id || lastJobId,
-    }));
+  useRealtimeSync({
+    jobId: lastJobId || (activeJob ? activeJob.id : null),
+    onUpdate: (payload: any) => {
+      console.log('[Dashboard Realtime]: Status change payload received:', payload);
+      const row = payload?.new || payload;
+      if (!row || !row.status) return;
 
-    if (isTerminalJobStatus(row.status)) {
-      hydrateTerminalStatus(row.id || lastJobId!);
+      const normalizedStatus = row.status === 'success' ? 'completed' : row.status;
+      const mappedStage = row.stage_label || row.stage || undefined;
+
+      setActiveJob((prev: any) => ({
+        ...(prev || {}),
+        ...row,
+        status: normalizedStatus,
+        progress: typeof row.progress === 'number' ? row.progress : prev?.progress,
+        stage_label: mappedStage || prev?.stage_label,
+        stage: mappedStage || prev?.stage,
+        error: row.error || row.failed_reason || prev?.error,
+        failedReason: row.failed_reason || row.error || prev?.failedReason
+      }));
+
+      if (isTerminalJobStatus(row.status)) {
+        hydrateTerminalStatus(row.id || lastJobId!);
+      }
     }
   });
 
@@ -339,11 +364,93 @@ export default function DashboardPage() {
             />
           </motion.section>
 
+          {/* Success Notification - Cyber Style */}
+          <AnimatePresence>
+            {activeJob && activeJob.status === "completed" && !showProcessingOverlay && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="mb-12 p-8 glass-card border-emerald-500/30 bg-emerald-500/[0.02] rounded-[32px] relative overflow-hidden"
+              >
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-emerald-500/10 via-transparent to-transparent" />
+                <div className="flex items-center gap-6 relative z-10">
+                  <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 flex items-center justify-center text-emerald-400 shadow-[0_0_30px_rgba(16,185,129,0.2)] border border-emerald-500/20">
+                    <CheckCircle2 size={32} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-white uppercase italic tracking-tight mb-1">Processing Complete</h3>
+                    <p className="text-emerald-400/60 text-[10px] font-bold uppercase tracking-[0.2em]">
+                      {activeGenerationMode === "heuristic"
+                        ? "Transcript-guided clips have been rendered and added to your gallery."
+                        : activeJob.recoveryMode
+                           ? "Draft clips have been rendered and added to your gallery."
+                           : "All video clips are now available in your gallery."}
+                    </p>
+                  </div>
+                  <button 
+                    onClick={() => setActiveJob(null)}
+                    className="ml-auto px-6 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/40 hover:text-white text-[10px] font-black uppercase tracking-widest transition-all"
+                  >
+                    Dismiss Link
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Core Creation Space: Video Projects & Output Clips */}
+          <div className="space-y-12 mb-16">
+            <motion.section
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.15 }}
+            >
+              <ActiveJobs onJobSelect={(job) => {
+                const jobId = job.id;
+                setLastJobId(jobId);
+                setActiveJob(job);
+                consecutive404s.current = 0;
+                
+                if (job.status === 'completed') {
+                  userClickedCompletedJob.current = true;
+                  setShowProcessingOverlay(false);
+                  const clipsEl = document.getElementById('recent-clips-section');
+                  if (clipsEl) {
+                    clipsEl.scrollIntoView({ behavior: 'smooth' });
+                  }
+                } else {
+                  userClickedCompletedJob.current = false;
+                  setShowProcessingOverlay(true);
+                }
+              }} />
+            </motion.section>
+
+            <motion.section
+              id="recent-clips-section"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.25 }}
+            >
+              <RecentClips clips={(() => {
+                const candidates = activeJob?.result && activeJob.result.length > 0 
+                  ? activeJob.result 
+                  : activeJob?.clips && activeJob.clips.length > 0 
+                    ? activeJob.clips 
+                    : undefined;
+                if (!candidates) return undefined;
+                const filtered = candidates.filter((c: any) => Boolean(c.video_url || c.video_file || c.storage_path) && c.status !== 'pending');
+                return filtered.length > 0 ? filtered : undefined;
+              })()} />
+            </motion.section>
+          </div>
+
+          {/* Workspace Studio Tools */}
           <motion.section
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="mb-10"
+            transition={{ delay: 0.3 }}
+            className="mb-14"
           >
             <div className="rounded-[28px] sm:rounded-[32px] border border-white/10 bg-white/[0.04] backdrop-blur-2xl p-5 sm:p-7 relative overflow-hidden w-full">
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(99,102,241,0.16),transparent_35%)]" />
@@ -405,133 +512,55 @@ export default function DashboardPage() {
             </div>
           </motion.section>
 
-          <DashboardMetrics />
+          {/* System Operations & Telemetry Infrastructure */}
+          <div className="pt-10 border-t border-white/10 space-y-12">
+            <div className="flex items-center gap-3">
+              <div className="px-2.5 py-1 rounded bg-white/5 border border-white/10 text-[9px] font-black text-white/40 tracking-[0.25em] uppercase">Telemetry</div>
+              <div className="h-px flex-1 bg-white/5" />
+              <span className="text-[10px] font-black text-primary/70 tracking-[0.2em] uppercase italic">System Operations & Health</span>
+            </div>
 
-          {/* ═══════════════════════════════════════════════════════
-              SYSTEM ALERTS — top of ops zone, 10s poll
-             ═══════════════════════════════════════════════════════ */}
-          <SystemAlerts />
+            <DashboardMetrics />
 
-          {/* ═══════════════════════════════════════════════════════
-              QUEUE PRESSURE — self-polls 10s, shows pipeline depth
-             ═══════════════════════════════════════════════════════ */}
-          <QueuePressureCard />
+            {/* SYSTEM ALERTS — top of ops zone, 10s poll */}
+            <SystemAlerts />
 
+            {/* QUEUE PRESSURE — self-polls 10s, shows pipeline depth */}
+            <QueuePressureCard />
 
+            {/* PIPELINE HEALTH — centrepiece of operations dashboard */}
+            {!dashLoading && dashboardData && (
+              <motion.section
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.1 }}
+              >
+                <PipelineHealthMonitor pipeline={dashboardData.pipeline} />
+              </motion.section>
+            )}
 
-          {/* ═══════════════════════════════════════════════════════
-              PIPELINE HEALTH — centrepiece of operations dashboard
-             ═══════════════════════════════════════════════════════ */}
-          {!dashLoading && dashboardData && (
+            {/* Deployment Metadata */}
             <motion.section
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.1 }}
+              transition={{ duration: 0.5, delay: 0.2 }}
+              className="mt-8"
             >
-              <PipelineHealthMonitor pipeline={dashboardData.pipeline} />
+              <DeploymentMetadataCard />
             </motion.section>
-          )}
 
-          {/* Deployment Metadata */}
-          <motion.section
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-            className="mb-12 mt-8"
-          >
-            <DeploymentMetadataCard />
-          </motion.section>
-
-          {/* Trend Charts */}
-          <motion.section
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.3 }}
-            className="mb-12 mt-8"
-          >
-            <TrendChartsCard />
-          </motion.section>
-
-          {/* Success Notification - Cyber Style */}
-          <AnimatePresence>
-            {activeJob && activeJob.status === "completed" && !showProcessingOverlay && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9 }}
-                className="mb-12 p-8 glass-card border-emerald-500/30 bg-emerald-500/[0.02] rounded-[32px] relative overflow-hidden"
-              >
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-emerald-500/10 via-transparent to-transparent" />
-                <div className="flex items-center gap-6 relative z-10">
-                  <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 flex items-center justify-center text-emerald-400 shadow-[0_0_30px_rgba(16,185,129,0.2)] border border-emerald-500/20">
-                    <CheckCircle2 size={32} />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-black text-white uppercase italic tracking-tight mb-1">Processing Complete</h3>
-                    <p className="text-emerald-400/60 text-[10px] font-bold uppercase tracking-[0.2em]">
-                      {activeGenerationMode === "heuristic"
-                        ? "Transcript-guided clips have been rendered and added to your gallery."
-                        : activeJob.recoveryMode
-                           ? "Draft clips have been rendered and added to your gallery."
-                           : "All video clips are now available in your gallery."}
-                    </p>
-                  </div>
-                  <button 
-                    onClick={() => setActiveJob(null)}
-                    className="ml-auto px-6 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/40 hover:text-white text-[10px] font-black uppercase tracking-widest transition-all"
-                  >
-                    Dismiss Link
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* System Interlocks (Upload & Results) */}
-          <div className="space-y-20">
+            {/* Trend Charts */}
             <motion.section
-              initial={{ opacity: 0, y: 30 }}
+              initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 }}
+              transition={{ duration: 0.5, delay: 0.3 }}
+              className="mt-8"
             >
-              <ActiveJobs onJobSelect={(job) => {
-                const jobId = job.id;
-                setLastJobId(jobId);
-                
-                if (job.status === 'completed') {
-                  userClickedCompletedJob.current = true;
-                  setActiveJob(job);
-                } else {
-                  userClickedCompletedJob.current = false;
-                  setActiveJob(job);
-                }
-                
-                consecutive404s.current = 0;
-                setShowProcessingOverlay(true);
-              }} />
+              <TrendChartsCard />
             </motion.section>
 
-            <motion.section
-              initial={{ opacity: 0, y: 30 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.4 }}
-            >
-              <RecentClips clips={(() => {
-                const candidates = activeJob?.result && activeJob.result.length > 0 
-                  ? activeJob.result 
-                  : activeJob?.clips && activeJob.clips.length > 0 
-                    ? activeJob.clips 
-                    : undefined;
-                if (!candidates) return undefined;
-                const filtered = candidates.filter((c: any) => Boolean(c.video_url || c.video_file || c.storage_path) && c.status !== 'pending');
-                return filtered.length > 0 ? filtered : undefined;
-              })()} />
-            </motion.section>
+            <QualityDashboard />
           </div>
-
-
-
-          <QualityDashboard />
         </div>
       </main>
 

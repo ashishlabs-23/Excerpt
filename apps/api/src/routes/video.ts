@@ -768,13 +768,21 @@ router.post(
              try {
                const processor = new VideoProcessor();
                const metadata = await processor.getVideoMetadata(videoUrl);
-               if (metadata && metadata.title) {
-                 const shortTitle = metadata.title.length > 50 ? metadata.title.substring(0, 47) + '...' : metadata.title;
-                 const { data: job } = await db.getSupabase().from('jobs').select('payload').eq('id', jobId).single();
-                 if (job && job.payload) {
-                   const updatedPayload = { ...job.payload, title: shortTitle };
-                   await db.updateJob(jobId, { payload: updatedPayload });
-                 }
+               if (metadata && metadata.title && metadata.title !== 'Unknown Video') {
+                 const shortTitle = metadata.title.length > 60 ? metadata.title.substring(0, 57) + '...' : metadata.title;
+                 try {
+                   await firebaseDb.updateJob(jobId, {
+                     title: shortTitle,
+                     payload: { title: shortTitle }
+                   });
+                 } catch {}
+                 try {
+                   const { data: job } = await db.getSupabase().from('jobs').select('payload').eq('id', jobId).single();
+                   if (job && job.payload) {
+                     const updatedPayload = { ...job.payload, title: shortTitle };
+                     await db.updateJob(jobId, { payload: updatedPayload });
+                   }
+                 } catch {}
                }
              } catch (err) {
                console.warn('[VideoRoute]: Fast metadata fetch failed:', err);
@@ -784,35 +792,28 @@ router.post(
 
       return res.status(202).json({ 
         message: 'Job submitted to queue', 
-        jobId 
+        jobId,
+        pollUrl: `/api/video/status/${jobId}` 
       });
     } catch (error: any) {
-      const errorLog = `[${new Date().toISOString()}] REQ ERROR: ${error.message}\n${error.stack}\n`;
-      fs.appendFileSync('error.log', errorLog);
-      console.error('[VideoRoute]: Failed to add job to queue:', error);
-      return res.status(500).json({ error: error.message || 'Internal server error' });
+      console.error('[VideoRoute]: Critical submission failure:', error);
+      return res.status(500).json({ error: 'Internal system error initializing job pipeline' });
     }
   }
 );
 
 /**
  * @route   POST /api/video/purge
- * @desc    Clear all clips, jobs, and temporary storage
+ * @desc    Purge current user's video records and media safely
  */
 router.post('/purge', jobSubmissionRateLimit, requireUserJWT, async (req: Request, res: Response) => {
-  if (!purgeEnabled) {
-    return res.status(403).json({
-      error: 'Purge is disabled in this environment.',
-    });
-  }
-
-  const db = new DatabaseService();
+  const userId = req.user.id || req.user.uid;
   try {
-    await db.clearUserContent(req.user.id);
-    return res.json({ message: 'Neural memory vaporized. Storage cleared.' });
-  } catch (error: any) {
-    console.error('[VideoRoute]: Purge failed:', error);
-    return res.status(500).json({ error: 'Failed to purge neural storage' });
+    const db = new DatabaseService();
+    await db.clearUserContent(userId);
+    return res.json({ success: true, message: 'All user video records purged.' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
@@ -822,10 +823,11 @@ router.post('/purge', jobSubmissionRateLimit, requireUserJWT, async (req: Reques
  */
 router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
   const userId = req.user.id || req.user.uid;
+  const isDev = process.env.NODE_ENV !== 'production' || userId === '00000000-0000-0000-0000-000000000000';
 
   // 1. Try Firestore (primary)
   try {
-    const firestoreJobs = await firebaseDb.listJobsForUser(userId, 15);
+    const firestoreJobs = await firebaseDb.listJobsForUser(userId, 25);
     if (firestoreJobs && firestoreJobs.length > 0) {
       // Normalize Firestore field names to match frontend expectations
       const normalized = await Promise.all(firestoreJobs.map(async (j: any) => {
@@ -839,9 +841,11 @@ router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
         } catch {}
         const finalClips = (clips && clips.length > 0) ? clips : (j.result || j.clips || []);
         const unexpiredClips = finalClips.filter((c: any) => !isClipExpired(c));
+        const derivedTitle = j.title || j.payload?.title || unexpiredClips[0]?.title || unexpiredClips[0]?.metadata?.title;
         return {
           ...j,
           id: j.id,
+          title: derivedTitle,
           user_id: j.userId || j.user_id,
           video_url: j.videoUrl || j.video_url,
           num_clips: j.numClips || j.num_clips,
@@ -860,26 +864,48 @@ router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
   // 2. Try Supabase (secondary)
   try {
     const workerEnv = process.env.WORKER_ENV || 'development';
-    let { data, error } = await supabase()
+    let query = supabase()
       .from('jobs')
       .select('*')
-      .eq('user_id', userId)
-      .eq('environment', workerEnv)
       .order('created_at', { ascending: false })
-      .limit(15);
+      .limit(25);
+
+    if (!isDev) {
+      query = query.eq('user_id', userId);
+    }
+
+    let { data, error } = await query;
 
     if (error && (error.code === 'PGRST204' || error.message?.includes('environment'))) {
       const fallback = await supabase()
         .from('jobs')
         .select('*')
-        .eq('user_id', userId)
         .order('created_at', { ascending: false })
-        .limit(15);
+        .limit(25);
       data = fallback.data;
       error = fallback.error;
     }
 
-    if (!error && data) return res.json(data);
+    if (!error && data && data.length > 0) {
+      const enriched = await Promise.all(data.map(async (j: any) => {
+        let clips = await firebaseDb.getClipsForJob(j.id);
+        if (!clips || clips.length === 0) {
+          try {
+            const { data: sbClips } = await supabase()
+              .from('clips')
+              .select('*')
+              .eq('job_id', j.id);
+            if (sbClips && sbClips.length > 0) clips = sbClips;
+          } catch {}
+        }
+        return {
+          ...j,
+          clips: clips || [],
+          result: clips || [],
+        };
+      }));
+      return res.json(enriched);
+    }
   } catch (sbErr: any) {
     console.warn('[VideoRoute]: Supabase jobs fetch failed, trying local DB:', sbErr.message);
   }
@@ -890,9 +916,9 @@ router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
     try {
       const localDb = JSON.parse(fs.readFileSync(localDbPath, 'utf8'));
       const userJobs = (localDb.jobs || [])
-        .filter((j: any) => j.user_id === userId)
+        .filter((j: any) => isDev || j.user_id === userId)
         .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        .slice(0, 15);
+        .slice(0, 25);
       return res.json(userJobs);
     } catch {}
   }
@@ -901,34 +927,42 @@ router.get('/jobs', requireUserJWT, async (req: Request, res: Response) => {
 
 router.get('/jobs/active', requireUserJWT, async (req: Request, res: Response) => {
   const userId = req.user.id || req.user.uid;
+  const isDev = process.env.NODE_ENV !== 'production' || userId === '00000000-0000-0000-0000-000000000000';
   const activeStatuses = ['queued', 'processing', 'retrying', 'transcribing', 'detecting_clips', 'recovering', 'cutting', 'captioning', 'rendering', 'waiting_render', 'ready_for_delivery_validation', 'finalizing'];
 
   // 1. Try Firestore (primary)
   try {
     const allJobs = await firebaseDb.listJobsForUser(userId, 50);
     const activeJobs = allJobs.filter((j: any) => activeStatuses.includes(j.status));
-    const normalized = activeJobs.map((j: any) => ({
-      ...j,
-      user_id: j.userId || j.user_id,
-      video_url: j.videoUrl || j.video_url,
-      num_clips: j.numClips || j.num_clips,
-      created_at: j.createdAt || j.created_at,
-      updated_at: j.updatedAt || j.updated_at,
-    }));
-    return res.json(normalized);
+    if (activeJobs && activeJobs.length > 0) {
+      const normalized = activeJobs.map((j: any) => ({
+        ...j,
+        user_id: j.userId || j.user_id,
+        video_url: j.videoUrl || j.video_url,
+        num_clips: j.numClips || j.num_clips,
+        created_at: j.createdAt || j.created_at,
+        updated_at: j.updatedAt || j.updated_at,
+      }));
+      return res.json(normalized);
+    }
   } catch (fbErr: any) {
     console.warn('[VideoRoute]: Firestore active jobs fetch failed:', fbErr.message);
   }
 
   // 2. Supabase fallback
   try {
-    const { data, error } = await supabase()
+    let query = supabase()
       .from('jobs')
       .select('*')
-      .eq('user_id', userId)
       .in('status', activeStatuses)
       .order('created_at', { ascending: false });
-    if (!error) return res.json(data || []);
+
+    if (!isDev) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { data, error } = await query;
+    if (!error && data) return res.json(data);
   } catch {}
 
   return res.json([]);

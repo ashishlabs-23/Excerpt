@@ -69,13 +69,13 @@ const EditableWord: React.FC<{
       layout
       initial={false}
       animate={{
-        color: isExcluded ? 'rgba(255,255,255,0.15)' : isActive ? '#fff' : isCurrentMatch ? '#fbbf24' : isMatch ? '#a78bfa' : 'rgba(255,255,255,0.28)',
+        color: isExcluded ? 'rgba(255,255,255,0.20)' : isActive ? '#ffffff' : isCurrentMatch ? '#fbbf24' : isMatch ? '#a78bfa' : '#9ca3af',
         backgroundColor: isExcluded
           ? 'transparent'
           : isActive
-          ? 'rgba(200,119,64,0.18)'
+          ? 'rgba(200,119,64,0.30)'
           : isCurrentMatch
-          ? 'rgba(251,191,36,0.12)'
+          ? 'rgba(251,191,36,0.18)'
           : 'transparent',
       }}
       transition={{ duration: 0.12 }}
@@ -91,11 +91,11 @@ const EditableWord: React.FC<{
       onKeyDown={e => {
         if (e.key === 'Enter' || e.key === ' ') { setIsEditing(true); e.preventDefault(); }
       }}
-      className={`inline-block px-1.5 py-0.5 rounded-md cursor-pointer text-sm font-medium relative group/word transition-all duration-200
-        focus:outline-none focus:ring-1 focus:ring-primary hover:bg-white/5 hover:text-white
-        ${isActive ? 'font-black scale-105' : ''}
-        ${isCurrentMatch ? 'ring-1 ring-amber-400/60' : ''}
-        ${isExcluded ? 'line-through decoration-white/25 decoration-2' : ''}
+      className={`inline-block px-1.5 py-0.5 rounded-md cursor-pointer text-sm relative group/word transition-all duration-200
+        focus:outline-none focus:ring-1 focus:ring-primary hover:bg-white/10 hover:text-white
+        ${isActive ? 'kinetic-word-active font-black shadow-md' : 'font-medium'}
+        ${isCurrentMatch ? 'ring-1 ring-amber-400/80' : ''}
+        ${isExcluded ? 'line-through decoration-white/25 decoration-2 opacity-40' : ''}
       `}
     >
       <span className="flex items-center gap-1">

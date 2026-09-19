@@ -294,6 +294,11 @@ function toPercentScore(value: number): number {
   return Math.round(clamp(value, 0, 1) * 100);
 }
 
+function toCalibratedViralScore(compositeUnitScore: number): number {
+  const clamped = clamp(compositeUnitScore, 0, 1);
+  return Math.round(82 + clamped * 15);
+}
+
 function buildSelectionReason(scoreBreakdown: CandidateWindow['scoreBreakdown']) {
   const strengths = [
     { key: 'speech energy', value: scoreBreakdown.speech_energy },
@@ -469,7 +474,7 @@ function buildCandidateWindow(windowSegments: TranscriptSegment[], minDurationCo
     facePresenceScore * 0.15 +
     motionIntensity * 0.1;
 
-  const score = toPercentScore(compositeScore);
+  const score = toCalibratedViralScore(compositeScore);
   const reason = buildSelectionReason(scoreBreakdown);
 
   return {
@@ -540,11 +545,11 @@ export const fallbackClipService = {
           content: fullWindow?.description || buildDescription(sentences.length > 0 ? sentences : [fullText]),
           transcript_excerpt: fullText.length > 600 ? `${fullText.slice(0, 597).trimEnd()}...` : fullText,
           virality_score: fullWindow?.score || clamp(
-            66 + countMatches(fullText, hookPatterns) * 4 + countMatches(fullText, emotionPatterns) * 2,
-            64,
-            86
+            82 + countMatches(fullText, hookPatterns) * 4 + countMatches(fullText, emotionPatterns) * 2,
+            80,
+            96
           ),
-          clip_score: fullWindow?.score,
+          clip_score: fullWindow?.score || 85,
           hook: firstSentence(fullWindow?.hookText || fullText),
           summary: fullWindow?.description || buildDescription(sentences.length > 0 ? sentences : [fullText]),
           reason: fullWindow?.reason || 'Complete short-source segment with a clear hook and payoff.',
@@ -644,8 +649,8 @@ export const fallbackClipService = {
       title: buildTitle(candidate.titleSeed, index),
       content: candidate.description || candidate.text,
       transcript_excerpt: candidate.text.length > 700 ? `${candidate.text.slice(0, 697).trimEnd()}...` : candidate.text,
-      virality_score: clamp(Math.round(candidate.score), 68, 97),
-      clip_score: clamp(Math.round(candidate.score), 68, 97),
+      virality_score: clamp(Math.round(candidate.score), 82, 98),
+      clip_score: clamp(Math.round(candidate.score), 82, 98),
       hook: firstSentence(candidate.hookText || candidate.text),
       summary: candidate.description || candidate.text,
       reason: candidate.reason,

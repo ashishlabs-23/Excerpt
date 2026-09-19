@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Home, LayoutGrid, Scissors, Settings, ChevronRight, Zap, Mic2, Award } from 'lucide-react';
+import { Home, LayoutGrid, Scissors, Settings, ChevronRight, Zap, Mic2 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
@@ -37,7 +37,7 @@ export const SidebarNav: React.FC = () => {
     { name: 'Dashboard', icon: LayoutGrid, href: '/dashboard' },
     { name: 'Voiceover Studio', icon: Mic2, href: '/voiceover' },
     { name: 'Clip Editor', icon: Scissors, href: '/editor' },
-    { name: 'Excerpt Arena', icon: Award, href: '/arena' },
+    { name: 'Settings', icon: Settings, href: '/settings' },
   ];
 
   const mobileNavItems = [

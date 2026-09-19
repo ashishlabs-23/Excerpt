@@ -95,7 +95,7 @@ export class JobRepository {
     } catch {}
 
     try {
-      await this.db.createJob(jobData.userId, jobData);
+      await this.db.createJob(jobData);
     } catch {}
 
     return jobData;

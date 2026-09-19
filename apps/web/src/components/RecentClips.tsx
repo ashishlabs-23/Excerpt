@@ -57,6 +57,12 @@ const generationModeDescription: Record<string, string> = {
   recovery: "Generated from source timing fallback while AI services were temporarily unavailable.",
 };
 
+export function getClipDownloadName(clip: Clip) {
+  const rawTitle = clip.title || clip.metadata?.title || 'clip';
+  const clean = rawTitle.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+  return `${clean}_${clip.id.slice(0, 8)}.mp4`;
+}
+
 interface RecentClipsProps {
   clips?: Clip[];
   mode?: 'clips' | 'voiceovers';
@@ -266,23 +272,42 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
   const handleDownload = async (clip: Clip) => {
     if (downloadingId === clip.id) return;
     setDownloadingId(clip.id);
+    const fileName = getClipDownloadName(clip);
     try {
-      const { getDirectDownloadUrl } = await import('@/lib/api');
-      const directUrl = await getDirectDownloadUrl(clip.id);
-      window.location.href = directUrl;
+      const { downloadAuthenticatedClip, getDirectDownloadUrl } = await import('@/lib/api');
+      try {
+        await downloadAuthenticatedClip(clip.id, fileName);
+      } catch (authDlErr) {
+        console.warn('[RecentClips]: Authenticated blob download failed, falling back to direct token download:', authDlErr);
+        const directUrl = await getDirectDownloadUrl(clip.id);
+        const a = document.createElement('a');
+        a.href = directUrl;
+        a.download = fileName;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => a.remove(), 1000);
+      }
       scheduleDownloadReset(clip.id);
-    } catch (error) {
-      console.error('Download failed:', error);
-      window.alert('Clip download failed. Please try again.');
+    } catch (error: any) {
+      console.error('[RecentClips]: Download failed:', error);
+      window.alert(error?.message || 'Clip download failed. Please try again.');
       setDownloadingId(null);
     }
   };
 
   const handleVoiceoverDownload = (vo: any) => {
     try {
-      // Direct navigation to the signed URL with download parameter
       const url = `${vo.video_path.replace('host.docker.internal', 'localhost')}&download=voiceover-${vo.id}.mp4`;
-      window.location.href = url;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `voiceover-${vo.id}.mp4`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => a.remove(), 1000);
     } catch (error) {
       console.error('Voiceover download failed:', error);
       window.alert('Voiceover download failed. Please try again.');
@@ -336,7 +361,7 @@ export const RecentClips: React.FC<RecentClipsProps> = ({ clips, mode = 'clips' 
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.1, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
                 onClick={() => setSelectedClip(clip)}
-                className="group relative flex flex-col rounded-[32px] overflow-hidden glass-card border-white/5 hover:border-primary/20 transition-all duration-500 hover:shadow-[0_40px_80px_-20px_rgba(0,0,0,0.8)] cursor-pointer"
+                className="group relative flex flex-col rounded-[28px] overflow-hidden studio-card border-white/10 hover:border-primary/40 transition-all duration-500 hover:shadow-[0_20px_60px_-15px_rgba(200,119,64,0.25)] hover:-translate-y-1 cursor-pointer"
               >
                 <div className="aspect-[9/16] relative bg-black/40 overflow-hidden">
                   <AuthenticatedVideo

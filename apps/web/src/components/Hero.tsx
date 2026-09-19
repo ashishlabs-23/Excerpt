@@ -90,7 +90,11 @@ export const Hero: React.FC = () => {
         {/* Link Import Input Bar */}
         <div className="max-w-2xl mx-auto mb-10 px-4 relative z-20">
           <div className="absolute -inset-1 bg-gradient-to-r from-primary/30 to-purple-500/30 rounded-2xl blur-lg opacity-30 group-focus-within:opacity-100 transition-opacity duration-500 -z-10" />
-          <form onSubmit={handleGetClips} className="relative flex items-center p-1.5 rounded-2xl bg-slate-950/40 backdrop-blur-2xl border border-white/10 hover:border-white/20 focus-within:border-primary/50 focus-within:hover:border-primary/50 transition-all duration-300 shadow-[0_20px_50px_rgba(0,0,0,0.5)]">
+          <form
+            onSubmit={handleGetClips}
+            suppressHydrationWarning
+            className="relative flex items-center p-1.5 rounded-2xl bg-slate-950/40 backdrop-blur-2xl border border-white/10 hover:border-white/20 focus-within:border-primary/50 focus-within:hover:border-primary/50 transition-all duration-300 shadow-[0_20px_50px_rgba(0,0,0,0.5)]"
+          >
             <div className="flex items-center pl-4 text-white/30">
               <LinkIcon size={18} />
             </div>
@@ -98,6 +102,7 @@ export const Hero: React.FC = () => {
               type="text"
               placeholder="PASTE YOUTUBE OR DIRECT VIDEO LINK..."
               value={url}
+              suppressHydrationWarning
               onChange={(e) => {
                 setUrl(e.target.value);
                 if (error) setError("");
@@ -106,6 +111,7 @@ export const Hero: React.FC = () => {
             />
             <Button
               type="submit"
+              suppressHydrationWarning
               className="h-12 px-6 font-bold rounded-xl bg-primary hover:bg-primary/90 text-white hover:scale-102 active:scale-98 transition-all shrink-0 uppercase tracking-widest text-[10px]"
             >
               Get Clips

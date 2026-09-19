@@ -196,7 +196,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       const activeExclude = excludedIntervals.find(interval => time >= interval.start && time < interval.end);
       if (activeExclude) {
+        const wasMuted = video.muted;
+        video.muted = true;
         video.currentTime = activeExclude.end;
+        setTimeout(() => {
+          if (videoRef.current) videoRef.current.muted = wasMuted;
+        }, 35);
         return;
       }
 
@@ -246,7 +251,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         // Check if current time falls within any excluded interval
         const activeExclude = excludedIntervals.find(interval => time >= interval.start && time < interval.end);
         if (activeExclude) {
-          video.currentTime = activeExclude.end + 0.01;
+          const wasMuted = video.muted;
+          video.muted = true;
+          video.currentTime = activeExclude.end + 0.005;
+          setTimeout(() => {
+            if (videoRef.current) videoRef.current.muted = wasMuted;
+          }, 35);
         } else if (time >= endTime) {
           video.currentTime = startTime;
           video.pause();

@@ -162,6 +162,11 @@ export const Timeline: React.FC<TimelineProps> = ({
     onSeek(nextTime);
   };
 
+  const nudgeTime = (deltaSec: number) => {
+    const nextTime = Math.max(0, Math.min(duration, currentTime + deltaSec));
+    onSeek(nextTime);
+  };
+
   const formatTime = (t: number) => {
     const s = Math.max(0, t);
     return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}.${String(Math.floor((s % 1) * 10))}`;
@@ -191,8 +196,15 @@ export const Timeline: React.FC<TimelineProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Frame-by-frame nudge buttons */}
+          {/* Frame & sub-second nudge buttons */}
           <div className="flex items-center gap-1 bg-[#1f2937] rounded-lg p-0.5 border border-white/5">
+            <button
+              onClick={() => nudgeTime(-0.5)}
+              className="px-1.5 py-0.5 text-[9px] font-mono font-bold text-white/60 hover:text-white hover:bg-white/10 rounded transition-all"
+              title="Step back 0.5s"
+            >
+              -0.5s
+            </button>
             <button
               onClick={() => nudgeFrame(-1)}
               className="px-1.5 py-0.5 text-[9px] font-mono font-bold text-white/60 hover:text-white hover:bg-white/10 rounded transition-all"
@@ -207,6 +219,13 @@ export const Timeline: React.FC<TimelineProps> = ({
               title="Step forward 1 frame (+33ms)"
             >
               +1f
+            </button>
+            <button
+              onClick={() => nudgeTime(0.5)}
+              className="px-1.5 py-0.5 text-[9px] font-mono font-bold text-white/60 hover:text-white hover:bg-white/10 rounded transition-all"
+              title="Step forward 0.5s"
+            >
+              +0.5s
             </button>
           </div>
 
@@ -376,13 +395,13 @@ export const Timeline: React.FC<TimelineProps> = ({
 
             {/* Playhead */}
             <div
-              className="absolute top-0 bottom-0 w-px bg-white z-30 pointer-events-none"
+              className="absolute top-0 bottom-0 w-[2px] bg-gradient-to-b from-primary via-white to-primary z-30 pointer-events-none shadow-[0_0_12px_rgba(200,119,64,0.9)]"
               style={{ left: `${progress * 100}%` }}
             >
               {/* Diamond top */}
-              <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white rotate-45 shadow-[0_0_10px_rgba(255,255,255,1)]" />
+              <div className="absolute -top-1.5 -left-1 w-2.5 h-2.5 bg-primary rotate-45 shadow-[0_0_12px_rgba(200,119,64,1)] ring-1 ring-white/70" />
               {/* Current time bubble */}
-              <div className="absolute top-4 -translate-x-1/2 px-1.5 py-0.5 bg-white rounded text-[8px] font-black text-black whitespace-nowrap shadow-xl">
+              <div className="absolute top-4 -translate-x-1/2 px-2 py-0.5 bg-primary/95 border border-white/20 rounded-md text-[9px] font-black text-white whitespace-nowrap shadow-2xl backdrop-blur-md">
                 {formatTime(currentTime)}
               </div>
             </div>

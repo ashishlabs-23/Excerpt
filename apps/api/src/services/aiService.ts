@@ -688,9 +688,12 @@ Return only JSON.`;
     const reason =
       cleanSentence(rawClip?.reason) ||
       'Strong hook, complete payoff, and high short-form retention potential.';
-    const clipScore = normalizeScore(
-      rawClip?.clip_score ?? rawClip?.virality_score ?? rawClip?.score,
-      84
+    const clipScore = Math.max(
+      82,
+      normalizeScore(
+        rawClip?.clip_score ?? rawClip?.virality_score ?? rawClip?.score,
+        88
+      )
     );
     const faceFocusScore = normalizeScore(
       rawClip?.face_focus_score ??

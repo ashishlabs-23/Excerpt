@@ -10,8 +10,13 @@ interface Job {
   status: string;
   progress: number;
   video_url: string;
+  videoUrl?: string;
+  youtube_url?: string;
+  title?: string;
   job_type?: string;
   failed_reason?: string;
+  clips?: any[];
+  result?: any[];
   debug_data?: {
     error_type?: string;
     errorCategory?: string;
@@ -28,6 +33,7 @@ interface Job {
 
 export const ActiveJobs: React.FC<{ onJobSelect?: (job: any) => void }> = ({ onJobSelect }) => {
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [resolvedTitles, setResolvedTitles] = useState<Record<string, string>>({});
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [showLeftArrow, setShowLeftArrow] = useState(false);
@@ -61,6 +67,22 @@ export const ActiveJobs: React.FC<{ onJobSelect?: (job: any) => void }> = ({ onJ
     const interval = setInterval(fetchJobs, 4000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    jobs.forEach(job => {
+      const url = job.video_url || job.videoUrl || job.youtube_url;
+      if (!job.title && !job.payload?.title && url && (url.includes('youtube.com') || url.includes('youtu.be')) && !resolvedTitles[job.id]) {
+        fetch(`https://noembed.com/embed?url=${encodeURIComponent(url)}`)
+          .then(res => res.json())
+          .then(data => {
+            if (data && data.title) {
+              setResolvedTitles(prev => ({ ...prev, [job.id]: data.title }));
+            }
+          })
+          .catch(() => {});
+      }
+    });
+  }, [jobs]);
 
   useEffect(() => {
     updateArrowVisibility();
@@ -100,7 +122,7 @@ export const ActiveJobs: React.FC<{ onJobSelect?: (job: any) => void }> = ({ onJ
         await fetchJobs();
       }
     } catch (err) {
-      console.error(err);
+      console.error('Failed to cancel job:', err);
     } finally {
       setActionLoadingId(null);
     }
@@ -117,7 +139,7 @@ export const ActiveJobs: React.FC<{ onJobSelect?: (job: any) => void }> = ({ onJ
         await fetchJobs();
       }
     } catch (err) {
-      console.error(err);
+      console.error('Failed to retry job:', err);
     } finally {
       setActionLoadingId(null);
     }
@@ -125,29 +147,43 @@ export const ActiveJobs: React.FC<{ onJobSelect?: (job: any) => void }> = ({ onJ
 
   const handleRestart = async (jobId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('Are you sure you want to restart this video project? This will purge all previously generated clips.')) {
-      return;
-    }
     setActionLoadingId(`${jobId}-restart`);
     try {
       const res = await authFetch(`/api/video/jobs/${jobId}/restart`, {
         method: 'POST',
       });
       if (res.ok) {
+        const data = await res.json();
+        if (data.newJobId && onJobSelect) {
+          onJobSelect({ id: data.newJobId, status: 'queued', progress: 0 });
+        }
         await fetchJobs();
       }
     } catch (err) {
-      console.error(err);
+      console.error('Failed to restart job:', err);
     } finally {
       setActionLoadingId(null);
     }
   };
 
   const getProjectName = (job: Job) => {
-    if (job.payload?.title) {
+    if (resolvedTitles[job.id]) {
+      return resolvedTitles[job.id];
+    }
+    if (job.title && job.title !== 'Untitled Video' && job.title !== 'Unknown Video') {
+      return job.title;
+    }
+    if (job.payload?.title && job.payload.title !== 'Untitled Video' && job.payload.title !== 'Unknown Video') {
       return job.payload.title;
     }
-    const url = job.video_url;
+    const firstClip = job.clips?.[0] || job.result?.[0];
+    if (firstClip?.title) {
+      return firstClip.title;
+    }
+    if (firstClip?.metadata?.title) {
+      return firstClip.metadata.title;
+    }
+    const url = job.video_url || job.videoUrl || job.youtube_url;
     if (!url) return "Untitled Video";
     try {
       const parsed = new URL(url);

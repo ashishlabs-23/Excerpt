@@ -57,12 +57,13 @@ export class ClipRepository {
       try {
         const fbClip = await firebaseDb.getClip(clipId);
         if (fbClip) {
+          const raw = fbClip as any;
           clip = {
             ...fbClip,
             id: fbClip.id || clipId,
-            job_id: fbClip.jobId || fbClip.job_id,
-            user_id: fbClip.userId || fbClip.user_id,
-            video_url: fbClip.videoUrl || fbClip.video_url,
+            job_id: fbClip.jobId || raw.job_id,
+            user_id: fbClip.userId || raw.user_id,
+            video_url: fbClip.videoUrl || raw.video_url,
           };
         }
       } catch {}

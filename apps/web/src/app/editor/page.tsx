@@ -171,13 +171,17 @@ function ClipEditorContent() {
         const clipEnd = typeof clip?.end_time === 'number' ? clip.end_time : end;
         const totalClipDuration = Math.max(1, clipEnd - clipStart);
 
-        // If rawWords have timestamps offset by source video time, normalize relative to 0
-        const isOffset = rawWords.length > 0 && clipStart > 2.0 && rawWords.some((w: any) => typeof w.start === 'number' && w.start >= (clipStart * 0.5));
-        const normalizedWords = rawWords.map((w: any) => ({
-          ...w,
-          start: isOffset ? Math.max(0, Number((w.start - clipStart).toFixed(3))) : Number(w.start.toFixed(3)),
-          end: isOffset ? Math.max(0.05, Number((w.end - clipStart).toFixed(3))) : Number(w.end.toFixed(3)),
-        }));
+        // Determine whether rawWords timestamps are source-relative or already clip-relative (0-indexed)
+        const isSourceRelative = rawWords.length > 0 && clipStart > 1.0 && rawWords[0].start >= (clipStart - 1.0);
+        const normalizedWords = rawWords.map((w: any) => {
+          const startSec = isSourceRelative ? Math.max(0, w.start - clipStart) : w.start;
+          const endSec = isSourceRelative ? Math.max(0.05, w.end - clipStart) : w.end;
+          return {
+            ...w,
+            start: Number(startSec.toFixed(3)),
+            end: Number(endSec.toFixed(3)),
+          };
+        });
 
         // In studio editor, request clean video stream so interactive captions overlay cleanly
         const cleanPlayUrl = playUrl.includes('?') ? `${playUrl}&captions=0` : `${playUrl}?captions=0`;
