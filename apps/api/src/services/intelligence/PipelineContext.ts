@@ -329,6 +329,9 @@ export interface PipelineContext {
   // Phase 23
   satisfaction?: Record<string, ViewerSatisfactionResult>;
 
+  // Phase 27 - Performance Prediction V2
+  performancePrediction?: Record<string, any>;
+
   // Graphics Intelligence properties (V3.5)
   broadcastGraphics?: Record<string, BroadcastGraphicMetadata>; // clipId -> metadata
   visualTimeline?: VisualTimelinePoint[];
@@ -377,6 +380,7 @@ export function createDefaultContext(jobId: string): PipelineContext {
     viralPatterns: {},
     completeness: {},
     satisfaction: {},
+    performancePrediction: {},
     broadcastGraphics: {},
     visualTimeline: [],
     executionTimes: {},
