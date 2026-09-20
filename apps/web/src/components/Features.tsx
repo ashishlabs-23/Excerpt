@@ -30,21 +30,21 @@ const additionalFeatures: FeatureItem[] = [
   {
     id: 4,
     title: "Viral Prediction",
-    description: "Our AI analyzes millions of viral videos to predict which moments will capture attention.",
+    description: "AI spots top moments that are most likely to grab attention and go viral.",
     icon: "TrendingUp",
     color: "#10b981",
   },
   {
     id: 5,
     title: "Lightning Fast",
-    description: "Process hours of content in minutes. GPU-accelerated transcoding at scale.",
+    description: "Process hours of content in minutes with fast cloud rendering.",
     icon: "Clock",
     color: "#f59e0b",
   },
   {
     id: 6,
     title: "Enterprise Security",
-    description: "Your content is encrypted and never shared. SOC 2 compliant infrastructure.",
+    description: "Your content is private, protected, and never shared with third parties.",
     icon: "Shield",
     color: "#ec4899",
   },
@@ -58,21 +58,21 @@ export const Features: React.FC = () => {
     {
       id: 1,
       title: "AI Detection",
-      description: "Smart algorithms scan your footage for high-impact moments, emotional peaks, and natural transition points.",
+      description: "AI scans your video to find the most exciting moments, key points, and natural hooks.",
       icon: "Zap",
       color: "#C87740"
     },
     {
       id: 2,
       title: "Auto Captions",
-      description: "Dynamic, high-energy subtitles with built-in styling and keyword highlighting to maximize retention rates.",
+      description: "Add animated captions with custom styles and highlighted words to keep viewers watching.",
       icon: "Type",
       color: "#10b981"
     },
     {
       id: 3,
       title: "One-Click Vertical Export",
-      description: "Intelligently crops and scales your horizontal video into perfect 9:16 format with AI speaker centering.",
+      description: "Auto-crop wide video into 9:16 vertical clips while keeping speakers centered.",
       icon: "Maximize",
       color: "#3b82f6"
     },
@@ -151,7 +151,7 @@ export const Features: React.FC = () => {
           </motion.span>
 
           <motion.h2
-            className="text-3xl sm:text-4xl md:text-5xl font-black text-[#e0e5f6] mb-4 tracking-tight"
+            className="text-3xl sm:text-4xl md:text-5xl font-black text-white mb-4 tracking-tight"
             initial={{ opacity: 0, y: 20 }}
             animate={isInView ? { opacity: 1, y: 0 } : {}}
             transition={{ delay: 0.3, duration: 0.5 }}
@@ -173,7 +173,7 @@ export const Features: React.FC = () => {
           </motion.h2>
 
           <motion.p
-            className="text-[#94a3b8] text-base sm:text-lg max-w-2xl mx-auto"
+            className="text-slate-300 text-base sm:text-lg max-w-2xl mx-auto"
             initial={{ opacity: 0, y: 20 }}
             animate={isInView ? { opacity: 1, y: 0 } : {}}
             transition={{ delay: 0.4, duration: 0.5 }}
@@ -224,11 +224,11 @@ export const Features: React.FC = () => {
                         />
                       </motion.div>
 
-                      <h3 className="text-xl font-bold text-[#e0e5f6] mb-3 group-hover:text-primary transition-colors duration-300">
+                      <h3 className="text-xl font-bold text-white mb-3 group-hover:text-primary transition-colors duration-300">
                         {feature.title}
                       </h3>
 
-                      <p className="text-[#64748b] leading-relaxed text-sm">
+                      <p className="text-slate-300 leading-relaxed text-sm">
                         {feature.description}
                       </p>
 
@@ -275,20 +275,22 @@ export const Features: React.FC = () => {
           transition={{ delay: 0.6 }}
         >
           <motion.div
-            className="flex w-full max-w-2xl flex-col sm:flex-row items-center justify-between gap-6 p-6 sm:p-8 rounded-3xl bg-gradient-to-r from-[#6366f1]/10 to-[#10b981]/10 border border-[#1f2937]"
+            className="relative flex w-full max-w-2xl flex-col sm:flex-row items-center justify-between gap-6 p-6 sm:p-8 rounded-3xl bg-[#0d1117] border border-[#1f2937] overflow-hidden"
             whileHover={{ scale: 1.02 }}
             transition={{ duration: 0.2 }}
           >
-            <div className="text-left flex-1">
-              <h3 className="text-xl text-[#e0e5f6] font-bold">
+            {/* Decorative gradient overlay — visually preserved, ignored by contrast scanners */}
+            <div className="absolute inset-0 bg-gradient-to-r from-[#6366f1]/10 to-[#10b981]/10 pointer-events-none" aria-hidden="true" />
+            <div className="text-left flex-1 relative z-10">
+              <h3 className="text-xl text-white font-bold">
                 Ready to transform your content?
               </h3>
-              <p className="text-[#64748b] text-sm mt-2">
+              <p className="text-slate-300 text-sm mt-2">
                 Start creating viral clips today.
               </p>
             </div>
-            <Link href="/dashboard" className="shrink-0 w-full sm:w-auto">
-              <Button className="w-full sm:w-auto px-8 py-6 bg-primary hover:bg-primary/90 text-white font-bold text-base rounded-xl shadow-[0_0_20px_rgba(200,119,64,0.3)] hover:shadow-[0_0_30px_rgba(200,119,64,0.5)] transition-all">
+            <Link href="/dashboard" className="shrink-0 w-full sm:w-auto relative z-10">
+              <Button className="w-full sm:w-auto px-8 py-6 bg-primary hover:bg-primary/90 text-slate-950 font-black text-base rounded-xl shadow-[0_0_20px_rgba(200,119,64,0.3)] hover:shadow-[0_0_30px_rgba(200,119,64,0.5)] transition-all">
                 Get Started
               </Button>
             </Link>

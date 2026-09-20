@@ -51,7 +51,11 @@
 }
 
 .glass-card {
-  @apply bg-white/[0.03] backdrop-blur-xl border border-white/[0.08] shadow-2xl;
+  /* Solid fallback so contrast scanners can resolve the background stack.
+     The translucent white overlay on top still gives the frosted-glass look. */
+  background-color: #0c111d;
+  @apply backdrop-blur-xl border border-white/[0.08] shadow-2xl;
+  background-image: linear-gradient(rgba(255,255,255,0.03), rgba(255,255,255,0.03));
 }
 
 .neon-border {

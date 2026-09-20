@@ -89,7 +89,7 @@ export const Navbar: React.FC = () => {
               <Link
                 key={link.name}
                 href={link.href}
-                className="px-5 py-2 text-sm font-medium text-white/60 hover:text-white hover:bg-white/[0.05] rounded-full transition-all duration-300"
+                className="px-5 py-2 text-sm font-medium text-slate-300 hover:text-white hover:bg-white/[0.08] rounded-full transition-all duration-300"
               >
                 {link.name}
               </Link>
@@ -108,10 +108,10 @@ export const Navbar: React.FC = () => {
                       className="flex items-center gap-2.5 px-3 py-2 rounded-full border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] transition-all duration-200 group"
                     >
                       {/* Avatar */}
-                      <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary to-violet-600 flex items-center justify-center text-white text-xs font-bold">
+                      <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary to-violet-600 flex items-center justify-center text-slate-950 text-xs font-black">
                         {getInitials()}
                       </div>
-                      <span className="text-sm text-white/70 font-medium max-w-[140px] truncate">
+                      <span className="text-sm text-slate-300 font-medium max-w-[140px] truncate">
                         {user.user_metadata?.full_name || user.email}
                       </span>
                       <ChevronDown
@@ -132,7 +132,7 @@ export const Navbar: React.FC = () => {
                         >
                           {/* User info */}
                           <div className="px-4 py-3 border-b border-white/[0.06]">
-                            <p className="text-xs text-white/40 font-medium uppercase tracking-wider">
+                            <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">
                               Signed in as
                             </p>
                             <p className="text-sm text-white font-semibold truncate mt-0.5">
@@ -145,7 +145,7 @@ export const Navbar: React.FC = () => {
                             <Link
                               href="/dashboard"
                               onClick={() => setUserMenuOpen(false)}
-                              className="flex items-center gap-3 px-4 py-2.5 text-sm text-white/70 hover:text-white hover:bg-white/[0.06] transition-colors"
+                              className="flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors"
                             >
                               <LayoutDashboard className="w-4 h-4" />
                               Dashboard
@@ -167,7 +167,7 @@ export const Navbar: React.FC = () => {
                   <>
                     <Link href="/dashboard" className="hidden sm:block">
                       <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-                        <Button className="px-6 py-2 h-auto text-sm font-semibold rounded-full bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/25 animate-glow border border-white/10 group">
+                        <Button className="px-6 py-2 h-auto text-sm font-bold rounded-full bg-primary hover:bg-primary/90 text-slate-950 shadow-lg shadow-primary/25 border border-white/10 group">
                           Get Started
                           <Play className="ml-2 w-4 h-4 fill-current group-hover:translate-x-0.5 transition-transform" />
                         </Button>
@@ -180,7 +180,8 @@ export const Navbar: React.FC = () => {
 
             {/* Mobile Menu Button */}
             <motion.button
-              className="md:hidden shrink-0 p-2 text-white/70 hover:text-white"
+              aria-label="Toggle navigation menu"
+              className="md:hidden shrink-0 p-2 text-slate-300 hover:text-white"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               whileTap={{ scale: 0.9 }}
             >
@@ -241,7 +242,7 @@ export const Navbar: React.FC = () => {
                             {user.user_metadata.full_name}
                           </p>
                         )}
-                        <p className="text-xs text-white/50 truncate">{user.email}</p>
+                        <p className="text-xs text-white/40 truncate">{user.email}</p>
                       </div>
                     </div>
                     <Link href="/dashboard" onClick={() => setMobileMenuOpen(false)}>

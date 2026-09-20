@@ -59,7 +59,7 @@ export const Footer: React.FC = () => {
           >
             <Sparkles className="w-6 h-6" />
           </motion.div>
-          <span className="text-2xl sm:text-3xl font-black text-[#e0e5f6] tracking-tighter">
+          <span className="text-2xl sm:text-3xl font-black text-white tracking-tighter">
             EXCERPT
           </span>
         </motion.div>
@@ -83,7 +83,7 @@ export const Footer: React.FC = () => {
               {link.external ? (
                 <a
                   href={link.href}
-                  className="w-12 h-12 rounded-xl bg-[#111827] border border-[#1f2937] flex items-center justify-center text-[#64748b] hover:text-primary hover:border-primary/50 transition-colors group"
+                  className="w-12 h-12 rounded-xl bg-[#111827] border border-[#1f2937] flex items-center justify-center text-slate-400 hover:text-primary hover:border-primary/50 transition-colors group"
                   aria-label={link.name}
                 >
                   <link.icon className="w-5 h-5" />
@@ -91,7 +91,7 @@ export const Footer: React.FC = () => {
               ) : (
                 <Link
                   href={link.href}
-                  className="w-12 h-12 rounded-xl bg-[#111827] border border-[#1f2937] flex items-center justify-center text-[#64748b] hover:text-primary hover:border-primary/50 transition-colors group"
+                  className="w-12 h-12 rounded-xl bg-[#111827] border border-[#1f2937] flex items-center justify-center text-slate-400 hover:text-primary hover:border-primary/50 transition-colors group"
                   aria-label={link.name}
                 >
                   <link.icon className="w-5 h-5" />
@@ -109,14 +109,14 @@ export const Footer: React.FC = () => {
           transition={{ duration: 0.5, delay: 0.2 }}
         >
           <div className="rounded-3xl border border-[#1f2937] bg-[#111827]/50 p-6 text-center">
-            <p className="text-[#e0e5f6] text-lg font-semibold mb-2">
+            <p className="text-white text-lg font-semibold mb-2">
               Ready to turn long-form content into short-form winners?
             </p>
-            <p className="text-[#94a3b8] text-sm mb-6">
-              Upload a source video, generate highlights, and manage everything from one command center.
+            <p className="text-slate-300 text-sm mb-6">
+              Upload any video, create top highlights, and export your clips in one place.
             </p>
             <Link href="/dashboard">
-              <Button className="h-12 px-6 rounded-xl bg-primary hover:bg-primary/90 text-white">
+              <Button className="h-12 px-6 rounded-xl bg-primary hover:bg-primary/90 text-slate-950 font-black">
                 Start Clipping
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
@@ -135,7 +135,7 @@ export const Footer: React.FC = () => {
             <Link
               key={link.name}
               href={link.href}
-              className="text-[11px] font-black text-[#4b5563] hover:text-primary transition-colors uppercase tracking-widest"
+              className="text-xs font-semibold text-slate-400 hover:text-primary transition-colors tracking-normal"
             >
               {link.name}
             </Link>
@@ -144,12 +144,12 @@ export const Footer: React.FC = () => {
 
         {/* Copyright */}
         <motion.p
-          className="text-[9px] sm:text-[10px] font-black text-[#1f2937] uppercase tracking-[0.18em] sm:tracking-[0.2em] text-center"
+          className="text-xs font-medium text-slate-400 text-center tracking-normal"
           initial={{ opacity: 0 }}
           animate={isInView ? { opacity: 1 } : {}}
           transition={{ duration: 0.5, delay: 0.4 }}
         >
-          © 2026 EXCERPT INTELLIGENCE SYSTEMS. ALL RIGHTS RESERVED.
+          © 2026 Excerpt Intelligence Systems. All rights reserved.
         </motion.p>
       </div>
     </footer>

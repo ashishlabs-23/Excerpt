@@ -770,12 +770,11 @@ router.post(
                const metadata = await processor.getVideoMetadata(videoUrl);
                if (metadata && metadata.title && metadata.title !== 'Unknown Video') {
                  const shortTitle = metadata.title.length > 60 ? metadata.title.substring(0, 57) + '...' : metadata.title;
-                 try {
-                   await firebaseDb.updateJob(jobId, {
-                     title: shortTitle,
-                     payload: { title: shortTitle }
-                   });
-                 } catch {}
+                  try {
+                    await firebaseDb.updateJob(jobId, {
+                      payload: { title: shortTitle }
+                    } as any);
+                  } catch {}
                  try {
                    const { data: job } = await db.getSupabase().from('jobs').select('payload').eq('id', jobId).single();
                    if (job && job.payload) {

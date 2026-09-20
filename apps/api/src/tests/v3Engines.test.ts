@@ -113,4 +113,98 @@ describe('Excerpt V3 Intelligence Engines', () => {
     expect(result[0].wow_type).toBe('achievement');
     expect(result[0].wow_score).toBeGreaterThan(90);
   });
+
+  it('evaluates narrative arc stages and LLM payoff fallback in PayoffDetectionEngine', async () => {
+    const stage = payoffDetectionEngine.classifyNarrativeStage('why do people fail? but here is what happened in the end.');
+    expect(stage).toBe('resolution');
+
+    const llmResult = await payoffDetectionEngine.analyzePayoffWithLLM(
+      'why nobody tells you this secret',
+      'and that is how we solved it in the end'
+    );
+    expect(llmResult.completeness_score).toBeGreaterThanOrEqual(70);
+    expect(llmResult.is_promise_delivered).toBe(true);
+  });
+
+  it('applies hook x payoff synergy and temporal decay in RetentionPredictionEngine', () => {
+    const context = createDefaultContext('test-job');
+    context.category.category = 'podcast';
+    context.curiosity = { 'clip-synergy': { curiosity_score: 85 } };
+    context.payoff = { 'clip-synergy': { payoff_strength: 85 } };
+    context.narrative = { 'clip-synergy': { narrative_score: 85 } };
+    context.emotionIntelligence = {
+      'clip-synergy': {
+        dominant_emotion: 'shock',
+        emotional_intensity: 80,
+        emotion_timeline: [
+          { timestamp: 1, emotion: 'shock', intensity: 80 },
+          { timestamp: 8, emotion: 'joy', intensity: 90 }
+        ],
+        arc_strength: 85
+      }
+    };
+
+    const result = retentionPredictionEngine.predict('clip-synergy', 0, 10, context);
+    expect(result.retention_score).toBeGreaterThan(80);
+    expect(result.expected_completion_rate).toBeGreaterThan(75);
+  });
+
+  it('matches viral patterns using synonym rings and archetype vectors', () => {
+    const context = createDefaultContext('test-job');
+    context.transcriptSegments = [
+      { text: "this changed my life and was a complete glow up from zero to hero", start: 0, end: 10 }
+    ];
+
+    const result = viralPatternEngine.classify('clip-synonym', 0, 10, context);
+    expect(result.pattern).toBe('Transformation Story');
+    expect(result.confidence).toBeGreaterThan(50);
+  });
+
+  it('extracts motion saliency and clusters in SaliencyEngine', () => {
+    const { saliencyEngine } = require('../services/intelligence/SaliencyEngine');
+    const mockTracks = [
+      {
+        id: 1,
+        type: 'ball',
+        bbox: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 },
+        confidence: 0.9,
+        velocity: { x: 25, y: 30 },
+        acceleration: { x: 10, y: 15 },
+        age: 10,
+        lostFrames: 0,
+        occluded: false
+      },
+      {
+        id: 2,
+        type: 'person',
+        bbox: { x: 0.4, y: 0.4, w: 0.3, h: 0.5 },
+        confidence: 0.85,
+        velocity: { x: 2, y: 1 },
+        acceleration: { x: 0, y: 0 },
+        age: 50,
+        lostFrames: 0,
+        occluded: false
+      },
+      {
+        id: 3,
+        type: 'scoreboard',
+        bbox: { x: 0.7, y: 0.1, w: 0.2, h: 0.1 },
+        confidence: 0.95,
+        velocity: { x: 0, y: 0 },
+        acceleration: { x: 0, y: 0 },
+        age: 100,
+        lostFrames: 0,
+        occluded: false
+      }
+    ];
+
+    const ocrData = [{ id: 'title', bbox: { x: 0.1, y: 0.8, w: 0.8, h: 0.1 }, confidence: 0.9 }];
+    const heatmapData = [{ id: 'fx', bbox: { x: 0.5, y: 0.5, w: 0.2, h: 0.2 }, intensity: 0.8 }];
+
+    const regions = saliencyEngine.fuseSaliency(mockTracks, ocrData, heatmapData);
+    expect(regions.length).toBeGreaterThanOrEqual(4); // OCR + Hotspot + Motion + Cluster
+    expect(regions.some((r: any) => r.type === 'ocr')).toBe(true);
+    expect(regions.some((r: any) => r.type === 'saliency_hotspot')).toBe(true);
+    expect(regions.some((r: any) => r.id === 'cluster_composite')).toBe(true);
+  });
 });

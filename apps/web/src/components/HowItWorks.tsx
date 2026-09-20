@@ -30,17 +30,17 @@ export const HowItWorks: React.FC = () => {
     {
       id: 1,
       title: "Upload Source",
-      description: "Drop your long-form YouTube link or MP4 file into the Excerpt secure cloud environment.",
+      description: "Paste any YouTube link or upload a video file to get started.",
     },
     {
       id: 2,
       title: "AI Processing",
-      description: "Our engines segment the video, add styling, and generate viral-optimized descriptions in real-time.",
+      description: "AI cuts the video into short clips, adds captions, and writes ready-to-post titles.",
     },
     {
       id: 3,
       title: "Instant Export",
-      description: "Review your batch of clips and export them directly to your favorite social platforms or download for later.",
+      description: "Preview your clips, download them in high quality, or share them to social media.",
     }
   ];
 
@@ -49,7 +49,7 @@ export const HowItWorks: React.FC = () => {
       id="how-it-works"
       className="py-20 sm:py-24 px-4 sm:px-6 bg-[#030712] border-t border-[#1f2937]/50 relative overflow-hidden"
     >
-      <div className="max-w-5xl mx-auto relative z-10" ref={containerRef}>
+      <div className="max-w-5xl mx-auto relative z-10" style={{ position: "relative" }} ref={containerRef}>
         {/* Header */}
         <motion.div
           className="text-center mb-14 sm:mb-20"
@@ -67,7 +67,7 @@ export const HowItWorks: React.FC = () => {
           </motion.span>
 
           <motion.h2
-            className="text-3xl sm:text-4xl md:text-5xl font-black text-[#e0e5f6] mb-4 tracking-tight"
+            className="text-3xl sm:text-4xl md:text-5xl font-black text-white mb-4 tracking-tight"
             initial={{ opacity: 0, y: 20 }}
             animate={isInView ? { opacity: 1, y: 0 } : {}}
             transition={{ delay: 0.3, duration: 0.5 }}
@@ -79,7 +79,7 @@ export const HowItWorks: React.FC = () => {
           </motion.h2>
 
           <motion.p
-            className="text-[#94a3b8] text-base sm:text-lg max-w-xl mx-auto"
+            className="text-slate-300 text-base sm:text-lg max-w-xl mx-auto"
             initial={{ opacity: 0, y: 20 }}
             animate={isInView ? { opacity: 1, y: 0 } : {}}
             transition={{ delay: 0.4, duration: 0.5 }}
@@ -215,17 +215,17 @@ function StepCard({ step, index, IconComponent, isLast }: StepCardProps) {
           </span>
         </motion.div>
 
-        <h3 className="text-xl sm:text-2xl font-black text-[#e0e5f6] mb-3 tracking-tight">
+        <h3 className="text-xl sm:text-2xl font-black text-white mb-3 tracking-tight">
           {step.title}
         </h3>
 
-        <p className="text-[#64748b] text-base sm:text-lg leading-relaxed max-w-xl mb-4">
+        <p className="text-slate-300 text-base sm:text-lg leading-relaxed max-w-xl mb-4">
           {step.description}
         </p>
 
-        <div className="flex items-start gap-2 p-3 rounded-xl bg-white/5 border border-white/10 max-w-md mx-auto md:mx-0">
+        <div className="flex items-start gap-2 p-3 rounded-xl bg-slate-900/60 border border-white/10 max-w-md mx-auto md:mx-0">
            <div className="mt-1 flex-shrink-0 w-1.5 h-1.5 rounded-full bg-primary" />
-           <p className="text-[10px] text-white/40 font-medium uppercase tracking-wider leading-relaxed">
+           <p className="text-xs text-slate-300 font-normal leading-relaxed">
              {technicalDetails[index]}
            </p>
         </div>
