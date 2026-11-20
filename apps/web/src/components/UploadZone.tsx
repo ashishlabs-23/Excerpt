@@ -143,8 +143,8 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
           generationMode,
           aspectRatio,
           framingMode: aspectRatio === '9:16' ? framingMode : 'smart_crop',
-          captionPreset: aspectRatio === '9:16' ? captionPreset : 'minimal',
-          captionStyle: aspectRatio === '9:16' ? captionPreset : 'minimal',
+          captionPreset: captionPreset,
+          captionStyle: captionPreset,
         }),
       });
       const data = await response.json();
@@ -189,8 +189,8 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
     formData.append("generationMode", generationMode);
     formData.append("aspectRatio", aspectRatio);
     formData.append("framingMode", aspectRatio === '9:16' ? framingMode : 'smart_crop');
-    formData.append("captionPreset", aspectRatio === '9:16' ? captionPreset : 'minimal');
-    formData.append("captionStyle", aspectRatio === '9:16' ? captionPreset : 'minimal');
+    formData.append("captionPreset", captionPreset);
+    formData.append("captionStyle", captionPreset);
     const xhr = new XMLHttpRequest();
     try {
       const headers = await authHeaders();
@@ -509,6 +509,36 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
                       <p className="text-xs text-white/40 mt-1.5 leading-relaxed">
                         Preserves original full-width widescreen canvas. No vertical cropping or pillarboxing.
                       </p>
+
+                      {/* Sub-controls when 16:9 is active */}
+                      {aspectRatio === '16:9' && (
+                        <div className="mt-4 pt-3 border-t border-white/5 grid grid-cols-2 gap-3" onClick={(e) => e.stopPropagation()}>
+                          <div>
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-white/40 block mb-1">
+                              Highlight Strategy
+                            </span>
+                            <div className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-emerald-400 flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                              <span className="truncate">Audio Peaks + AI Hook</span>
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-white/40 block mb-1">
+                              Widescreen Subtitles
+                            </span>
+                            <select
+                              value={captionPreset}
+                              onChange={(e) => setCaptionPreset(e.target.value as any)}
+                              className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-primary"
+                            >
+                              <option value="minimal">Minimal Clean (Bottom 16:9)</option>
+                              <option value="tiktok">High-Contrast Pop</option>
+                              <option value="submagic">Submagic Vibrant</option>
+                              <option value="hormozi">Alex Hormozi Gold</option>
+                            </select>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </button>
                 </div>

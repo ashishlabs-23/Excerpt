@@ -2068,6 +2068,10 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           hookText: hookText,
           generationMode: userRequestedMode,
           generation_mode: userRequestedMode,
+          aspectRatio: (data as any).aspectRatio || '9:16',
+          framingMode: (data as any).framingMode || 'smart_crop',
+          caption_preset: (data as any).captionPreset || (data as any).caption_preset || 'tiktok',
+          caption_style: (data as any).captionPreset || (data as any).caption_style || 'tiktok',
         }
       };
       

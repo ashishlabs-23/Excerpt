@@ -316,6 +316,7 @@ export async function processRenderJob(renderJob: any) {
         hookText: (PHASE_E_BROLL_ENABLED && hookText) ? hookText : undefined,
         totalDurationSec: actualRenderedDurationSec,
         generationMode,
+        aspectRatio: (payload.aspectRatio as '9:16' | '1:1' | '16:9') || '9:16',
       });
       cropMs = Date.now() - renderStart;
       captionMs = 0; // Unified into single pass

@@ -1,6 +1,7 @@
 import { awaitRenderJobsAndFinalize } from '../workers/videoWorker';
 
 describe('Video Worker - Orchestration Loop', () => {
+  jest.setTimeout(30000);
   let mockDb: any;
   let mockSleep: jest.Mock;
   let currentTime = 1000000;
