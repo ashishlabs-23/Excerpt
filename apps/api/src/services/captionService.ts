@@ -14,6 +14,7 @@ export class CaptionService {
             position?: 'bottom' | 'middle' | 'top';
             yPercent?: number;
             color?: string;
+            aspectRatio?: '9:16' | '16:9';
         }
     ) {
         this.kineticGenerator.generateASS(words, outputPath, preset, clipDurationSec, options);

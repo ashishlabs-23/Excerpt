@@ -42,6 +42,7 @@ export class KineticCaptionGenerator {
             position?: 'bottom' | 'middle' | 'top';
             yPercent?: number;
             color?: string;
+            aspectRatio?: '9:16' | '16:9';
         }
     ) {
         const normalizedPreset = (preset || 'submagic').toLowerCase();
@@ -100,24 +101,28 @@ export class KineticCaptionGenerator {
             fontSize = Math.round(Math.min(84, Math.max(32, options.fontSize * (52 / 28))));
         }
 
+        const isLandscape = options?.aspectRatio === '16:9';
+        const resX = isLandscape ? 1920 : 1080;
+        const resY = isLandscape ? 1080 : 1920;
+
         // Apply custom vertical alignment & margin
         let alignment = 2; // Bottom Center
-        let marginV = 380;
+        let marginV = isLandscape ? 90 : 380;
         if (options?.yPercent !== undefined && typeof options.yPercent === 'number' && !isNaN(options.yPercent)) {
             const yClamped = Math.max(10, Math.min(90, options.yPercent));
             // yPercent is distance from top (0% at top, 100% at bottom).
             // MarginV with alignment 2 is distance from the bottom edge.
-            marginV = Math.round(1920 * (1 - yClamped / 100));
+            marginV = Math.round(resY * (1 - yClamped / 100));
             alignment = 2;
         } else if (options?.position === 'top') {
             alignment = 8; // Top Center
-            marginV = 220;
+            marginV = isLandscape ? 80 : 220;
         } else if (options?.position === 'middle') {
             alignment = 5; // Middle Center
             marginV = 0;
         } else {
             alignment = 2; // Bottom Center
-            marginV = 380;
+            marginV = isLandscape ? 90 : 380;
         }
 
         const fontName = process.env.EXCERPT_CAPTION_FONT || 'Montserrat';
@@ -126,8 +131,8 @@ Title: Excerpt SOTA Kinetic Captions (${preset.toUpperCase()})
 ScriptType: v4.00+
 WrapStyle: 0
 ScaledBorderAndShadow: yes
-PlayResX: 1080
-PlayResY: 1920
+PlayResX: ${resX}
+PlayResY: ${resY}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding

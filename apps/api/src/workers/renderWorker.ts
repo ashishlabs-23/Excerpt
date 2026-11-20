@@ -247,7 +247,13 @@ export async function processRenderJob(renderJob: any) {
               || (renderJob.payload as any)?.caption_preset
               || captionPolicy.style
               || 'submagic';
-            captionService.generateASS(relativeWords, assFilePath, requestedStyle, clipDurationSec);
+            captionService.generateASS(
+              relativeWords,
+              assFilePath,
+              requestedStyle,
+              clipDurationSec,
+              { aspectRatio: (payload.aspectRatio as '9:16' | '16:9') || '9:16' }
+            );
             hasCaptions = true;
           }
         } catch (capGenErr: any) {
@@ -310,13 +316,14 @@ export async function processRenderJob(renderJob: any) {
         cleanOutputPath: cleanOutputPath,
         start: clipStart,
         duration: clipDurationSec,
-        cropPlan,
+        cropPlan: payload.aspectRatio === '16:9' ? null : cropPlan,
         subtitlePath: subtitleToBurn,
         bRollClips: renderedClips.length > 0 ? renderedClips : undefined,
         hookText: (PHASE_E_BROLL_ENABLED && hookText) ? hookText : undefined,
         totalDurationSec: actualRenderedDurationSec,
         generationMode,
         aspectRatio: (payload.aspectRatio as '9:16' | '1:1' | '16:9') || '9:16',
+        framingMode: (payload.framingMode as string) || (payload.aspectRatio === '16:9' ? 'widescreen' : 'smart_crop'),
       });
       cropMs = Date.now() - renderStart;
       captionMs = 0; // Unified into single pass

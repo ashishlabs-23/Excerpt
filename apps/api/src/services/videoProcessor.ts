@@ -198,7 +198,7 @@ interface SmartCropPoint {
 }
 
 export interface SmartCropPlan {
-  mode: 'center' | 'static' | 'dynamic' | 'split_stack';
+  mode: 'center' | 'static' | 'dynamic' | 'split_stack' | 'widescreen_preserve' | 'widescreen_ambient_blur' | 'fit_blur';
   xExpression: string;
   yExpression: string;
   debug: string;
@@ -217,6 +217,8 @@ export interface SinglePassRenderOptions {
   hookText?: string;
   totalDurationSec?: number;
   generationMode?: GenerationMode;
+  aspectRatio?: '9:16' | '1:1' | '16:9';
+  framingMode?: string;
 }
 
 
@@ -601,14 +603,78 @@ export class VideoProcessor {
   }
 
   /**
-   * Constructs the 9:16 crop filtergraph and smart crop plan.
+   * Constructs the 9:16 or 16:9 crop filtergraph and smart crop plan.
    */
   async buildCropFilter(
     inputPath: string,
     start: number,
     duration: number,
-    nexusCropPlan?: any
+    nexusCropPlan?: any,
+    targetAspect: '9:16' | '1:1' | '16:9' = '9:16',
+    framingMode: string = 'smart_crop'
   ): Promise<{ cropFilter: string; cropPlan: SmartCropPlan }> {
+    let inputWidth = 1920;
+    let inputHeight = 1080;
+    try {
+      const dims = await this.getVideoDimensions(inputPath);
+      inputWidth = dims.width;
+      inputHeight = dims.height;
+    } catch (e: any) {
+      console.warn(`[VideoProcessor]: Dimension lookup failed: ${e.message}`);
+    }
+
+    const isInputVertical = inputHeight > inputWidth;
+
+    // ────────────────────────────────────────────────────────────────────────
+    // 1. WIDESCREEN 16:9 RESOLUTION LOGIC
+    // ────────────────────────────────────────────────────────────────────────
+    if (targetAspect === '16:9') {
+      if (isInputVertical) {
+        console.log(`[VideoProcessor]: 16:9 output requested for vertical video -> Applying ambient blurred backdrop.`);
+        const cropFilter = `split[bg][fg];[bg]scale=1920:1080:flags=bicubic,boxblur=25:5[blurred];[fg]scale=-2:1080:flags=lanczos[sharp];[blurred][sharp]overlay=(W-w)/2:0,setsar=1`;
+        return {
+          cropFilter,
+          cropPlan: {
+            mode: 'widescreen_ambient_blur',
+            xExpression: '0',
+            yExpression: '0',
+            debug: '16:9 ambient blurred backdrop for vertical source',
+          }
+        };
+      } else {
+        console.log(`[VideoProcessor]: 16:9 output requested for landscape video (${inputWidth}x${inputHeight}) -> Preserving full widescreen frame (1920x1080).`);
+        const cropFilter = `scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`;
+        return {
+          cropFilter,
+          cropPlan: {
+            mode: 'widescreen_preserve',
+            xExpression: '0',
+            yExpression: '0',
+            debug: `16:9 full widescreen preservation (${inputWidth}x${inputHeight} -> 1920x1080)`,
+          }
+        };
+      }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // 2. VERTICAL 9:16 FRAMING MODES (PeakCut Ambient Blur / Smart Pan / Face)
+    // ────────────────────────────────────────────────────────────────────────
+    if (framingMode === 'fit_blur' || framingMode === 'ambient_blur') {
+      console.log(`[VideoProcessor]: 9:16 fit_blur requested -> Applying ambient blurred backdrop.`);
+      const cropFilter = isInputVertical
+        ? `scale=1080:1920:flags=lanczos,setsar=1`
+        : `split[bg][fg];[bg]scale=1080:1920:flags=bicubic,boxblur=30:6[blurred];[fg]scale=1080:-2:flags=lanczos[sharp];[blurred][sharp]overlay=0:(H-h)/2,setsar=1`;
+      return {
+        cropFilter,
+        cropPlan: {
+          mode: 'fit_blur',
+          xExpression: '0',
+          yExpression: '0',
+          debug: '9:16 ambient blurred background with centered sharp video',
+        }
+      };
+    }
+
     let cropFilter = '';
     let cropPlan: SmartCropPlan;
 
@@ -628,13 +694,12 @@ export class VideoProcessor {
     let maxVOffset = Math.max(0, scaledHeight - cropHeight);
 
     try {
-      const { width, height } = await this.getVideoDimensions(inputPath);
-      const widthRatio = (cropWidth * zoomFactor) / width;
-      const heightRatio = (cropHeight * zoomFactor) / height;
+      const widthRatio = (cropWidth * zoomFactor) / inputWidth;
+      const heightRatio = (cropHeight * zoomFactor) / inputHeight;
       const uniformRatio = Math.max(widthRatio, heightRatio);
 
-      scaledWidth = roundEven(width * uniformRatio);
-      scaledHeight = roundEven(height * uniformRatio);
+      scaledWidth = roundEven(inputWidth * uniformRatio);
+      scaledHeight = roundEven(inputHeight * uniformRatio);
       maxOffset = Math.max(0, scaledWidth - cropWidth);
       maxVOffset = Math.max(0, scaledHeight - cropHeight);
     } catch (e: any) {
@@ -930,7 +995,13 @@ export class VideoProcessor {
           }
         }
 
-        const { cropFilter } = await this.buildCropFilter(inputPath, start, duration, nexusCropPlan);
+        const targetAspect = options.aspectRatio || '9:16';
+        const framingMode = options.framingMode || 'smart_crop';
+        const { cropFilter } = await this.buildCropFilter(inputPath, start, duration, nexusCropPlan, targetAspect, framingMode);
+
+        const is169 = targetAspect === '16:9';
+        const targetW = is169 ? 1920 : 1080;
+        const targetH = is169 ? 1080 : 1920;
 
         const filterParts: string[] = [];
         // Base cropped layer with normalized presentation timestamps
@@ -948,12 +1019,12 @@ export class VideoProcessor {
             const startSec = Math.max(0, clip.startSec);
             const endSec = startSec + clip.durationSec;
 
-            let scaledBRoll = `[${inputIdx}:v]scale=960:540:force_original_aspect_ratio=decrease,format=yuva420p,setpts=PTS-STARTPTS+${startSec}/TB,fade=t=in:st=${startSec}:d=${fadeDuration}:alpha=1,fade=t=out:st=${endSec - fadeDuration}:d=${fadeDuration}:alpha=1${overlayOut}`;
+            let scaledBRoll = `[${inputIdx}:v]scale=${Math.round(targetW * 0.75)}:${Math.round(targetH * 0.5)}:force_original_aspect_ratio=decrease,format=yuva420p,setpts=PTS-STARTPTS+${startSec}/TB,fade=t=in:st=${startSec}:d=${fadeDuration}:alpha=1,fade=t=out:st=${endSec - fadeDuration}:d=${fadeDuration}:alpha=1${overlayOut}`;
             let overlayX = '(W-w)/2';
-            let overlayY = clip.layout === 'picture_in_picture_top' ? '180' : '(H-h)/2';
+            let overlayY = clip.layout === 'picture_in_picture_top' ? (is169 ? '80' : '180') : '(H-h)/2';
 
             if (clip.layout === 'full_cutaway') {
-              scaledBRoll = `[${inputIdx}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,format=yuva420p,setpts=PTS-STARTPTS+${startSec}/TB,fade=t=in:st=${startSec}:d=${fadeDuration}:alpha=1,fade=t=out:st=${endSec - fadeDuration}:d=${fadeDuration}:alpha=1${overlayOut}`;
+              scaledBRoll = `[${inputIdx}:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,crop=${targetW}:${targetH},format=yuva420p,setpts=PTS-STARTPTS+${startSec}/TB,fade=t=in:st=${startSec}:d=${fadeDuration}:alpha=1,fade=t=out:st=${endSec - fadeDuration}:d=${fadeDuration}:alpha=1${overlayOut}`;
               overlayX = '0';
               overlayY = '0';
             }

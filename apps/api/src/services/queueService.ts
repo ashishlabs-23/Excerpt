@@ -26,6 +26,10 @@ export class QueueService {
     minDuration?: number;
     maxDuration?: number;
     durationPolicy?: any;
+    aspectRatio?: '9:16' | '16:9';
+    framingMode?: string;
+    caption_style?: string;
+    captionPreset?: string;
   }) {
     if (!data.userId) {
       throw new Error('user_id is required to create a job.');
@@ -55,6 +59,10 @@ export class QueueService {
         minDuration: data.minDuration,
         maxDuration: data.maxDuration,
         durationPolicy: data.durationPolicy,
+        aspectRatio: data.aspectRatio || '9:16',
+        framingMode: data.framingMode || 'smart_crop',
+        caption_style: data.caption_style || data.captionPreset || 'submagic',
+        captionPreset: data.captionPreset || data.caption_style || 'submagic',
       },
       createdAt: now,
       updatedAt: now,

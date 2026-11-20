@@ -204,6 +204,44 @@ describe('QA Full Subsystem & Invariant Verification Suite', () => {
       expect(events[0].start).toBe(45);
       expect(events[0].end).toBe(55);
     });
+
+    it('VIS-01: 16:9 Landscape aspect ratio preserves full widescreen resolution without portrait cropping', async () => {
+      try {
+        const { VideoProcessor } = require('../services/videoProcessor');
+        const processor = new VideoProcessor();
+        jest.spyOn(processor, 'getVideoDimensions').mockResolvedValue({ width: 1920, height: 1080 });
+
+        const res = await processor.buildCropFilter('/dummy/video.mp4', 0, 30, null, '16:9');
+        console.log('VIS-01 RESULT:', res);
+        expect(res.cropPlan.mode).toBe('widescreen_preserve');
+        expect(res.cropFilter).toContain('1920:1080');
+        expect(res.cropFilter).not.toContain('crop=w=1080:h=1920');
+      } catch (e: any) {
+        console.error('VIS-01 CAUGHT ERROR:', e);
+        throw e;
+      }
+    });
+
+    it('VIS-02: 16:9 Subtitles configure PlayResX=1920, PlayResY=1080 and lower-third margin', () => {
+      const { KineticCaptionGenerator } = require('../services/kineticCaptionGenerator');
+      const generator = new KineticCaptionGenerator();
+      const tmpFile = path.join(process.cwd(), 'temp', `test-caps-169-${Date.now()}.ass`);
+
+      try {
+        generator.generateASS(
+          [{ start: 0, end: 1, word: 'Test' }],
+          tmpFile,
+          'minimal',
+          10,
+          { aspectRatio: '16:9' }
+        );
+        const content = fs.readFileSync(tmpFile, 'utf-8');
+        expect(content).toContain('PlayResX: 1920');
+        expect(content).toContain('PlayResY: 1080');
+      } finally {
+        if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+      }
+    });
   });
 
   // =========================================================================
