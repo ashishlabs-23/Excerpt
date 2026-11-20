@@ -152,61 +152,112 @@ export const ProcessingState: React.FC<ProcessingStateProps> = ({ status, progre
             </div>
           </div>
 
-          {/* Right Panel: Large SVG Loader and Diagnostic Box */}
-          <div className="lg:col-span-5 flex flex-col items-center justify-center p-6 rounded-2xl bg-white/[0.01] border border-white/5 h-full min-h-[340px]">
+          {/* Right Panel: Large SVG Loader, Horizontal Loading Bar, and Diagnostic Box */}
+          <div className="lg:col-span-5 flex flex-col items-center justify-center p-6 sm:p-8 rounded-2xl bg-white/[0.02] border border-white/10 h-full min-h-[380px] relative overflow-hidden">
+            {/* Ambient background glow */}
+            <div className="absolute w-48 h-48 bg-primary/20 blur-[80px] rounded-full pointer-events-none" />
+
             {/* SVG Circular Loader */}
-            <div className="relative w-44 h-44 mb-6">
-              <svg className="w-full h-full transform -rotate-90">
-                {/* Background circle */}
+            <div className="relative w-48 h-48 mb-6 flex items-center justify-center">
+              <svg className="w-full h-full transform -rotate-90 drop-shadow-[0_0_20px_rgba(249,115,22,0.35)]" viewBox="0 0 176 176">
+                <defs>
+                  <linearGradient id="excerpt-progress-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#f97316" />
+                    <stop offset="50%" stopColor="#fb923c" />
+                    <stop offset="100%" stopColor="#facc15" />
+                  </linearGradient>
+                  <linearGradient id="excerpt-error-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#ef4444" />
+                    <stop offset="100%" stopColor="#dc2626" />
+                  </linearGradient>
+                </defs>
+
+                {/* Outer track */}
                 <circle 
                   cx="88" 
                   cy="88" 
                   r="74" 
-                  stroke="currentColor" 
-                  strokeWidth="8" 
+                  stroke="rgba(255, 255, 255, 0.08)" 
+                  strokeWidth="10" 
                   fill="transparent" 
-                  className="text-white/5" 
                 />
-                {/* Progress circle */}
+
+                {/* Animated Progress circle (strokeDashoffset correctly animated) */}
                 <motion.circle 
                   cx="88" 
                   cy="88" 
                   r="74" 
-                  stroke="currentColor" 
-                  strokeWidth="8" 
+                  stroke={displayError ? "url(#excerpt-error-gradient)" : "url(#excerpt-progress-gradient)"} 
+                  strokeWidth="10" 
+                  strokeLinecap="round"
                   fill="transparent" 
-                  className={cn(
-                    displayError ? "text-red-500" : "text-primary"
-                  )}
                   strokeDasharray="465"
                   initial={{ strokeDashoffset: 465 }}
-                  style={{ strokeDashoffset: 465 }}
-                  animate={{ strokeDashoffset: 465 - (465 * (progress ?? 0)) / 100 }}
+                  animate={{ strokeDashoffset: 465 - (465 * Math.max(3, Math.min(100, progress ?? 0))) / 100 }}
                   transition={{ ease: "easeOut", duration: 0.8 }}
                 />
               </svg>
+
+              {/* Pulsing rotating aura */}
+              {!displayError && (
+                <div 
+                  className="absolute inset-2 rounded-full border border-primary/20 pointer-events-none" 
+                  style={{ animation: 'spin 12s linear infinite' }} 
+                />
+              )}
+
               {/* Central Text */}
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-3xl font-black text-white italic tracking-tighter">
-                  {progress}%
+              <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none">
+                <span className="text-4xl font-black text-white italic tracking-tighter drop-shadow-md">
+                  {Math.round(progress ?? 0)}%
                 </span>
-                <span className="text-[8px] font-black text-white/30 uppercase tracking-[0.25em] mt-1">
+                <span className="text-[9px] font-black text-white/50 uppercase tracking-[0.25em] mt-1">
                   Overall Completion
                 </span>
               </div>
             </div>
 
             {/* Stage description text */}
-            <div className="text-center mb-6">
-              <span className="text-[9px] font-black text-white/30 uppercase tracking-widest block mb-1">
+            <div className="text-center mb-4 w-full px-4">
+              <span className="text-[9px] font-black text-white/40 uppercase tracking-widest block mb-1">
                 Current Operation
               </span>
               <p className={cn(
-                "text-xs font-bold uppercase italic tracking-tight",
+                "text-xs sm:text-sm font-black uppercase italic tracking-tight line-clamp-2",
                 displayError ? "text-red-400" : "text-white"
               )}>
                 {displayError ? "Pipeline Terminated" : (stageLabel || activeStep.desc)}
               </p>
+            </div>
+
+            {/* Horizontal Loading Bar with Animated Shimmer */}
+            <div className="w-full max-w-[280px] mb-4">
+              <div className="flex justify-between items-center text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1.5 px-0.5">
+                <span>Pipeline Progress</span>
+                <span className="text-primary font-black">{Math.round(progress ?? 0)}%</span>
+              </div>
+              <div className="h-2.5 w-full bg-white/10 rounded-full overflow-hidden relative border border-white/10 p-[1px] shadow-inner">
+                <motion.div 
+                  className={cn(
+                    "h-full rounded-full relative overflow-hidden",
+                    displayError 
+                      ? "bg-red-500 shadow-[0_0_12px_rgba(239,68,68,0.7)]" 
+                      : "bg-gradient-to-r from-orange-500 via-amber-400 to-yellow-300 shadow-[0_0_15px_rgba(249,115,22,0.7)]"
+                  )}
+                  initial={{ width: "0%" }}
+                  animate={{ width: `${Math.max(4, Math.min(100, progress ?? 0))}%` }}
+                  transition={{ ease: "easeOut", duration: 0.8 }}
+                >
+                  {/* High-speed animated shimmer beam */}
+                  {!displayError && (
+                    <motion.div 
+                      className="absolute inset-0 bg-gradient-to-r from-transparent via-white/70 to-transparent w-full"
+                      animate={{ x: ['-100%', '200%'] }}
+                      transition={{ repeat: Infinity, duration: 1.4, ease: "easeInOut" }}
+                    />
+                  )}
+                </motion.div>
+              </div>
             </div>
 
             {/* Diagnostic Alert Box */}
