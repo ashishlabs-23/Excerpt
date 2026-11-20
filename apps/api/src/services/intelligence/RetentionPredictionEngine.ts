@@ -1,155 +1,186 @@
-import { PipelineContext, RetentionPrediction, EmotionTimelinePoint } from './PipelineContext';
+import { PipelineContext, RetentionPrediction, EmotionTimelinePoint, RetentionCurvePoint } from './PipelineContext';
 
 export class RetentionPredictionEngine {
   /**
-   * Evaluates temporal energy distribution across the clip.
-   * If >70% of the emotional intensity is concentrated solely in the first 30% of the duration,
-   * viewer abandonment mid-clip is high (temporal decay penalty).
-   * If energy peaks towards the end (climax/payoff), completion rate increases.
+   * Generates a second-by-second simulated retention curve R(t) from t=0 to t=duration.
    */
-  private computeTemporalDecayModifier(
+  private simulateRetentionCurve(
     clipStart: number,
     clipEnd: number,
-    timeline: EmotionTimelinePoint[] = []
-  ): { completionMod: number; retentionMod: number } {
-    const duration = clipEnd - clipStart;
-    if (duration <= 0 || timeline.length === 0) {
-      return { completionMod: 0, retentionMod: 0 };
-    }
+    curiosityScore: number,
+    hookVelocity: number,
+    emotionalIntensity: number,
+    payoffStrength: number,
+    context: PipelineContext
+  ): { curve: RetentionCurvePoint[]; scrollStopRate: number; dropOffRisk: 'low' | 'medium' | 'high' } {
+    const duration = Math.max(3, Math.round(clipEnd - clipStart));
+    const curve: RetentionCurvePoint[] = [];
 
-    const clipPoints = timeline.filter(p => p.timestamp >= clipStart && p.timestamp <= clipEnd);
-    if (clipPoints.length === 0) {
-      return { completionMod: 0, retentionMod: 0 };
-    }
+    // 1. Initial 3-second scroll stop survival probability (0 to 100)
+    // Strong hook velocity and high curiosity reduce instant swipe-away
+    const initialHazard = Math.max(0.08, 0.45 - (hookVelocity * 0.0028) - (curiosityScore * 0.0015));
+    const scrollStopRate = Math.min(98, Math.max(40, Math.round(100 * (1 - initialHazard))));
 
-    const firstThirdEnd = clipStart + duration * 0.33;
-    const finalThirdStart = clipStart + duration * 0.67;
+    let currentRetention = 100;
+    curve.push({ second: 0, percentage: 100 });
 
-    let earlyMass = 0;
-    let lateMass = 0;
-    let totalMass = 0;
+    const wowTimes: number[] = (context.wowMoments || []).map(w => w.timestamp);
+    const audioSpikes: number[] = (context.vig?.audio || []).filter(a => (a.energy || 0) > 0.75).map(a => a.time);
 
-    for (const pt of clipPoints) {
-      const mass = Math.max(1, pt.intensity || 50);
-      totalMass += mass;
-      if (pt.timestamp <= firstThirdEnd) {
-        earlyMass += mass;
-      } else if (pt.timestamp >= finalThirdStart) {
-        lateMass += mass;
+    for (let s = 1; s <= duration; s++) {
+      const currentSecTimestamp = clipStart + s;
+      const progress = s / duration;
+
+      let secondHazard = 0.015; // baseline decay per second
+
+      // First 3 seconds (The Scroll Barrier)
+      if (s <= 3) {
+        secondHazard = initialHazard / 3.0;
+      } else if (progress <= 0.65) {
+        // Mid-roll decay (modulated by narrative and pacing)
+        secondHazard = 0.012 - (emotionalIntensity * 0.00006);
+      } else {
+        // Climax approach: if payoff is strong, retention stabilizes or even spikes
+        const climaxShield = (payoffStrength / 100) * 0.012;
+        secondHazard = Math.max(0.002, 0.014 - climaxShield);
       }
+
+      // Check if there's a Wow Moment or Audio Energy Spike in this second
+      const hasWow = wowTimes.some((t: number) => Math.abs(t - currentSecTimestamp) <= 1.0);
+      const hasSpike = audioSpikes.some((t: number) => Math.abs(t - currentSecTimestamp) <= 1.0);
+
+      if (hasWow || hasSpike) {
+        // Re-engagement boost cancels decay for this second
+        secondHazard = -0.005;
+      }
+
+      currentRetention = Math.max(15, Math.min(100, currentRetention * (1 - secondHazard)));
+      curve.push({
+        second: s,
+        percentage: Math.round(currentRetention)
+      });
     }
 
-    if (totalMass === 0) return { completionMod: 0, retentionMod: 0 };
+    const finalRetention = curve[curve.length - 1]?.percentage || 50;
+    const dropOffRisk: 'low' | 'medium' | 'high' =
+      finalRetention >= 65 ? 'low' : finalRetention >= 40 ? 'medium' : 'high';
 
-    const earlyRatio = earlyMass / totalMass;
-    const lateRatio = lateMass / totalMass;
+    return { curve, scrollStopRate, dropOffRisk };
+  }
 
-    // Severe front-loading (clickbait / weak body)
-    if (earlyRatio >= 0.70) {
-      return { completionMod: -12, retentionMod: -8 };
+  /**
+   * Calculates how cleanly the ending loops back to the start (seamless repetition).
+   */
+  private computeLoopability(clipStart: number, clipEnd: number, context: PipelineContext): number {
+    const segments = context.transcriptSegments || [];
+    const firstSeg = segments.find(s => s.start >= clipStart);
+    const lastSeg = segments.filter(s => s.end <= clipEnd).pop();
+
+    if (!firstSeg || !lastSeg) return 50;
+
+    let score = 55;
+    const endText = lastSeg.text.trim().toLowerCase();
+    const startText = firstSeg.text.trim().toLowerCase();
+
+    // Incomplete trailing sentences or connecting conjunctions prompt loop restarts
+    const loopStarters = ['and that is why', 'which is why', 'so that explains', 'the reason is', 'because'];
+    if (loopStarters.some(ls => endText.startsWith(ls) || endText.endsWith(ls))) {
+      score += 25;
     }
 
-    // Climactic crescendo (energy builds to conclusion)
-    if (lateRatio >= 0.45) {
-      return { completionMod: +8, retentionMod: +6 };
+    // Question at end that gets answered at beginning
+    if (endText.includes('?') && !startText.includes('?')) {
+      score += 20;
     }
 
-    return { completionMod: 0, retentionMod: 0 };
+    // Audio energy continuity: if ending audio energy matches start audio energy smoothly
+    const audioNodes = context.vig?.audio || [];
+    const startAudio = audioNodes.find(a => Math.abs(a.time - clipStart) <= 1.0);
+    const endAudio = audioNodes.find(a => Math.abs(a.time - clipEnd) <= 1.0);
+    if (startAudio && endAudio && Math.abs((startAudio.energy || 0) - (endAudio.energy || 0)) < 0.2) {
+      score += 10;
+    }
+
+    return Math.min(100, Math.max(20, score));
   }
 
   public predict(clipId: string, clipStart: number, clipEnd: number, context: PipelineContext): RetentionPrediction {
     const start = Date.now();
     const category = context.category.category;
 
-    // Get signals from other engines with safe defaults
+    // Signals from context
     const narrativeScore = context.narrative?.[clipId]?.narrative_score ?? 50;
     const curiosityScore = context.curiosity?.[clipId]?.curiosity_score ?? 50;
+    const hookVelocity = context.curiosity?.[clipId]?.hook_velocity_index ?? 50;
     const payoffStrength = context.payoff?.[clipId]?.payoff_strength ?? 50;
     const emotionalIntensity = context.emotionIntelligence?.[clipId]?.emotional_intensity ?? 50;
     const arcStrength = context.emotionIntelligence?.[clipId]?.arc_strength ?? 50;
-    const emotionTimeline = context.emotionIntelligence?.[clipId]?.emotion_timeline ?? [];
 
-    let retention_score = 50; // default baseline
+    let retention_score = 50;
 
-    // 1. Category-Specific Bayesian Prior & Likelihood Fusion
+    // Category-specific retention model
     if (category === 'football' || category === 'cricket' || category === 'basketball' || category === 'mma' || category === 'esports') {
-      // Sports: Events, Replays, Crowd Eruptions, and Reaction Intensity
-      const hasReplay = (context.replaySegments || []).some(
-        (r) => r.start >= clipStart && r.end <= clipEnd
-      );
-      const crowdExcitement = (context.crowdTimeline || []).filter(
-        (c) => c.timestamp >= clipStart && c.timestamp <= clipEnd
-      );
+      const hasReplay = (context.replaySegments || []).some(r => r.start >= clipStart && r.end <= clipEnd);
+      const crowdExcitement = (context.crowdTimeline || []).filter(c => c.timestamp >= clipStart && c.timestamp <= clipEnd);
       const hasCelebration = crowdExcitement.some(c => c.label === 'eruption');
 
-      let sportsScore = 50;
-      if (hasReplay) sportsScore += 15;
-      if (hasCelebration) sportsScore += 20;
-      
-      // Match with emotional intensity (reaction)
-      sportsScore += (emotionalIntensity - 50) * 0.4;
+      let sportsScore = 52 + (hookVelocity * 0.20);
+      if (hasReplay) sportsScore += 12;
+      if (hasCelebration) sportsScore += 18;
+      sportsScore += (emotionalIntensity - 50) * 0.35;
       retention_score = sportsScore;
-
     } else if (category === 'podcast' || category === 'interview' || category === 'documentary') {
-      // Podcasts: Curiosity (30%), Narrative Structure (30%), Payoff (40%)
-      const podcastScore = (curiosityScore * 0.30) + (narrativeScore * 0.30) + (payoffStrength * 0.40);
-      retention_score = podcastScore;
-
-      // Cross-signal penalty: High narrative premise but flat emotion
+      retention_score = (hookVelocity * 0.25) + (curiosityScore * 0.25) + (narrativeScore * 0.20) + (payoffStrength * 0.30);
       if (narrativeScore > 75 && emotionalIntensity < 35) {
-        retention_score -= 10;
+        retention_score -= 8;
       }
-
     } else if (category === 'reaction') {
-      // Reaction Videos: Face emotion (50%), Arc (30%), Face visibility proxy (20%)
-      const facePresence = context.rankingProfile.face ?? 0.3; // proxy for face visibility
-      const reactionScore = (emotionalIntensity * 0.50) + (arcStrength * 0.30) + (facePresence * 20);
-      retention_score = reactionScore;
-
-    } else if (category === 'tutorial') {
-      // Education/Tutorial: Curiosity (20%), Payoff (50%), Narrative (30%)
-      const eduScore = (curiosityScore * 0.20) + (payoffStrength * 0.50) + (narrativeScore * 0.30);
-      retention_score = eduScore;
-
+      retention_score = (emotionalIntensity * 0.45) + (hookVelocity * 0.25) + (arcStrength * 0.30);
     } else {
-      // General / Vlog / Entertainment retention model
-      retention_score = (narrativeScore * 0.25) + (curiosityScore * 0.25) + (payoffStrength * 0.25) + (emotionalIntensity * 0.25);
+      retention_score = (hookVelocity * 0.30) + (curiosityScore * 0.20) + (payoffStrength * 0.25) + (emotionalIntensity * 0.25);
     }
 
-    // 2. Hook x Payoff Synergetic Virality Interaction
-    // If both Hook (curiosity/narrative) > 70 AND Payoff > 70, apply synergistic bonus
+    // Synergistic Hook x Payoff Bonus
     if (curiosityScore >= 70 && payoffStrength >= 70) {
-      retention_score = retention_score * 1.12; // 12% synergetic retention lift
+      retention_score *= 1.12;
     } else if (curiosityScore > 80 && payoffStrength < 45) {
-      // Severe curiosity gap letdown penalty
-      retention_score = Math.max(15, retention_score - 20);
+      retention_score = Math.max(20, retention_score - 18);
     }
 
-    // 3. Temporal Energy Distribution Check
-    const temporalMod = this.computeTemporalDecayModifier(clipStart, clipEnd, emotionTimeline);
-    retention_score += temporalMod.retentionMod;
+    retention_score = Math.min(100, Math.max(15, Math.round(retention_score)));
 
-    retention_score = Math.min(100, Math.max(0, Math.round(retention_score)));
+    // Second-by-Second Simulation
+    const { curve, scrollStopRate, dropOffRisk } = this.simulateRetentionCurve(
+      clipStart,
+      clipEnd,
+      curiosityScore,
+      hookVelocity,
+      emotionalIntensity,
+      payoffStrength,
+      context
+    );
 
-    // 4. Calibrated Expected Completion Rate
-    let expected_completion_rate = Math.round(retention_score * 0.78 + curiosityScore * 0.15 + (payoffStrength >= 65 ? 5 : 0));
-    expected_completion_rate += temporalMod.completionMod;
-    expected_completion_rate = Math.min(100, Math.max(0, expected_completion_rate));
+    const loopability_quotient = this.computeLoopability(clipStart, clipEnd, context);
 
-    // 5. Calibrated Expected Rewatch Rate
-    let expected_rewatch_rate = Math.round(emotionalIntensity * 0.45 + payoffStrength * 0.30 + arcStrength * 0.15);
-    if (category === 'reaction' || category === 'football' || category === 'basketball') {
-      expected_rewatch_rate += 10; // sports & reaction moments have high rewatch propensity
-    }
-    if (hasCelebrationOrClimax(context, clipStart, clipEnd)) {
+    // Calibrate Expected Completion Rate from simulated final curve percentage
+    const finalPct = curve[curve.length - 1]?.percentage || 50;
+    const expected_completion_rate = Math.min(100, Math.max(10, Math.round(finalPct * 0.85 + payoffStrength * 0.15)));
+
+    // Calibrate Rewatch Rate
+    let expected_rewatch_rate = Math.round(emotionalIntensity * 0.35 + loopability_quotient * 0.35 + payoffStrength * 0.20);
+    if (category === 'reaction' || category === 'esports' || category === 'football') {
       expected_rewatch_rate += 8;
     }
-    expected_rewatch_rate = Math.min(100, Math.max(0, expected_rewatch_rate));
+    expected_rewatch_rate = Math.min(100, Math.max(10, expected_rewatch_rate));
 
     const result: RetentionPrediction = {
       retention_score,
       expected_completion_rate,
-      expected_rewatch_rate
+      expected_rewatch_rate,
+      scroll_stop_rate: scrollStopRate,
+      loopability_quotient,
+      drop_off_risk: dropOffRisk,
+      retention_curve: curve
     };
 
     if (!context.retention) {
@@ -161,10 +192,6 @@ export class RetentionPredictionEngine {
 
     return result;
   }
-}
-
-function hasCelebrationOrClimax(context: PipelineContext, clipStart: number, clipEnd: number): boolean {
-  return (context.wowMoments || []).some(w => w.timestamp >= clipStart && w.timestamp <= clipEnd);
 }
 
 export const retentionPredictionEngine = new RetentionPredictionEngine();

@@ -3,7 +3,7 @@
 import React, { Suspense, useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { SidebarNav } from '@/components/SidebarNav';
-import { EditorSidebar, ExportOptions } from '@/components/EditorSidebar';
+import { EditorSidebar, ExportOptions, FramingMode } from '@/components/EditorSidebar';
 import { VideoPlayer } from '@/components/VideoPlayer';
 import { Timeline } from '@/components/Timeline';
 import { TranscriptView } from '@/components/TranscriptView';
@@ -11,7 +11,8 @@ import { authFetch, exportCustomClip, getClipPlayUrl } from '@/lib/api';
 import { AuthGate } from '@/components/AuthGate';
 import {
   Scissors, ArrowLeft, AlertCircle, Loader2, ChevronDown, Film,
-  Check, Type, Sparkles, Undo2, Redo2, RotateCcw, X, Zap, Download
+  Check, Type, Sparkles, Undo2, Redo2, RotateCcw, X, Zap, Download,
+  Pencil
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -64,7 +65,7 @@ function ClipEditorContent() {
   const [manualSeek, setManualSeek] = useState<number | null>(null);
   const [captionsEnabled, setCaptionsEnabled] = useState(true);
   const [faceCenteringEnabled, setFaceCenteringEnabled] = useState(true);
-  const [bRollEnabled, setBRollEnabled] = useState(false);
+
   const [excludedWordIndices, setExcludedWordIndices] = useState<Set<number>>(new Set());
   const [captionStyle, setCaptionStyle] = useState('Submagic');
   const [captionFontSize, setCaptionFontSize] = useState(28);
@@ -73,6 +74,7 @@ function ClipEditorContent() {
   const [captionColor, setCaptionColor] = useState<string>('');
   const [aspectRatio, setAspectRatio] = useState<'9:16' | '1:1' | '16:9'>('9:16');
   const [cropOffset, setCropOffset] = useState<number>(0);
+  const [framingMode, setFramingMode] = useState<FramingMode>('smart_crop');
   const [thumbnailTime, setThumbnailTime] = useState<number | null>(null);
   const [thumbnailTitle, setThumbnailTitle] = useState<string>('');
   const [socialPreviewMode, setSocialPreviewMode] = useState<'tiktok' | 'youtube' | 'instagram' | 'none'>('none');
@@ -446,6 +448,7 @@ function ClipEditorContent() {
         trimOut,
         cuts: cuts.length > 0 ? cuts : undefined,
         cropOffset,
+        framingMode,
         aspectRatio: opts.aspectRatio,
         quality: opts.quality,
         captionStyle,
@@ -465,7 +468,7 @@ function ClipEditorContent() {
     } finally {
       setIsExporting(false);
     }
-  }, [videoData, captionsEnabled, trimIn, trimOut, excludedWordIndices, captionStyle, captionFontSize, captionPosition, captionYPercent, captionColor, cropOffset]);
+  }, [videoData, captionsEnabled, trimIn, trimOut, excludedWordIndices, captionStyle, captionFontSize, captionPosition, captionYPercent, captionColor, cropOffset, framingMode]);
 
   const clipDuration = videoData ? videoData.endTime - videoData.startTime : 0;
 
@@ -493,16 +496,17 @@ function ClipEditorContent() {
             {/* Back button */}
             <Link
               href="/dashboard"
-              className="flex items-center gap-1.5 text-[#4b5563] hover:text-white transition-colors text-sm font-medium"
+              className="flex items-center gap-1.5 text-slate-400 hover:text-white transition-colors text-sm font-medium"
+              aria-label="Back to Dashboard"
             >
-              <ArrowLeft size={16} />
+              <ArrowLeft size={16} aria-hidden="true" />
               <span className="hidden sm:block">Dashboard</span>
             </Link>
 
             <div className="w-px h-5 bg-[#1a2235]" />
 
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#C87740] to-[#E5A16F] flex items-center justify-center shadow-lg shadow-primary/20">
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#C87740] to-[#E5A16F] flex items-center justify-center shadow-lg shadow-primary/20" aria-hidden="true">
                 <Scissors className="text-white" size={16} />
               </div>
               <div>
@@ -510,6 +514,7 @@ function ClipEditorContent() {
                   <input
                     autoFocus
                     value={videoData?.title || ''}
+                    aria-label="Edit clip title"
                     onChange={e => {
                       const newTitle = e.target.value;
                       setVideoData(prev => prev ? { ...prev, title: newTitle } : null);
@@ -519,18 +524,25 @@ function ClipEditorContent() {
                     className="text-sm font-bold tracking-tight bg-white/10 text-white rounded px-2 py-0.5 border border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary max-w-[160px] sm:max-w-xs"
                   />
                 ) : (
-                  <h1
-                    onClick={() => setIsEditingTitle(true)}
-                    className="text-sm font-bold tracking-tight truncate max-w-[140px] sm:max-w-xs cursor-pointer hover:text-primary transition-colors flex items-center gap-1.5"
-                    title="Click to rename clip"
-                  >
-                    <span>{videoData?.title || 'Clip Editor'}</span>
-                    <span className="text-[10px] text-white/30 hover:text-white">✎</span>
-                  </h1>
+                  <div className="flex items-center gap-1.5">
+                    <h1
+                      className="text-sm font-bold tracking-tight truncate max-w-[140px] sm:max-w-xs text-[#e0e5f6]"
+                    >
+                      {videoData?.title || 'Clip Editor'}
+                    </h1>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingTitle(true)}
+                      aria-label="Rename clip"
+                      className="text-slate-400 hover:text-white p-0.5 rounded transition-colors focus:outline-none focus:ring-1 focus:ring-primary"
+                    >
+                      <Pencil size={12} aria-hidden="true" />
+                    </button>
+                  </div>
                 )}
                 <div className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                  <span className="text-[9px] text-[#4b5563] font-black uppercase tracking-widest">Studio Mode</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" aria-hidden="true" />
+                  <span className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Studio Mode</span>
                 </div>
               </div>
 
@@ -539,27 +551,29 @@ function ClipEditorContent() {
                 <button
                   type="button"
                   onClick={() => setIsClipDropdownOpen(prev => !prev)}
+                  aria-label="Switch between clips"
+                  aria-expanded={isClipDropdownOpen}
                   className="flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl bg-[#111827] hover:bg-[#1a2235] border border-[#1f2937] hover:border-primary/40 transition-all text-xs font-semibold text-[#e0e5f6] shadow-sm"
                   title="Switch between clips"
                 >
-                  <Film size={13} className="text-primary" />
-                  <span className="hidden md:inline text-white/40 text-[10px] uppercase font-black">Clip:</span>
+                  <Film size={13} className="text-primary" aria-hidden="true" />
+                  <span className="hidden md:inline text-slate-400 text-[10px] uppercase font-black">Clip:</span>
                   <span className="max-w-[80px] sm:max-w-[140px] truncate">
                     {videoData?.title || 'Select Clip'}
                   </span>
-                  <ChevronDown size={13} className={`text-white/40 transition-transform duration-200 ${isClipDropdownOpen ? 'rotate-180' : ''}`} />
+                  <ChevronDown size={13} className={`text-slate-400 transition-transform duration-200 ${isClipDropdownOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
                 </button>
 
                 {isClipDropdownOpen && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setIsClipDropdownOpen(false)} />
                     <div className="absolute top-full left-0 mt-2 w-80 max-h-96 overflow-y-auto bg-[#0d1425] border border-[#1f2937] rounded-2xl shadow-2xl z-50 p-2 space-y-1 custom-scrollbar">
-                      <div className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-[#4b5563] border-b border-white/5 flex items-center justify-between">
+                      <div className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-white/5 flex items-center justify-between">
                         <span>Your Clips ({availableClips.length})</span>
-                        <span className="text-[9px] text-primary">Switch</span>
+                        <span className="text-[9px] text-primary font-bold">Switch</span>
                       </div>
                       {availableClips.length === 0 ? (
-                        <div className="p-4 text-center text-xs text-white/40">No clips found</div>
+                        <div className="p-4 text-center text-xs text-slate-400">No clips found</div>
                       ) : (
                         availableClips.map((c: any) => {
                           const isSelected = c.id === videoData?.id;
@@ -580,17 +594,17 @@ function ClipEditorContent() {
                               className={`w-full text-left p-2.5 rounded-xl transition-all flex items-center justify-between gap-3 ${
                                 isSelected
                                   ? 'bg-primary/20 border border-primary/40 text-white'
-                                  : 'hover:bg-white/5 border border-transparent text-white/80 hover:text-white'
+                                  : 'hover:bg-white/5 border border-transparent text-slate-300 hover:text-white'
                               }`}
                             >
                               <div className="min-w-0 flex-1">
                                 <p className="text-xs font-bold truncate">{cTitle}</p>
-                                <div className="flex items-center gap-2 mt-0.5 text-[10px] text-white/40">
+                                <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-400">
                                   {cDur > 0 && <span>{cDur}s</span>}
                                   {score && <span className="text-primary font-bold">{score}% viral</span>}
                                 </div>
                               </div>
-                              {isSelected && <Check size={14} className="text-primary shrink-0" />}
+                              {isSelected && <Check size={14} className="text-primary shrink-0" aria-hidden="true" />}
                             </button>
                           );
                         })
@@ -609,19 +623,21 @@ function ClipEditorContent() {
                 type="button"
                 onClick={handleUndo}
                 disabled={!canUndo}
-                className="p-1.5 rounded-lg text-white/60 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent transition-all"
+                aria-label="Undo edit"
+                className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent transition-all"
                 title="Undo (Ctrl+Z)"
               >
-                <Undo2 size={14} />
+                <Undo2 size={14} aria-hidden="true" />
               </button>
               <button
                 type="button"
                 onClick={handleRedo}
                 disabled={!canRedo}
-                className="p-1.5 rounded-lg text-white/60 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent transition-all"
+                aria-label="Redo edit"
+                className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent transition-all"
                 title="Redo (Ctrl+Y)"
               >
-                <Redo2 size={14} />
+                <Redo2 size={14} aria-hidden="true" />
               </button>
             </div>
 
@@ -630,10 +646,11 @@ function ClipEditorContent() {
               <button
                 type="button"
                 onClick={handleResetOriginal}
-                className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/60 hover:text-white text-xs font-bold transition-all"
+                aria-label="Reset all edits to original clip"
+                className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs font-bold transition-all"
                 title="Reset all edits to original clip"
               >
-                <RotateCcw size={12} />
+                <RotateCcw size={12} aria-hidden="true" />
                 <span className="text-[10px]">Reset</span>
               </button>
             )}
@@ -642,14 +659,15 @@ function ClipEditorContent() {
             <button
               type="button"
               onClick={() => setCaptionsEnabled(prev => !prev)}
+              aria-label={captionsEnabled ? 'Turn captions off' : 'Turn captions on'}
               className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border text-xs font-bold transition-all shadow-sm ${
                 captionsEnabled
                   ? 'bg-primary/15 border-primary/40 text-primary hover:bg-primary/25'
-                  : 'bg-white/5 border-white/10 text-white/40 hover:text-white hover:bg-white/10'
+                  : 'bg-white/5 border-white/10 text-slate-300 hover:text-white hover:bg-white/10'
               }`}
               title={captionsEnabled ? 'Click to remove captions' : 'Click to add captions'}
             >
-              <Type size={13} />
+              <Type size={13} aria-hidden="true" />
               <span className="hidden sm:inline">{captionsEnabled ? 'Captions ON' : 'Captions OFF'}</span>
             </button>
 
@@ -657,10 +675,11 @@ function ClipEditorContent() {
             <button
               type="button"
               onClick={() => setIsTranscriptDrawerOpen(true)}
+              aria-label="Open transcript drawer"
               className="xl:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#111827] border border-[#1f2937] hover:border-primary/40 text-xs font-bold text-white transition-all shadow-sm"
               title="Open Transcript"
             >
-              <Zap size={13} className="text-primary" />
+              <Zap size={13} className="text-primary" aria-hidden="true" />
               <span className="hidden md:inline">Transcript</span>
               {excludedWordIndices.size > 0 && (
                 <span className="px-1.5 py-0.2 rounded-full bg-rose-500/20 text-rose-400 text-[9px] font-mono font-black">
@@ -672,10 +691,11 @@ function ClipEditorContent() {
             <button
               type="button"
               onClick={() => setIsStudioDrawerOpen(true)}
+              aria-label="Open studio controls drawer"
               className="lg:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#111827] border border-[#1f2937] hover:border-primary/40 text-xs font-bold text-white transition-all shadow-sm"
               title="Open Studio Panel"
             >
-              <Sparkles size={13} className="text-primary" />
+              <Sparkles size={13} className="text-primary" aria-hidden="true" />
               <span className="hidden md:inline">Studio</span>
             </button>
 
@@ -683,14 +703,14 @@ function ClipEditorContent() {
             {videoData && (
               <>
                 <div className="hidden xl:flex px-3 py-1.5 rounded-lg bg-[#111827] border border-[#1f2937] items-center gap-2">
-                  <span className="text-[9px] font-black text-[#4b5563] uppercase tracking-widest">Duration</span>
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Duration</span>
                   <span className="text-[10px] font-bold text-[#e0e5f6]">
                     {Math.floor(clipDuration / 60)}m {Math.floor(clipDuration % 60)}s
                   </span>
                 </div>
                 {isLoadingMeta && (
-                  <div className="flex items-center gap-2 text-[#4b5563]">
-                    <Loader2 size={14} className="animate-spin" />
+                  <div className="flex items-center gap-2 text-slate-400">
+                    <Loader2 size={14} className="animate-spin" aria-hidden="true" />
                     <span className="text-[10px] font-bold uppercase tracking-widest hidden sm:block">Loading</span>
                   </div>
                 )}
@@ -703,10 +723,11 @@ function ClipEditorContent() {
                   type="button"
                   onClick={() => handleExport({ aspectRatio, quality: 'high', format: 'mp4' })}
                   disabled={isExporting || !videoData}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white font-bold text-xs shadow-md shadow-primary/25 transition-all active:scale-95 disabled:opacity-50"
+                  aria-label="Export this clip as MP4"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-neutral-950 font-black text-xs shadow-md shadow-primary/25 transition-all active:scale-95 disabled:opacity-50"
                   title="Export this clip as MP4"
                 >
-                  {isExporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                  {isExporting ? <Loader2 size={13} className="animate-spin text-neutral-950" aria-hidden="true" /> : <Download size={13} className="text-neutral-950" aria-hidden="true" />}
                   <span>{isExporting ? 'Exporting...' : 'Export'}</span>
                 </button>
               </>
@@ -803,8 +824,7 @@ function ClipEditorContent() {
               onToggleCaptions={setCaptionsEnabled}
               faceCenteringEnabled={faceCenteringEnabled}
               onToggleFaceCentering={setFaceCenteringEnabled}
-              bRollEnabled={bRollEnabled}
-              onToggleBRoll={setBRollEnabled}
+
               onExport={handleExport}
               isExporting={isExporting}
               clipMeta={{
@@ -825,6 +845,8 @@ function ClipEditorContent() {
               onChangeCaptionColor={setCaptionColor}
               cropOffset={cropOffset}
               onChangeCropOffset={setCropOffset}
+              framingMode={framingMode}
+              onChangeFramingMode={setFramingMode}
               thumbnailTime={thumbnailTime}
               onSelectThumbnailTime={() => setThumbnailTime(currentTime)}
               thumbnailTitle={thumbnailTitle}
@@ -902,8 +924,7 @@ function ClipEditorContent() {
                   onToggleCaptions={setCaptionsEnabled}
                   faceCenteringEnabled={faceCenteringEnabled}
                   onToggleFaceCentering={setFaceCenteringEnabled}
-                  bRollEnabled={bRollEnabled}
-                  onToggleBRoll={setBRollEnabled}
+
                   onExport={handleExport}
                   isExporting={isExporting}
                   clipMeta={{
@@ -924,6 +945,8 @@ function ClipEditorContent() {
                   onChangeCaptionColor={setCaptionColor}
                   cropOffset={cropOffset}
                   onChangeCropOffset={setCropOffset}
+                  framingMode={framingMode}
+                  onChangeFramingMode={setFramingMode}
                   thumbnailTime={thumbnailTime}
                   onSelectThumbnailTime={() => setThumbnailTime(currentTime)}
                   thumbnailTitle={thumbnailTitle}

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Home, LayoutGrid, Scissors, Settings, ChevronRight, Zap, Mic2 } from 'lucide-react';
+import { Home, LayoutGrid, Scissors, Settings, ChevronRight, Zap, Mic2, Smartphone } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
@@ -49,12 +49,12 @@ export const SidebarNav: React.FC = () => {
 
   return (
     <>
-      <aside className="hidden lg:flex w-72 h-full shrink-0 border-r border-white/5 bg-[#030712] flex-col items-stretch py-10 transition-all relative z-30">
+      <aside aria-label="Primary Navigation" className="hidden lg:flex w-72 h-full shrink-0 border-r border-white/5 bg-[#030712] flex-col items-stretch py-10 transition-all relative z-30">
         {/* Brand Anchor */}
         <div className="px-8 mb-16 flex items-center gap-4">
           <div className="relative group">
             <div className="absolute -inset-2 bg-primary/20 rounded-2xl blur-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center text-white font-black text-2xl shadow-[0_0_30px_rgba(200,119,64,0.3)] relative z-10 transition-transform group-hover:scale-105">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center text-white font-black text-2xl shadow-[0_0_30px_rgba(200,119,64,0.3)] relative z-10 transition-transform group-hover:scale-105" aria-hidden="true">
               E
             </div>
           </div>
@@ -65,9 +65,9 @@ export const SidebarNav: React.FC = () => {
         </div>
         
         {/* Navigation Matrix */}
-        <nav className="flex-grow w-full px-6 space-y-2">
+        <nav aria-label="Main Menu" className="flex-grow w-full px-6 space-y-2">
           <div className="mb-6 px-4">
-             <span className="text-[10px] font-black text-white/20 uppercase tracking-[0.4em]">Core Systems</span>
+             <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.4em]">Core Systems</span>
           </div>
 
           {navItems.map((item) => {
@@ -81,11 +81,11 @@ export const SidebarNav: React.FC = () => {
                 className={`flex items-center justify-between px-5 py-4 rounded-2xl transition-all duration-300 group relative overflow-hidden ${
                   isActive 
                     ? 'bg-white/[0.03] text-primary shadow-[inset_0_0_20px_rgba(0,0,0,0.4)] border border-white/5' 
-                    : 'text-white/40 hover:text-white hover:bg-white/[0.02]'
+                    : 'text-slate-300 hover:text-white hover:bg-white/[0.02]'
                 }`}
               >
                 <div className="flex items-center gap-4 relative z-10">
-                  <Icon size={20} className={`${isActive ? 'text-primary' : 'group-hover:text-primary'} transition-colors`} />
+                  <Icon size={20} className={`${isActive ? 'text-primary' : 'group-hover:text-primary'} transition-colors`} aria-hidden="true" />
                   <span className="font-bold text-[11px] tracking-[0.1em] uppercase">{item.name}</span>
                 </div>
                 
@@ -97,7 +97,7 @@ export const SidebarNav: React.FC = () => {
                   />
                 )}
                 
-                {!isActive && <ChevronRight size={14} className="opacity-0 group-hover:opacity-40 transition-opacity" />}
+                {!isActive && <ChevronRight size={14} className="opacity-0 group-hover:opacity-40 transition-opacity" aria-hidden="true" />}
               </Link>
             );
           })}
@@ -105,9 +105,9 @@ export const SidebarNav: React.FC = () => {
         
         {/* Footer Interface */}
         <div className="mt-auto w-full px-6 space-y-4">
-          <div className="p-6 rounded-3xl glass-card border-white/5 bg-gradient-to-br from-white/[0.02] to-transparent">
+          <div className="p-6 rounded-3xl glass-card border border-white/5 bg-[#0b101d]">
              <div className="flex items-center gap-2 mb-3">
-                <Zap size={14} className="text-primary" />
+                <Zap size={14} className="text-primary" aria-hidden="true" />
                 <span className="text-[10px] font-black text-white uppercase italic tracking-widest">AI Capacity: {capacity}%</span>
              </div>
               <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden mb-4">
@@ -121,7 +121,7 @@ export const SidebarNav: React.FC = () => {
                 />
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-[8px] font-black text-white/20 uppercase tracking-widest">System Link</span>
+                <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest">System Link</span>
                 <div className="flex items-center gap-1.5">
                   <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${
                     status === 'offline' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]' : 
@@ -130,8 +130,8 @@ export const SidebarNav: React.FC = () => {
                   }`} />
                   <span className={`text-[9px] font-black uppercase tracking-widest ${
                     status === 'offline' ? 'text-red-400' : 
-                    status === 'degraded' ? 'text-yellow-400' : 
-                    'text-emerald-400'
+                    status === 'degraded' ? 'text-yellow-300' : 
+                    'text-emerald-300'
                   }`}>
                     {status}
                   </span>
@@ -141,18 +141,18 @@ export const SidebarNav: React.FC = () => {
 
           <Link
             href="/settings"
-            className="flex items-center justify-between px-5 py-4 rounded-2xl transition-all duration-300 group relative overflow-hidden text-white/40 hover:text-white hover:bg-white/[0.02]"
+            className="flex items-center justify-between px-5 py-4 rounded-2xl transition-all duration-300 group relative overflow-hidden text-slate-300 hover:text-white hover:bg-white/[0.02]"
           >
             <div className="flex items-center gap-4 relative z-10">
-              <Settings size={20} className="group-hover:text-primary transition-colors" />
+              <Settings size={20} className="group-hover:text-primary transition-colors" aria-hidden="true" />
               <span className="font-bold text-[11px] tracking-[0.1em] uppercase">Settings</span>
             </div>
-            <ChevronRight size={14} className="opacity-0 group-hover:opacity-40 transition-opacity" />
+            <ChevronRight size={14} className="opacity-0 group-hover:opacity-40 transition-opacity" aria-hidden="true" />
           </Link>
         </div>
       </aside>
 
-      <nav className="lg:hidden fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#030712]/95 backdrop-blur-2xl shadow-[0_-20px_60px_rgba(0,0,0,0.45)]">
+      <nav aria-label="Mobile Navigation" className="lg:hidden fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#030712]/95 backdrop-blur-2xl shadow-[0_-20px_60px_rgba(0,0,0,0.45)]">
         <div className="grid grid-cols-4 gap-1 px-3 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
           {mobileNavItems.map((item) => {
             const isActive = item.href === '/' ? pathname === item.href : pathname.startsWith(item.href);
@@ -165,10 +165,10 @@ export const SidebarNav: React.FC = () => {
                 className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 transition-all duration-300 ${
                   isActive
                     ? 'bg-white/[0.05] text-primary border border-white/10'
-                    : 'text-white/45 hover:text-white hover:bg-white/[0.03]'
+                    : 'text-slate-300 hover:text-white hover:bg-white/[0.03]'
                 }`}
               >
-                <Icon size={18} className={isActive ? 'text-primary' : ''} />
+                <Icon size={18} className={isActive ? 'text-primary' : ''} aria-hidden="true" />
                 <span className="text-[9px] font-black uppercase tracking-[0.12em] truncate">
                   {item.name}
                 </span>

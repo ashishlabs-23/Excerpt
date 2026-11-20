@@ -2,6 +2,8 @@ import { VideoIntelligenceGraph } from './VideoGraph';
 import { EventGraph } from './EventGraph';
 import { StoryGraph } from './StoryGraph';
 import { RankedCandidate } from './PersonaRankingEngine';
+import type { BRollSegment } from './BRollDetector';
+
 
 /**
  * PipelineContext — typed context object that flows through all intelligence stages.
@@ -205,6 +207,11 @@ export interface NarrativeStructure {
 
 export interface CuriosityResult {
   curiosity_score: number;      // 0-100
+  hook_velocity_index?: number; // 0-100 (Speed of intrigue buildup in first 3s)
+  open_loop_strength?: number;  // 0-100 (Cognitive tension / unresolved mystery)
+  paradox_score?: number;       // 0-100 (Counter-intuitive assertions)
+  stakes_urgency?: number;      // 0-100 (Stakes, risk, FOMO, time sensitivity)
+  emotional_incongruity?: number;// 0-100 (Vulnerability, shock, visceral confession)
 }
 
 export interface PayoffResult {
@@ -224,10 +231,19 @@ export interface UnifiedEmotionResult {
   arc_strength: number;         // 0-100
 }
 
+export interface RetentionCurvePoint {
+  second: number;
+  percentage: number;
+}
+
 export interface RetentionPrediction {
   retention_score: number;      // 0-100
   expected_completion_rate: number; // 0-100
   expected_rewatch_rate: number;    // 0-100
+  scroll_stop_rate?: number;    // 0-100 (3-second hook survival probability)
+  loopability_quotient?: number;// 0-100 (Seamless replay transition score)
+  drop_off_risk?: 'low' | 'medium' | 'high';
+  retention_curve?: RetentionCurvePoint[];
 }
 
 export interface ViralPatternResult {
@@ -336,6 +352,9 @@ export interface PipelineContext {
   broadcastGraphics?: Record<string, BroadcastGraphicMetadata>; // clipId -> metadata
   visualTimeline?: VisualTimelinePoint[];
 
+  // B-Roll Detection (per-clip) — clipId -> detected segments
+  bRollSegments?: Record<string, BRollSegment[]>;
+
   // Telemetry — execution times per module
   executionTimes: Record<string, number>;
 }
@@ -383,6 +402,7 @@ export function createDefaultContext(jobId: string): PipelineContext {
     performancePrediction: {},
     broadcastGraphics: {},
     visualTimeline: [],
+    bRollSegments: {},
     executionTimes: {},
   };
 }

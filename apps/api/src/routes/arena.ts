@@ -9,7 +9,45 @@ const router = Router();
  * Note: A real implementation would fetch from a pending queue, but for now we'll mock the response.
  */
 router.get('/candidates', async (req, res) => {
-  // Return mock candidates for the arena UI
+  try {
+    const { data: clips, error } = await supabase()
+      .from('clips')
+      .select('id, job_id, video_url, start_time, end_time, title, metadata')
+      .eq('status', 'completed')
+      .not('video_url', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    if (!error && clips && clips.length >= 2) {
+      const first = clips[0];
+      const second = clips.find(c => c.id !== first.id && c.job_id === first.job_id) || clips[1];
+
+      return res.json({
+        job_id: first.job_id || 'db-job-id',
+        video_url: first.video_url || second.video_url,
+        candidateA: {
+          id: first.id,
+          start_time: first.start_time ?? 0,
+          end_time: first.end_time ?? 30,
+          title: first.title || 'Candidate A',
+          video_url: first.video_url,
+          reason: first.metadata?.reasons || ['Strong hook', 'High virality score']
+        },
+        candidateB: {
+          id: second.id,
+          start_time: second.start_time ?? 0,
+          end_time: second.end_time ?? 30,
+          title: second.title || 'Candidate B',
+          video_url: second.video_url,
+          reason: second.metadata?.reasons || ['Better payoff', 'Tighter edit']
+        }
+      });
+    }
+  } catch (err: any) {
+    console.warn('[ArenaRoute] Database query fallback active:', err.message);
+  }
+
+  // Fallback when database has fewer than 2 completed clips
   res.json({
     job_id: 'mock-job-id',
     video_url: 'https://example.com/mock-video.mp4',
@@ -18,6 +56,7 @@ router.get('/candidates', async (req, res) => {
       start_time: 15.0,
       end_time: 45.0,
       title: 'Candidate A Title',
+      video_url: '',
       reason: ['Strong hook', 'Emotional peak']
     },
     candidateB: {
@@ -25,6 +64,7 @@ router.get('/candidates', async (req, res) => {
       start_time: 15.5,
       end_time: 44.5,
       title: 'Candidate B Title',
+      video_url: '',
       reason: ['Better payoff', 'Tighter edit']
     }
   });

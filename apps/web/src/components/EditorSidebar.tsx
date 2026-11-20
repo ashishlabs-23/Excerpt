@@ -7,8 +7,11 @@ import { Slider } from '@/components/ui/slider';
 import {
   Wand2, Type, Maximize, Share2, Download, Loader2,
   Sparkles, Crop, Zap, TrendingUp, Clock, LayoutTemplate,
-  Sliders, Image, FileCheck, Eye, Smartphone, RotateCcw
+  Sliders, Image, FileCheck, Eye, Smartphone, RotateCcw,
+  Layers, ScanFace, Focus
 } from 'lucide-react';
+
+export type FramingMode = 'smart_crop' | 'split_stack' | 'ambient_blur' | 'face_focus';
 
 export interface ExportOptions {
   aspectRatio: '9:16' | '1:1' | '16:9';
@@ -23,6 +26,9 @@ interface EditorSidebarProps {
   onToggleFaceCentering: (enabled: boolean) => void;
   bRollEnabled: boolean;
   onToggleBRoll: (enabled: boolean) => void;
+  /** Number of B-roll segments detected in this clip (0 = nothing detected) */
+  bRollSegmentCount: number;
+
   onExport: (opts: ExportOptions) => void;
   isExporting: boolean;
   clipMeta?: {
@@ -44,6 +50,8 @@ interface EditorSidebarProps {
   onChangeCaptionColor?: (color: string) => void;
   cropOffset: number;
   onChangeCropOffset: (offset: number) => void;
+  framingMode: FramingMode;
+  onChangeFramingMode: (mode: FramingMode) => void;
   thumbnailTime: number | null;
   onSelectThumbnailTime: () => void;
   thumbnailTitle: string;
@@ -59,6 +67,53 @@ const ASPECT_RATIOS: { label: string; value: ExportOptions['aspectRatio']; desc:
   { label: '9:16', value: '9:16', desc: 'TikTok / Reels', icon: '📱' },
   { label: '1:1', value: '1:1', desc: 'Feed Post', icon: '⬛' },
   { label: '16:9', value: '16:9', desc: 'YouTube', icon: '🖥️' },
+];
+
+const FRAMING_PRESETS: {
+  id: FramingMode;
+  name: string;
+  tag: string;
+  desc: string;
+  accent: string;
+  accentBg: string;
+  preview: string;
+}[] = [
+  {
+    id: 'smart_crop',
+    name: 'Smart Crop',
+    tag: 'Default',
+    desc: 'AI-driven center crop. The active speaker is always framed perfectly in the 9:16 window.',
+    accent: 'text-primary',
+    accentBg: 'bg-primary/10 border-primary/40',
+    preview: '🎯',
+  },
+  {
+    id: 'split_stack',
+    name: 'Split Stack',
+    tag: 'Gaming / IRL',
+    desc: 'Facecam stacked on top of gameplay. 30% face / 70% game — the classic streaming layout.',
+    accent: 'text-violet-400',
+    accentBg: 'bg-violet-500/10 border-violet-500/40',
+    preview: '🎮',
+  },
+  {
+    id: 'ambient_blur',
+    name: 'Ambient Blur',
+    tag: 'Cinematic',
+    desc: 'Full-bleed blurred background fills the frame. Foreground video centered and crisp — no black bars.',
+    accent: 'text-sky-400',
+    accentBg: 'bg-sky-500/10 border-sky-500/40',
+    preview: '🌫️',
+  },
+  {
+    id: 'face_focus',
+    name: 'Face Focus',
+    tag: 'Podcast / Sports',
+    desc: 'Tight dynamic zoom on the speaker\'s face. Auto punch-in on emotion peaks.',
+    accent: 'text-amber-400',
+    accentBg: 'bg-amber-500/10 border-amber-500/40',
+    preview: '🔍',
+  },
 ];
 
 const CAPTION_THEMES = [
@@ -84,8 +139,7 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
   onToggleCaptions,
   faceCenteringEnabled,
   onToggleFaceCentering,
-  bRollEnabled,
-  onToggleBRoll,
+
   onExport,
   isExporting,
   clipMeta,
@@ -101,6 +155,8 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
   onChangeCaptionColor,
   cropOffset,
   onChangeCropOffset,
+  framingMode,
+  onChangeFramingMode,
   thumbnailTime,
   onSelectThumbnailTime,
   thumbnailTitle,
@@ -129,14 +185,14 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
   };
 
   return (
-    <aside className="w-full h-full bg-[#0a0f1a] border-l border-[#1a2235] flex flex-col overflow-hidden">
+    <aside aria-label="Clip Studio Controls" className="w-full h-full bg-[#0a0f1a] border-l border-[#1a2235] flex flex-col overflow-hidden">
       {/* Header */}
       <div className="px-6 py-4 border-b border-[#1a2235] bg-[#0d1425]/80 shrink-0">
         <div className="flex items-center gap-2 mb-1">
-          <Sparkles size={14} className="text-primary" />
+          <Sparkles size={14} className="text-primary" aria-hidden="true" />
           <h2 className="text-sm font-black text-[#e0e5f6] uppercase tracking-widest">Clip Studio</h2>
         </div>
-        <p className="text-[9px] text-[#4b5563] uppercase tracking-widest">Production-Grade Video Suite</p>
+        <p className="text-[9px] text-slate-400 uppercase tracking-widest font-semibold">Production-Grade Video Suite</p>
       </div>
 
       {/* Tab Selectors */}
@@ -144,11 +200,12 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
         {(['ai', 'captions', 'crop', 'publish'] as const).map(tab => (
           <button
             key={tab}
+            type="button"
             onClick={() => setActiveTab(tab)}
             className={`py-2 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all ${
               activeTab === tab
                 ? 'bg-primary/10 text-primary border border-primary/20 shadow-md'
-                : 'text-white/40 hover:text-white/70 hover:bg-white/5 border border-transparent'
+                : 'text-slate-300 hover:text-white hover:bg-white/5 border border-transparent'
             }`}
           >
             {tab}
@@ -167,13 +224,13 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
                 <div className="grid grid-cols-2 gap-2">
                   {clipMeta.duration !== undefined && (
                     <div className="flex items-center gap-2">
-                      <Clock size={10} className="text-[#4b5563]" />
-                      <span className="text-[10px] text-[#6b7280] font-bold">{formatDuration(clipMeta.duration)}</span>
+                      <Clock size={10} className="text-slate-400" aria-hidden="true" />
+                      <span className="text-[10px] text-slate-300 font-bold">{formatDuration(clipMeta.duration)}</span>
                     </div>
                   )}
                   {clipMeta.viralityScore !== undefined && (
                     <div className="flex items-center gap-2">
-                      <TrendingUp size={10} className="text-primary" />
+                      <TrendingUp size={10} className="text-primary" aria-hidden="true" />
                       <span className="text-[10px] text-primary font-bold">{clipMeta.viralityScore}% viral</span>
                     </div>
                   )}
@@ -183,63 +240,82 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
 
             {/* AI Settings */}
             <div className="space-y-5">
-              <div className="text-[9px] text-[#374151] font-black uppercase tracking-[0.2em]">AI Refinement</div>
+              <div className="text-[9px] text-slate-400 font-black uppercase tracking-[0.2em]">AI Refinement</div>
               
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="p-2 rounded-lg bg-[#1a2235] text-primary">
-                    <Type size={15} />
+                    <Type size={15} aria-hidden="true" />
                   </div>
                   <div>
                     <span className="text-sm font-bold text-[#e0e5f6] block">Captions Overlay</span>
-                    <span className="text-[9px] text-[#4b5563] block">Word-highlight style subtitle</span>
+                    <span className="text-[9px] text-slate-400 block font-medium">Word-highlight style subtitle</span>
                   </div>
                 </div>
-                <Switch checked={captionsEnabled} onCheckedChange={onToggleCaptions} />
+                <Switch aria-label="Toggle captions overlay" checked={captionsEnabled} onCheckedChange={onToggleCaptions} />
               </div>
 
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="p-2 rounded-lg bg-[#1a2235] text-emerald-400">
-                    <Maximize size={15} />
+                    <Maximize size={15} aria-hidden="true" />
                   </div>
                   <div>
                     <span className="text-sm font-bold text-[#e0e5f6] block">Face Tracking</span>
-                    <span className="text-[9px] text-[#4b5563] block">Maintains speaker frame auto-centering</span>
+                    <span className="text-[9px] text-slate-400 block font-medium">Maintains speaker frame auto-centering</span>
                   </div>
                 </div>
-                <Switch checked={faceCenteringEnabled} onCheckedChange={onToggleFaceCentering} />
+                <Switch aria-label="Toggle face tracking auto-centering" checked={faceCenteringEnabled} onCheckedChange={onToggleFaceCentering} />
               </div>
 
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="p-2 rounded-lg bg-[#1a2235] text-pink-400">
-                    <Wand2 size={15} />
+                    <Wand2 size={15} aria-hidden="true" />
                   </div>
                   <div>
                     <span className="text-sm font-bold text-[#e0e5f6] block">Context B-Roll</span>
-                    <span className="text-[9px] text-[#4b5563] block">Auto insert footage hooks</span>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <span className="text-[9px] text-slate-400 font-medium">
+                        {bRollSegmentCount > 0
+                          ? `${bRollSegmentCount} segment${bRollSegmentCount > 1 ? 's' : ''} detected`
+                          : 'No B-roll detected'}
+                      </span>
+                      {bRollSegmentCount > 0 && (
+                        <span className="px-1 py-0.5 rounded text-[8px] font-black bg-pink-500/20 text-pink-400 leading-none">
+                          {bRollSegmentCount}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
-                <Switch checked={bRollEnabled} onCheckedChange={onToggleBRoll} />
+                <Switch
+                  aria-label={bRollSegmentCount > 0 ? 'Toggle B-roll removal' : 'No B-roll detected in this clip'}
+                  checked={bRollEnabled}
+                  onCheckedChange={onToggleBRoll}
+                  disabled={bRollSegmentCount === 0}
+                />
               </div>
+
+
             </div>
 
             {/* Aspect ratios */}
             <div className="space-y-3">
-              <div className="text-[9px] text-[#374151] font-black uppercase tracking-[0.2em]">Aspect Ratio</div>
+              <div className="text-[9px] text-slate-400 font-black uppercase tracking-[0.2em]">Aspect Ratio</div>
               <div className="grid grid-cols-3 gap-2">
                 {ASPECT_RATIOS.map(r => (
                   <button
                     key={r.value}
+                    type="button"
                     onClick={() => setAspectRatio(r.value)}
                     className={`flex flex-col items-center gap-1 p-2.5 rounded-xl border text-center transition-all ${
                       aspectRatio === r.value
                         ? 'bg-primary/10 border-primary/50 text-primary'
-                        : 'bg-[#111827] border-[#1f2937] text-[#6b7280] hover:border-[#374151]'
+                        : 'bg-[#111827] border-[#1f2937] text-slate-300 hover:border-slate-500'
                     }`}
                   >
-                    <span className="text-base leading-none">{r.icon}</span>
+                    <span className="text-base leading-none" aria-hidden="true">{r.icon}</span>
                     <span className="text-[10px] font-black">{r.label}</span>
                   </button>
                 ))}
@@ -254,19 +330,19 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
             <div className="p-4 rounded-2xl bg-[#111827] border border-[#1f2937] space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg ${captionsEnabled ? 'bg-primary/20 text-primary' : 'bg-white/5 text-white/40'}`}>
-                    <Type size={16} />
+                  <div className={`p-2 rounded-lg ${captionsEnabled ? 'bg-primary/20 text-primary' : 'bg-white/5 text-slate-400'}`}>
+                    <Type size={16} aria-hidden="true" />
                   </div>
                   <div>
                     <span className="text-sm font-bold text-[#e0e5f6] block">
                       {captionsEnabled ? 'Captions Active' : 'Captions Removed'}
                     </span>
-                    <span className="text-[10px] text-[#9ca3af] block">
+                    <span className="text-[10px] text-slate-300 block">
                       {captionsEnabled ? 'Animated text overlaid on video' : 'Clean video without captions'}
                     </span>
                   </div>
                 </div>
-                <Switch checked={captionsEnabled} onCheckedChange={onToggleCaptions} />
+                <Switch aria-label="Toggle animated captions" checked={captionsEnabled} onCheckedChange={onToggleCaptions} />
               </div>
 
               <div className="flex gap-2 pt-2 border-t border-white/5">
@@ -276,7 +352,7 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
                   className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all ${
                     !captionsEnabled
                       ? 'bg-red-500/20 text-red-400 border border-red-500/40'
-                      : 'bg-white/5 text-white/60 hover:text-white hover:bg-white/10'
+                      : 'bg-white/5 text-slate-300 hover:text-white hover:bg-white/10'
                   }`}
                 >
                   Remove Captions
@@ -287,7 +363,7 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
                   className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all ${
                     captionsEnabled
                       ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                      : 'bg-white/5 text-white/60 hover:text-white hover:bg-white/10'
+                      : 'bg-white/5 text-slate-300 hover:text-white hover:bg-white/10'
                   }`}
                 >
                   Add Captions
@@ -297,8 +373,8 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
 
             {captionsEnabled ? (
               <>
-                <div className="text-[9px] text-[#374151] font-black uppercase tracking-[0.2em] flex items-center gap-2">
-                  <Type size={11} />
+                <div className="text-[9px] text-slate-400 font-black uppercase tracking-[0.2em] flex items-center gap-2">
+                  <Type size={11} aria-hidden="true" />
                   Choose Caption Style
                 </div>
 
@@ -306,16 +382,17 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
                   {CAPTION_THEMES.map(theme => (
                     <button
                       key={theme.id}
+                      type="button"
                       onClick={() => onChangeCaptionStyle(theme.id)}
                       className={`w-full p-4 rounded-xl border text-left flex items-center justify-between transition-all ${
                         captionStyle === theme.id
                           ? 'bg-primary/10 border-primary/40 text-primary'
-                          : 'bg-[#111827] border-[#1f2937] text-white/70 hover:border-[#374151]'
+                          : 'bg-[#111827] border-[#1f2937] text-white/90 hover:border-slate-500'
                       }`}
                     >
                       <div>
                         <span className="text-xs font-bold block">{theme.name}</span>
-                        <span className="text-[9px] text-white/30 block mt-0.5">{theme.desc}</span>
+                        <span className="text-[9px] text-slate-300 block mt-0.5">{theme.desc}</span>
                       </div>
                       <span className={`text-sm font-bold uppercase ${theme.style}`}>Style</span>
                     </button>
@@ -325,7 +402,7 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
                 {/* Caption Position */}
                 <div className="space-y-2 pt-2 border-t border-white/5">
                   <div className="flex justify-between items-center text-[10px] font-bold">
-                    <span className="text-[#4b5563] uppercase tracking-wider">Vertical Position</span>
+                    <span className="text-slate-400 uppercase tracking-wider">Vertical Position</span>
                     <span className="text-white font-mono">{Math.round(captionYPercent ?? (captionPosition === 'top' ? 15 : captionPosition === 'middle' ? 50 : 78))}%</span>
                   </div>
                   <div className="grid grid-cols-3 gap-2">
@@ -344,7 +421,7 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
                           className={`py-1.5 rounded-lg border text-center text-xs font-bold capitalize transition-all ${
                             isActive
                               ? 'bg-primary/20 border-primary/50 text-white shadow-sm'
-                              : 'bg-[#111827] border-[#1f2937] text-white/50 hover:border-[#374151]'
+                              : 'bg-[#111827] border-[#1f2937] text-slate-300 hover:border-slate-500'
                           }`}
                         >
                           {pos}
@@ -357,6 +434,7 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
                       min={10}
                       max={88}
                       step={1}
+                      aria-label="Caption vertical position percentage"
                       value={[captionYPercent ?? (captionPosition === 'top' ? 15 : captionPosition === 'middle' ? 50 : 78)]}
                       onValueChange={(vals) => {
                         if (onChangeCaptionYPercent) onChangeCaptionYPercent(vals[0]);
@@ -368,7 +446,7 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
 
                 {/* Caption Font Size */}
                 <div className="space-y-2 pt-2 border-t border-white/5">
-                  <div className="flex justify-between text-[10px] text-white/40 font-bold">
+                  <div className="flex justify-between text-[10px] text-slate-300 font-bold">
                     <span>Text Size</span>
                     <span className="text-white font-mono">{captionFontSize}px</span>
                   </div>
@@ -376,6 +454,7 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
                     min={18}
                     max={44}
                     step={2}
+                    aria-label="Caption font size in pixels"
                     value={[captionFontSize]}
                     onValueChange={(vals) => onChangeCaptionFontSize && onChangeCaptionFontSize(vals[0])}
                     className="accent-primary"
@@ -384,7 +463,7 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
 
                 {/* Highlight Accent Color */}
                 <div className="space-y-2 pt-2 border-t border-white/5">
-                  <div className="flex justify-between text-[10px] text-white/40 font-bold">
+                  <div className="flex justify-between text-[10px] text-slate-300 font-bold">
                     <span>Highlight Color</span>
                     {captionColor && (
                       <button
@@ -402,6 +481,7 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
                         key={c.value}
                         type="button"
                         onClick={() => onChangeCaptionColor && onChangeCaptionColor(c.value)}
+                        aria-label={`Highlight color ${c.label}`}
                         title={c.label}
                         className={`w-7 h-7 rounded-full ${c.bg} transition-all border-2 ${
                           captionColor === c.value
@@ -415,8 +495,8 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
               </>
             ) : (
               <div className="p-4 rounded-2xl bg-[#111827]/40 border border-white/5 text-center space-y-2">
-                <p className="text-xs font-medium text-white/50">Captions are currently turned off.</p>
-                <p className="text-[11px] text-white/30">Your video will play clean and export without any text or burned subtitles.</p>
+                <p className="text-xs font-medium text-slate-300">Captions are currently turned off.</p>
+                <p className="text-[11px] text-slate-400">Your video will play clean and export without any text or burned subtitles.</p>
                 <button
                   type="button"
                   onClick={() => onToggleCaptions(true)}
@@ -431,44 +511,106 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
 
         {activeTab === 'crop' && (
           <div className="space-y-6">
-            {/* Viewport Cropper */}
-            <div className="space-y-4">
-              <div className="text-[9px] text-[#374151] font-black uppercase tracking-[0.2em] flex items-center justify-between">
-                <span className="flex items-center gap-2">
-                  <Sliders size={11} />
-                  Horizontal Framing
-                </span>
-                {cropOffset !== 0 && (
-                  <button onClick={() => onChangeCropOffset(0)} className="text-[9px] text-primary font-bold flex items-center gap-0.5">
-                    <RotateCcw size={8} /> Reset
-                  </button>
-                )}
+            {/* Framing Mode Presets */}
+            <div className="space-y-3">
+              <div className="text-[9px] text-slate-400 font-black uppercase tracking-[0.2em] flex items-center gap-2">
+                <Layers size={11} aria-hidden="true" />
+                Framing Mode
               </div>
-
-              <div className="p-4 rounded-xl bg-[#111827] border border-[#1f2937] space-y-4">
-                <div className="flex justify-between text-[10px] text-white/40 font-bold">
-                  <span>Left crop</span>
-                  <span className="text-white font-mono">{cropOffset > 0 ? `+${cropOffset}` : cropOffset}%</span>
-                  <span>Right crop</span>
-                </div>
-                <Slider
-                  min={-50}
-                  max={50}
-                  step={1}
-                  value={[cropOffset]}
-                  onValueChange={(vals) => onChangeCropOffset(vals[0])}
-                  className="accent-primary"
-                />
-                <p className="text-[9px] text-white/20 leading-relaxed text-center">
-                  Drag the slider to manually shift the active video window horizontally over the speaker.
-                </p>
+              <div className="space-y-2">
+                {FRAMING_PRESETS.map(preset => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => onChangeFramingMode(preset.id)}
+                    className={`w-full p-3.5 rounded-xl border text-left transition-all flex items-start gap-3 ${
+                      framingMode === preset.id
+                        ? `${preset.accentBg} shadow-md`
+                        : 'bg-[#111827] border-[#1f2937] hover:border-slate-500'
+                    }`}
+                  >
+                    <span className="text-xl mt-0.5 shrink-0" aria-hidden="true">{preset.preview}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-xs font-black ${
+                          framingMode === preset.id ? preset.accent : 'text-white'
+                        }`}>{preset.name}</span>
+                        <span className={`text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${
+                          framingMode === preset.id
+                            ? `${preset.accentBg} ${preset.accent}`
+                            : 'bg-white/5 border-white/10 text-slate-300'
+                        }`}>{preset.tag}</span>
+                        {framingMode === preset.id && (
+                          <span className="ml-auto text-[9px] font-black text-emerald-400">✓ ACTIVE</span>
+                        )}
+                      </div>
+                      <p className="text-[9px] text-slate-300 mt-1 leading-relaxed">{preset.desc}</p>
+                    </div>
+                  </button>
+                ))}
               </div>
             </div>
 
+            {/* Fine-tune offset — only shown for smart_crop */}
+            {framingMode === 'smart_crop' && (
+              <div className="space-y-4">
+                <div className="text-[9px] text-slate-400 font-black uppercase tracking-[0.2em] flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <Sliders size={11} aria-hidden="true" />
+                    Fine-tune Offset
+                  </span>
+                  {cropOffset !== 0 && (
+                    <button type="button" onClick={() => onChangeCropOffset(0)} className="text-[9px] text-primary font-bold flex items-center gap-0.5">
+                      <RotateCcw size={8} aria-hidden="true" /> Reset
+                    </button>
+                  )}
+                </div>
+                <div className="p-4 rounded-xl bg-[#111827] border border-[#1f2937] space-y-3">
+                  <div className="flex justify-between text-[10px] text-slate-300 font-bold">
+                    <span>← Left</span>
+                    <span className="text-white font-mono">{cropOffset > 0 ? `+${cropOffset}` : cropOffset}%</span>
+                    <span>Right →</span>
+                  </div>
+                  <Slider
+                    min={-50}
+                    max={50}
+                    step={1}
+                    aria-label="Horizontal crop offset percentage"
+                    value={[cropOffset]}
+                    onValueChange={(vals) => onChangeCropOffset(vals[0])}
+                    className="accent-primary"
+                  />
+                  <p className="text-[9px] text-slate-400 leading-relaxed text-center">
+                    Nudge the crop window left or right to re-center the speaker.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Framing mode hint cards */}
+            {framingMode === 'split_stack' && (
+              <div className="p-3 rounded-xl bg-violet-500/10 border border-violet-500/20 text-[9px] text-violet-300 leading-relaxed space-y-1">
+                <p className="font-black text-[10px] text-violet-200">🎮 Split Stack Layout</p>
+                <p>Your facecam appears in the top 30% of the frame. Gameplay / screen content fills the remaining 70%. Perfect for gaming or reaction clips.</p>
+              </div>
+            )}
+            {framingMode === 'ambient_blur' && (
+              <div className="p-3 rounded-xl bg-sky-500/10 border border-sky-500/20 text-[9px] text-sky-300 leading-relaxed space-y-1">
+                <p className="font-black text-[10px] text-sky-200">🌫️ Ambient Blur Layout</p>
+                <p>A heavily blurred version of your video fills the entire canvas. Your original video is layered centered and crisp on top — no black bars, ever.</p>
+              </div>
+            )}
+            {framingMode === 'face_focus' && (
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[9px] text-amber-300 leading-relaxed space-y-1">
+                <p className="font-black text-[10px] text-amber-200">🔍 Face Focus Layout</p>
+                <p>Zooms tightly to the speaker\'s upper-body frame (1.35× scale). Best for podcast cuts, sports reaction, or mystery content where expression matters most.</p>
+              </div>
+            )}
+
             {/* Thumbnail selector */}
             <div className="space-y-4">
-              <div className="text-[9px] text-[#374151] font-black uppercase tracking-[0.2em] flex items-center gap-2">
-                <Image size={11} />
+              <div className="text-[9px] text-slate-400 font-black uppercase tracking-[0.2em] flex items-center gap-2">
+                <Image size={11} aria-hidden="true" />
                 Thumbnail Studio
               </div>
 
@@ -487,13 +629,14 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
                 )}
 
                 <div className="space-y-2">
-                  <label className="text-[9px] text-white/40 font-bold uppercase tracking-wider block">Cover Text Overlay</label>
+                  <label className="text-[9px] text-slate-300 font-bold uppercase tracking-wider block">Cover Text Overlay</label>
                   <input
                     type="text"
                     placeholder="Enter thumbnail hook text..."
+                    aria-label="Thumbnail hook text"
                     value={thumbnailTitle}
                     onChange={(e) => onChangeThumbnailTitle(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-primary/50"
+                    className="w-full h-9 px-3 rounded-lg bg-white/5 border border-white/10 text-xs text-white placeholder:text-slate-400 focus:outline-none focus:border-primary/50"
                   />
                 </div>
               </div>
@@ -505,7 +648,7 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
           <div className="space-y-6">
             {/* Readiness Checklist */}
             <div className="space-y-3">
-              <div className="text-[9px] text-[#374151] font-black uppercase tracking-[0.2em] flex items-center justify-between">
+              <div className="text-[9px] text-slate-400 font-black uppercase tracking-[0.2em] flex items-center justify-between">
                 <span>Publishing Readiness</span>
                 <span className="text-xs font-bold text-emerald-400">{readinessScore}%</span>
               </div>
@@ -520,20 +663,20 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
 
                 <div className="space-y-2 pt-2">
                   <div className="flex items-center gap-2 text-xs">
-                    <FileCheck size={14} className={clipMeta?.title ? "text-emerald-400" : "text-white/20"} />
-                    <span className={clipMeta?.title ? "text-white" : "text-white/40"}>Context Title Set</span>
+                    <FileCheck size={14} className={clipMeta?.title ? "text-emerald-400" : "text-slate-500"} aria-hidden="true" />
+                    <span className={clipMeta?.title ? "text-white" : "text-slate-400"}>Context Title Set</span>
                   </div>
                   <div className="flex items-center gap-2 text-xs">
-                    <FileCheck size={14} className={captionsEnabled ? "text-emerald-400" : "text-white/20"} />
-                    <span className={captionsEnabled ? "text-white" : "text-white/40"}>Subtitles Styled & Styled</span>
+                    <FileCheck size={14} className={captionsEnabled ? "text-emerald-400" : "text-slate-500"} aria-hidden="true" />
+                    <span className={captionsEnabled ? "text-white" : "text-slate-400"}>Subtitles Styled & Active</span>
                   </div>
                   <div className="flex items-center gap-2 text-xs">
-                    <FileCheck size={14} className={thumbnailTime !== null ? "text-emerald-400" : "text-white/20"} />
-                    <span className={thumbnailTime !== null ? "text-white" : "text-white/40"}>Thumbnail Frame Selected</span>
+                    <FileCheck size={14} className={thumbnailTime !== null ? "text-emerald-400" : "text-slate-500"} aria-hidden="true" />
+                    <span className={thumbnailTime !== null ? "text-white" : "text-slate-400"}>Thumbnail Frame Selected</span>
                   </div>
                   <div className="flex items-center gap-2 text-xs">
-                    <FileCheck size={14} className={thumbnailTitle ? "text-emerald-400" : "text-white/20"} />
-                    <span className={thumbnailTitle ? "text-white" : "text-white/40"}>Hook Text Overlay Set</span>
+                    <FileCheck size={14} className={thumbnailTitle ? "text-emerald-400" : "text-slate-500"} aria-hidden="true" />
+                    <span className={thumbnailTitle ? "text-white" : "text-slate-400"}>Hook Text Overlay Set</span>
                   </div>
                 </div>
               </div>
@@ -541,8 +684,8 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
 
             {/* Social Overlays preview selector */}
             <div className="space-y-3">
-              <div className="text-[9px] text-[#374151] font-black uppercase tracking-[0.2em] flex items-center gap-2">
-                <Eye size={11} />
+              <div className="text-[9px] text-slate-400 font-black uppercase tracking-[0.2em] flex items-center gap-2">
+                <Eye size={11} aria-hidden="true" />
                 Device Simulation Mode
               </div>
 
@@ -550,14 +693,15 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
                 {(['tiktok', 'youtube', 'instagram'] as const).map(mode => (
                   <button
                     key={mode}
+                    type="button"
                     onClick={() => onChangeSocialPreviewMode(mode)}
                     className={`flex flex-col items-center gap-1 py-2 rounded-xl border text-center transition-all ${
                       socialPreviewMode === mode
                         ? 'bg-primary/10 border-primary/50 text-primary'
-                        : 'bg-[#111827] border-[#1f2937] text-[#6b7280] hover:border-[#374151]'
+                        : 'bg-[#111827] border-[#1f2937] text-slate-300 hover:border-slate-500'
                     }`}
                   >
-                    <Smartphone size={14} />
+                    <Smartphone size={14} aria-hidden="true" />
                     <span className="text-[9px] font-bold capitalize">{mode}</span>
                   </button>
                 ))}
@@ -572,9 +716,9 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
         <Button
           onClick={handleExport}
           disabled={isExporting}
-          className="w-full h-12 rounded-2xl bg-primary hover:bg-primary/90 text-white flex items-center justify-center gap-3 font-black text-[10px] tracking-widest uppercase shadow-lg shadow-primary/20 transition-all active:scale-95"
+          className="w-full h-12 rounded-2xl bg-primary hover:bg-primary/90 text-neutral-950 flex items-center justify-center gap-3 font-black text-[10px] tracking-widest uppercase shadow-lg shadow-primary/20 transition-all active:scale-95"
         >
-          {isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+          {isExporting ? <Loader2 size={16} className="animate-spin text-neutral-950" aria-hidden="true" /> : <Download size={16} className="text-neutral-950" aria-hidden="true" />}
           {isExporting ? 'Preparing Download...' : `Export ${aspectRatio} · ${quality === 'high' ? '1080p' : '720p'}`}
         </Button>
         {isExporting && (
@@ -585,9 +729,9 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
 
         <Button
           variant="outline"
-          className="w-full h-10 rounded-2xl border-[#1a2235] text-[#6b7280] hover:text-white hover:bg-white/5 hover:border-white/10 flex items-center justify-center gap-2 font-black text-[9px] tracking-widest uppercase transition-all"
+          className="w-full h-10 rounded-2xl border-[#1a2235] text-slate-300 hover:text-white hover:bg-white/5 hover:border-white/10 flex items-center justify-center gap-2 font-black text-[9px] tracking-widest uppercase transition-all"
         >
-          <Share2 size={14} />
+          <Share2 size={14} aria-hidden="true" />
           Publish Instantly
         </Button>
       </div>

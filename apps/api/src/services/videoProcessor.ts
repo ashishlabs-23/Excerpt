@@ -1185,6 +1185,7 @@ export class VideoProcessor {
       startSec?: number;
       endSec?: number;
       cropOffsetPercent?: number;
+      framingMode?: string;
       aspectRatio?: '9:16' | '1:1' | '16:9';
       quality?: 'high' | 'medium';
       excludedIntervals?: Array<{ start: number; end: number }>;
@@ -1219,51 +1220,147 @@ export class VideoProcessor {
 
         let baseFilters: string[] = [];
 
-        // Aspect ratio handling
-        if (targetAspect === '9:16') {
+        const framingMode = options.framingMode || 'smart_crop';
+
+        // ────────────────────────────────────────────────────────────────────────
+        // FRAMING MODE LOGIC
+        // Each mode produces a complete filter chain for [vf] that resolves to
+        // the correct output resolution. Subtitle burn-in and jump-cut select
+        // filters are appended afterwards.
+        // ────────────────────────────────────────────────────────────────────────
+        if (framingMode === 'split_stack') {
+          // ── Split Stack: facecam (top 30%) + gameplay (bottom 70%) ──────────
+          // Assumes source already has facecam overlay or is a single stream.
+          // We use a vstack of two equal-height crops:
+          //   top slot  → centered narrow crop of the top-center area (face)
+          //   bottom slot → the remaining wide region (gameplay/screen)
+          // Both slots are scaled to target width and stacked vertically.
           const targetW = isMediumQuality ? 720 : 1080;
           const targetH = isMediumQuality ? 1280 : 1920;
+          const topH = roundEven(targetH * 0.30);   // 30% for face slot
+          const botH = targetH - topH;               // 70% for gameplay slot
+
           if (isInputVertical) {
-            if (cropOffset !== 0) {
-              const maxShift = Math.round(targetW * 0.2);
-              const shift = Math.round((cropOffset / 50) * maxShift);
-              baseFilters.push(`scale=${targetW + Math.abs(shift) * 2}:${targetH}:flags=lanczos,crop=${targetW}:${targetH}:${Math.max(0, shift)}:0`);
+            // Vertical source: top slot = top portion, bottom slot = bottom portion
+            const srcTopH = roundEven(inputHeight * 0.30);
+            const srcBotH = inputHeight - srcTopH;
+            baseFilters.push(
+              `[0:v]split[topraw][botraw];` +
+              `[topraw]crop=${inputWidth}:${srcTopH}:0:0,scale=${targetW}:${topH}:flags=lanczos[top];` +
+              `[botraw]crop=${inputWidth}:${srcBotH}:0:${srcTopH},scale=${targetW}:${botH}:flags=lanczos[bot];` +
+              `[top][bot]vstack=inputs=2`
+            );
+          } else {
+            // Horizontal source: top slot = upper-center face crop (tall), bottom = lower widescreen crop
+            const faceW = roundEven(inputWidth * 0.56);  // center portrait crop for face
+            const faceX = Math.round((inputWidth - faceW) / 2);
+            const faceH = roundEven(faceW * 1.78);       // ~9:16 ratio for the face portion
+            const faceY = 0;
+            const gameH = inputHeight;
+            baseFilters.push(
+              `[0:v]split[topraw][botraw];` +
+              `[topraw]crop=${faceW}:${Math.min(faceH, inputHeight)}:${faceX}:${faceY},scale=${targetW}:${topH}:flags=lanczos[top];` +
+              `[botraw]crop=${inputWidth}:${gameH}:0:0,scale=${targetW}:${botH}:flags=lanczos[bot];` +
+              `[top][bot]vstack=inputs=2`
+            );
+          }
+        } else if (framingMode === 'ambient_blur') {
+          // ── Ambient Blur: blurred full-bleed background + crisp overlay ─────
+          // The blurred layer fills the full target canvas.
+          // The original video is fit inside (letterboxed-free) and centered.
+          const targetW = isMediumQuality ? 720 : 1080;
+          const targetH = isMediumQuality ? 1280 : 1920;
+
+          if (isInputVertical) {
+            // Vertical → scale+blur to fill, then overlay centered sharp version
+            baseFilters.push(
+              `[0:v]split[bg][fg];` +
+              `[bg]scale=${targetW}:${targetH}:flags=bicubic,boxblur=30:6[blurred];` +
+              `[fg]scale=${targetW}:${targetH}:flags=lanczos[sharp];` +
+              `[blurred][sharp]overlay=0:0`
+            );
+          } else {
+            // Horizontal → blur fills 9:16 frame, sharp video centered
+            const fgH = roundEven((targetW * inputHeight) / inputWidth);
+            const fgY = Math.round((targetH - fgH) / 2);
+            baseFilters.push(
+              `[0:v]split[bg][fg];` +
+              `[bg]scale=${targetW}:${targetH}:flags=bicubic,boxblur=30:6[blurred];` +
+              `[fg]scale=${targetW}:${fgH}:flags=lanczos[sharp];` +
+              `[blurred][sharp]overlay=0:${fgY}`
+            );
+          }
+        } else if (framingMode === 'face_focus') {
+          // ── Face Focus: 1.35× punch-in zoom, upper-body tight frame ─────────
+          // Zooms into the upper 75% of the frame (where the face + shoulders live)
+          // and scales up to fill the 9:16 canvas. Great for podcast / sports / mystery.
+          const targetW = isMediumQuality ? 720 : 1080;
+          const targetH = isMediumQuality ? 1280 : 1920;
+          const zoomFactor = 1.35;
+
+          if (isInputVertical) {
+            const zoomedW = roundEven(inputWidth / zoomFactor);
+            const zoomedH = roundEven(inputHeight / zoomFactor);
+            const cropX = Math.round((inputWidth - zoomedW) / 2 + (cropOffset / 50) * (inputWidth - zoomedW) / 2);
+            const cropY = Math.round(inputHeight * 0.05); // start from 5% top — keeps face in view
+            const safeCropY = clamp(cropY, 0, inputHeight - zoomedH);
+            baseFilters.push(
+              `crop=${zoomedW}:${zoomedH}:${clamp(cropX, 0, inputWidth - zoomedW)}:${safeCropY},scale=${targetW}:${targetH}:flags=lanczos`
+            );
+          } else {
+            // Horizontal: portrait crop of face area, then zoom up
+            const portraitW = roundEven(inputHeight * (9 / 16));
+            const portraitX = Math.round((inputWidth - portraitW) / 2 + (cropOffset / 50) * (inputWidth - portraitW) / 4);
+            const zoomedH = roundEven(inputHeight / zoomFactor);
+            const safeCropY = Math.round(inputHeight * 0.05);
+            baseFilters.push(
+              `crop=${portraitW}:${zoomedH}:${clamp(portraitX, 0, inputWidth - portraitW)}:${safeCropY},scale=${targetW}:${targetH}:flags=lanczos`
+            );
+          }
+        } else {
+          // ── smart_crop (default): standard center crop with optional offset ──
+          // Aspect ratio handling
+          if (targetAspect === '9:16') {
+            const targetW = isMediumQuality ? 720 : 1080;
+            const targetH = isMediumQuality ? 1280 : 1920;
+            if (isInputVertical) {
+              if (cropOffset !== 0) {
+                const maxShift = Math.round(targetW * 0.2);
+                const shift = Math.round((cropOffset / 50) * maxShift);
+                baseFilters.push(`scale=${targetW + Math.abs(shift) * 2}:${targetH}:flags=lanczos,crop=${targetW}:${targetH}:${Math.max(0, shift)}:0`);
+              } else {
+                baseFilters.push(`scale=${targetW}:${targetH}:flags=lanczos`);
+              }
+            } else {
+              const scaledH = targetH;
+              const scaledW = roundEven((inputWidth * scaledH) / inputHeight);
+              const maxShift = Math.max(0, scaledW - targetW);
+              const baseCropX = Math.round(maxShift / 2);
+              const shiftX = Math.round((cropOffset / 50) * (maxShift / 2));
+              const finalCropX = clamp(baseCropX + shiftX, 0, maxShift);
+              baseFilters.push(`scale=${scaledW}:${scaledH}:flags=lanczos,crop=${targetW}:${targetH}:${finalCropX}:0`);
+            }
+          } else if (targetAspect === '1:1') {
+            const targetDim = isMediumQuality ? 720 : 1080;
+            if (isInputVertical) {
+              const cropY = Math.round((inputHeight - inputWidth) * 0.35);
+              baseFilters.push(`crop=in_w:in_w:0:${clamp(cropY, 0, inputHeight - inputWidth)},scale=${targetDim}:${targetDim}:flags=lanczos`);
+            } else {
+              const maxShift = Math.max(0, inputWidth - inputHeight);
+              const baseCropX = Math.round(maxShift / 2);
+              const shiftX = Math.round((cropOffset / 50) * (maxShift / 2));
+              const finalCropX = clamp(baseCropX + shiftX, 0, maxShift);
+              baseFilters.push(`crop=in_h:in_h:${finalCropX}:0,scale=${targetDim}:${targetDim}:flags=lanczos`);
+            }
+          } else {
+            // targetAspect === '16:9'
+            const targetW = isMediumQuality ? 1280 : 1920;
+            const targetH = isMediumQuality ? 720 : 1080;
+            if (isInputVertical) {
+              baseFilters.push(`split[bg][fg];[bg]scale=${targetW}:${targetH}:flags=bicubic,boxblur=25:5[blurred];[fg]scale=-2:${targetH}:flags=lanczos[sharp];[blurred][sharp]overlay=(W-w)/2:0`);
             } else {
               baseFilters.push(`scale=${targetW}:${targetH}:flags=lanczos`);
             }
-          } else {
-            // Source is horizontal (16:9), crop to 9:16 vertical
-            const scaledH = targetH;
-            const scaledW = roundEven((inputWidth * scaledH) / inputHeight);
-            const maxShift = Math.max(0, scaledW - targetW);
-            const baseCropX = Math.round(maxShift / 2);
-            const shiftX = Math.round((cropOffset / 50) * (maxShift / 2));
-            const finalCropX = clamp(baseCropX + shiftX, 0, maxShift);
-            baseFilters.push(`scale=${scaledW}:${scaledH}:flags=lanczos,crop=${targetW}:${targetH}:${finalCropX}:0`);
-          }
-        } else if (targetAspect === '1:1') {
-          const targetDim = isMediumQuality ? 720 : 1080;
-          if (isInputVertical) {
-            // Crop square from vertical
-            const cropY = Math.round((inputHeight - inputWidth) * 0.35); // Focus upper third
-            baseFilters.push(`crop=in_w:in_w:0:${clamp(cropY, 0, inputHeight - inputWidth)},scale=${targetDim}:${targetDim}:flags=lanczos`);
-          } else {
-            // Crop square from horizontal
-            const maxShift = Math.max(0, inputWidth - inputHeight);
-            const baseCropX = Math.round(maxShift / 2);
-            const shiftX = Math.round((cropOffset / 50) * (maxShift / 2));
-            const finalCropX = clamp(baseCropX + shiftX, 0, maxShift);
-            baseFilters.push(`crop=in_h:in_h:${finalCropX}:0,scale=${targetDim}:${targetDim}:flags=lanczos`);
-          }
-        } else {
-          // targetAspect === '16:9'
-          const targetW = isMediumQuality ? 1280 : 1920;
-          const targetH = isMediumQuality ? 720 : 1080;
-          if (isInputVertical) {
-            // Vertical inside horizontal with ambient blurred backdrop
-            baseFilters.push(`split[bg][fg];[bg]scale=${targetW}:${targetH}:flags=bicubic,boxblur=25:5[blurred];[fg]scale=-2:${targetH}:flags=lanczos[sharp];[blurred][sharp]overlay=(W-w)/2:0`);
-          } else {
-            baseFilters.push(`scale=${targetW}:${targetH}:flags=lanczos`);
           }
         }
 

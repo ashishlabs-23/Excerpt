@@ -16,6 +16,16 @@ import {
   ArrowRight,
   Film,
   Link2,
+  Gamepad2,
+  Trophy,
+  Flame,
+  Smartphone,
+  Monitor,
+  Layers,
+  Scan,
+  UserCheck,
+  Split,
+  Subtitles,
 } from "lucide-react";
 import { apiUrl, authFetch, authHeaders } from "@/lib/api";
 
@@ -47,10 +57,13 @@ function getFriendlyErrorMessage(error: unknown) {
 }
 
 const INTENT_OPTIONS = [
-  { id: "viral", label: "Viral", icon: Rocket, desc: "High hook moments" },
+  { id: "gaming", label: "Gaming", icon: Gamepad2, desc: "Clutches, rage & fails" },
+  { id: "sports", label: "Sports", icon: Trophy, desc: "Goals, hype & clutch plays" },
+  { id: "mystery", label: "Mystery", icon: Flame, desc: "Twists, hooks & reveals" },
+  { id: "viral", label: "Viral", icon: Rocket, desc: "Explosive hooks & spikes" },
   { id: "storyteller", label: "Story", icon: BookOpen, desc: "Sequential narrative" },
-  { id: "educational", label: "Insights", icon: Lightbulb, desc: "Podcasts & talks" },
-  { id: "action", label: "Action", icon: Swords, desc: "Sports & gaming" },
+  { id: "educational", label: "Insights", icon: Lightbulb, desc: "Podcasts & lessons" },
+  { id: "action", label: "Action", icon: Swords, desc: "Kinetic & fast-paced" },
   { id: "discovery", label: "Discovery", icon: Film, desc: "Explore new zones" },
 ] as const;
 
@@ -63,6 +76,9 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
   const [intent, setIntent] = useState<Intent>("viral");
   const [avoidSimilarClips, setAvoidSimilarClips] = useState<'strict' | 'balanced' | 'explore'>("balanced");
   const [generationMode, setGenerationMode] = useState<'draft' | 'quality'>("draft");
+  const [aspectRatio, setAspectRatio] = useState<'9:16' | '16:9'>('9:16');
+  const [framingMode, setFramingMode] = useState<'smart_crop' | 'fit_blur' | 'face_focus' | 'split_stack'>('smart_crop');
+  const [captionPreset, setCaptionPreset] = useState<'tiktok' | 'submagic' | 'hormozi' | 'minimal'>('tiktok');
   const [isDragging, setIsDragging] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<{
     progress: number;
@@ -119,7 +135,17 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
       const response = await authFetch("/api/video/generate-clips", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoUrl: trimmedUrl, numClips, intent, avoidSimilarClips, generationMode }),
+        body: JSON.stringify({
+          videoUrl: trimmedUrl,
+          numClips,
+          intent,
+          avoidSimilarClips,
+          generationMode,
+          aspectRatio,
+          framingMode: aspectRatio === '9:16' ? framingMode : 'smart_crop',
+          captionPreset: aspectRatio === '9:16' ? captionPreset : 'minimal',
+          captionStyle: aspectRatio === '9:16' ? captionPreset : 'minimal',
+        }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -161,6 +187,10 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
     formData.append("intent", intent);
     formData.append("avoidSimilarClips", avoidSimilarClips);
     formData.append("generationMode", generationMode);
+    formData.append("aspectRatio", aspectRatio);
+    formData.append("framingMode", aspectRatio === '9:16' ? framingMode : 'smart_crop');
+    formData.append("captionPreset", aspectRatio === '9:16' ? captionPreset : 'minimal');
+    formData.append("captionStyle", aspectRatio === '9:16' ? captionPreset : 'minimal');
     const xhr = new XMLHttpRequest();
     try {
       const headers = await authHeaders();
@@ -198,7 +228,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
       setIsLoading(false);
       activeRequestRef.current = null;
     }
-  }, [intent, isLoading, numClips, avoidSimilarClips, generationMode, onUploadComplete]);
+  }, [intent, isLoading, numClips, avoidSimilarClips, generationMode, aspectRatio, framingMode, captionPreset, onUploadComplete]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); }, []);
   const handleDragLeave = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragging(false); }, []);
@@ -371,6 +401,122 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
             <div className="absolute inset-0 bg-gradient-to-br from-white/[0.01] to-transparent pointer-events-none" />
 
             <div className="space-y-8">
+              {/* Aspect Ratio Format: 9:16 Vertical vs 16:9 Landscape */}
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <Smartphone size={14} className="text-primary" />
+                    <span className="text-[10px] font-black uppercase tracking-[0.25em] text-white/40">
+                      Output Format & Aspect Ratio
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-bold text-primary/80 uppercase tracking-wider">
+                    {aspectRatio === '9:16' ? '9:16 Vertical Mobile' : '16:9 Landscape Desktop'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Option 9:16 */}
+                  <button
+                    type="button"
+                    onClick={() => setAspectRatio('9:16')}
+                    className={`flex items-start gap-4 p-5 rounded-2xl border text-left transition-all duration-300 relative overflow-hidden group ${
+                      aspectRatio === '9:16'
+                        ? "border-primary bg-primary/[0.08] shadow-[0_0_30px_rgba(200,119,64,0.18)]"
+                        : "border-white/5 bg-black/25 hover:border-white/15 hover:bg-black/35"
+                    }`}
+                  >
+                    <div className={`p-3 rounded-xl shrink-0 transition-colors ${
+                      aspectRatio === '9:16' ? "bg-primary/20 text-primary" : "bg-white/5 text-white/40 group-hover:text-white"
+                    }`}>
+                      <Smartphone size={22} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-black text-white uppercase italic tracking-wider">
+                          9:16 Vertical Shorts
+                        </span>
+                        <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/30">
+                          Shorts · Reels · TikTok
+                        </span>
+                      </div>
+                      <p className="text-xs text-white/40 mt-1.5 leading-relaxed">
+                        Reframes video into vertical mobile format with speaker centering and word-synced karaoke captions.
+                      </p>
+
+                      {/* Sub-controls when 9:16 is active */}
+                      {aspectRatio === '9:16' && (
+                        <div className="mt-4 pt-3 border-t border-white/5 grid grid-cols-2 gap-3" onClick={(e) => e.stopPropagation()}>
+                          <div>
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-white/40 block mb-1">
+                              Reframing Mode
+                            </span>
+                            <select
+                              value={framingMode}
+                              onChange={(e) => setFramingMode(e.target.value as any)}
+                              className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-primary"
+                            >
+                              <option value="smart_crop">Smart Pan & Scan</option>
+                              <option value="fit_blur">Ambient Blur (Stream VODs)</option>
+                              <option value="face_focus">Face Punch-in (1.35x)</option>
+                              <option value="split_stack">Split-Screen Stack</option>
+                            </select>
+                          </div>
+                          <div>
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-white/40 block mb-1">
+                              Caption Style
+                            </span>
+                            <select
+                              value={captionPreset}
+                              onChange={(e) => setCaptionPreset(e.target.value as any)}
+                              className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-primary"
+                            >
+                              <option value="tiktok">TikTok Pop (Yellow)</option>
+                              <option value="submagic">Submagic (Pink)</option>
+                              <option value="hormozi">Alex Hormozi (Gold)</option>
+                              <option value="minimal">Minimal Clean (White)</option>
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </button>
+
+                  {/* Option 16:9 */}
+                  <button
+                    type="button"
+                    onClick={() => setAspectRatio('16:9')}
+                    className={`flex items-start gap-4 p-5 rounded-2xl border text-left transition-all duration-300 relative overflow-hidden group ${
+                      aspectRatio === '16:9'
+                        ? "border-primary bg-primary/[0.08] shadow-[0_0_30px_rgba(200,119,64,0.18)]"
+                        : "border-white/5 bg-black/25 hover:border-white/15 hover:bg-black/35"
+                    }`}
+                  >
+                    <div className={`p-3 rounded-xl shrink-0 transition-colors ${
+                      aspectRatio === '16:9' ? "bg-primary/20 text-primary" : "bg-white/5 text-white/40 group-hover:text-white"
+                    }`}>
+                      <Monitor size={22} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-black text-white uppercase italic tracking-wider">
+                          16:9 Landscape Video
+                        </span>
+                        <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-white/10 text-white/60 border border-white/15">
+                          YouTube · Twitch · Desktop
+                        </span>
+                      </div>
+                      <p className="text-xs text-white/40 mt-1.5 leading-relaxed">
+                        Preserves original full-width widescreen canvas. No vertical cropping or pillarboxing.
+                      </p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div className="h-px bg-white/5" />
+
               {/* Row 1: Intent Style Selector */}
               <div>
                 <div className="flex items-center gap-2 mb-4">

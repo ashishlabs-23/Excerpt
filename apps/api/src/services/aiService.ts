@@ -233,7 +233,7 @@ export class AIService {
   }
 
   private buildEditorialSystemPrompt(
-    mode: 'viral' | 'storyteller' | 'educational' | 'action',
+    mode: 'viral' | 'storyteller' | 'educational' | 'action' | 'gaming' | 'sports' | 'mystery',
     batchSize: number,
     existingTitles: string[],
     hasCandidates: boolean,
@@ -251,6 +251,9 @@ export class AIService {
       storyteller: `Prioritize self-contained story beats with a strong open loop, a clear middle, and a satisfying or curiosity-driving ending.`,
       educational: `Prioritize dense insight, tactical value, clear explanations, and clips that teach one strong idea without rambling.`,
       action: `Prioritize high-intensity reactions, fast pacing, speaker dominance, dramatic swings, and kinetic moments that visually hold attention.`,
+      gaming: `Prioritize clutch 1vX plays, hilarious streamer rage/screams/laughter, game-winning turns, impossible kills or tragic fails. Start RIGHT at the tension setup and end on the full reaction/screaming/celebration.`,
+      sports: `Prioritize sensational goals, buzzer-beaters, referee controversies, clutch saves, crowd eruptions, and explosive commentator reactions. Capture the build-up pass/action, the climax strike, and the celebratory aftermath.`,
+      mystery: `Prioritize unresistable curiosity gaps, eerie or shocking revelations, "the secret nobody talks about", dark plot twists, and cliffhangers with thrilling answers.`,
     }[mode];
 
     const minDur = durationBounds?.minDuration ?? MIN_CLIP_DURATION;
@@ -281,16 +284,21 @@ SELECTION RULES:
 
 SCORING FORMULA:
 clip_score =
-(0.30 × speech_energy) +
-(0.25 × emotion_score) +
-(0.20 × keyword_importance) +
-(0.15 × face_presence_score) +
-(0.10 × motion_intensity)
+(0.30 × hook_velocity_and_curiosity) +
+(0.25 × emotional_peak_and_jolt) +
+(0.20 × narrative_payoff_strength) +
+(0.15 × speaker_face_dominance) +
+(0.10 × pacing_and_loopability)
+
+PSYCHOLOGICAL RETENTION RULES:
+- Hook Velocity (0-3s): The first 3 seconds MUST provoke an open loop, cognitive dissonance, or instant visual/audio shock to stop the scroll.
+- Peak-End Payoff: High emotional intensity must lead to a definitive climax and satisfying punchline/resolution. Penalize clips that end abruptly before the punchline or solution.
+- Self-Contained Coherence: The viewer must understand the premise without needing prior context from minutes earlier.
 
 FACE FOCUS GUIDANCE:
 - If the segment is primarily a talking head / podcast, face_focus_score should be 80-100.
 - If the segment contains a speaker alongside slides or whiteboard, face_focus_score should be 50-75.
-- If the segment is mainly screen recording or code/text content, face_focus_score should be 20-45.
+- If the segment is mainly screen recording or gameplay/sports, face_focus_score should be 20-45.
 - Note the dominant speaker when multiple speakers are present.
 
 MODE GUIDANCE:
@@ -367,6 +375,41 @@ ADDITIONAL EDUCATIONAL RULES:
 ADDITIONAL ACTION RULES:
 - Prefer high-tempo moments with visible motion, quick reactions, or sharply escalating stakes.
 - The first 3 seconds must feel immediate and energetic.`;
+  }
+
+  private buildGamingSystemPrompt(
+    currentBatchSize: number,
+    existingTitles: string[],
+    durationBounds?: { minDuration?: number; maxDuration?: number; targetDuration?: number }
+  ) {
+    return `${this.buildEditorialSystemPrompt('gaming', currentBatchSize, existingTitles, false, durationBounds)}
+
+ADDITIONAL GAMING RULES:
+- Identify peak clutch moments, 1vX plays, hilarious streamer rage/laughter, or game-changing fails.
+- Capture the initial bet/danger, the frantic action, and NEVER cut before the streamer's full reaction/celebration finishes.`;
+  }
+
+  private buildSportsSystemPrompt(
+    currentBatchSize: number,
+    existingTitles: string[],
+    durationBounds?: { minDuration?: number; maxDuration?: number; targetDuration?: number }
+  ) {
+    return `${this.buildEditorialSystemPrompt('sports', currentBatchSize, existingTitles, false, durationBounds)}
+
+ADDITIONAL SPORTS RULES:
+- Capture the high-stakes build-up, the match-deciding play/goal/wicket, and the full crowd and commentator hysteria.`;
+  }
+
+  private buildMysterySystemPrompt(
+    currentBatchSize: number,
+    existingTitles: string[],
+    durationBounds?: { minDuration?: number; maxDuration?: number; targetDuration?: number }
+  ) {
+    return `${this.buildEditorialSystemPrompt('mystery', currentBatchSize, existingTitles, false, durationBounds)}
+
+ADDITIONAL MYSTERY & SUSPENSE RULES:
+- Open with an unresolved curiosity gap or shocking premise in the first 3 seconds.
+- Deliver the mind-blowing reveal or climax before the clip finishes.`;
   }
 
   private buildFootballRefinementPrompt(batchSize: number) {
@@ -560,9 +603,8 @@ Return only JSON.`;
       new Set(
         [
           process.env.GROQ_CLIP_MODEL,
-          'qwen/qwen3.6-27b',
-          'qwen/qwen3.8-27b',
           'openai/gpt-oss-120b',
+          'qwen/qwen3.8-27b',
           'openai/gpt-oss-20b',
         ].filter((value): value is string => Boolean(value))
       )
@@ -596,7 +638,7 @@ Return only JSON.`;
           const response = await result.response;
           return response.text();
         } catch (err: any) {
-          if (err.message && /429|quota exceeded|resource exhausted/i.test(err.message)) {
+          if (err.message && /429|quota exceeded|resource exhausted|503|service unavailable/i.test(err.message)) {
             if (this.rotateGeminiKey()) {
               // Retry with new rotated key immediately
               const modelName = process.env.GEMINI_MODEL || "gemini-3.6-flash";
@@ -638,7 +680,7 @@ Return only JSON.`;
           try {
             const completion = await this.groq.chat.completions.create({
               model,
-              temperature: 0,
+              temperature: 0.1,
               max_tokens: 4096,
               messages: [
                 { role: 'system', content: systemPrompt },
@@ -733,7 +775,7 @@ Return only JSON.`;
     videoUrl: string,
     numClips: number = 2,
     candidateWindows: CandidateWindow[] = [],
-    intent: 'viral' | 'storyteller' | 'educational' | 'action' | 'discovery' | 'football' = 'viral',
+    intent: 'viral' | 'storyteller' | 'educational' | 'action' | 'gaming' | 'sports' | 'mystery' | 'discovery' | 'football' = 'viral',
     excludedZones?: { start: number; end: number }[],
     durationConfig?: { minDuration?: number; maxDuration?: number; targetDuration?: number }
   ): Promise<ClipSegment[]> {
@@ -784,6 +826,27 @@ Return only JSON.`;
             userPrompt = this.buildUserPrompt(transcription, currentBatchSize, candidateWindows, durationConfig);
           } else if (baseIntent === 'action') {
             systemPrompt = this.buildActionSystemPrompt(
+              currentBatchSize,
+              allDetectedClips.map((clip) => clip.title).filter(Boolean),
+              durationConfig
+            );
+            userPrompt = this.buildUserPrompt(transcription, currentBatchSize, candidateWindows, durationConfig);
+          } else if (baseIntent === 'gaming') {
+            systemPrompt = this.buildGamingSystemPrompt(
+              currentBatchSize,
+              allDetectedClips.map((clip) => clip.title).filter(Boolean),
+              durationConfig
+            );
+            userPrompt = this.buildUserPrompt(transcription, currentBatchSize, candidateWindows, durationConfig);
+          } else if (baseIntent === 'sports') {
+            systemPrompt = this.buildSportsSystemPrompt(
+              currentBatchSize,
+              allDetectedClips.map((clip) => clip.title).filter(Boolean),
+              durationConfig
+            );
+            userPrompt = this.buildUserPrompt(transcription, currentBatchSize, candidateWindows, durationConfig);
+          } else if (baseIntent === 'mystery') {
+            systemPrompt = this.buildMysterySystemPrompt(
               currentBatchSize,
               allDetectedClips.map((clip) => clip.title).filter(Boolean),
               durationConfig

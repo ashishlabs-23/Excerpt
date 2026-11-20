@@ -1,0 +1,37 @@
+# CodeRabbit AI Configuration for Excerpt
+# Reference: https://docs.coderabbit.ai/guides/configure-coderabbit
+
+version: "2"
+language: "en-US"
+tone_instructions: "Be rigorous, precise, and constructive like a Senior Video Engineering Architect."
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "master"
+      - "main"
+
+chat:
+  auto_reply: true
+
+# Custom instructions tailored to Excerpt's video processing architecture
+custom_instructions: |
+  Review this PR according to the Excerpt System Standards:
+  1. **Video Invariants**:
+     - Check if any FFmpeg render preset or quality flag was degraded. We enforce 1080p, CRF 17, and `-preset medium`.
+     - Active speaker focus in framing logic must prioritize lip movement (MAR) over bounding-box size.
+  2. **Error Handling**:
+     - Flag any empty catch blocks, unhandled Promise rejections, or shell commands swallowed by `|| true`.
+  3. **Security**:
+     - Ensure no secrets, tokens (Backblaze, Supabase, Gemini), or absolute host paths are exposed.
+     - Ensure input parameters to subprocesses (Python/FFmpeg) are strictly sanitized against command injection.
+  4. **Performance**:
+     - Prevent memory leaks when processing large video buffers or long arrays of face tracking frames.

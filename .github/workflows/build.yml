@@ -41,6 +41,6 @@ jobs:
 
       - name: Compile typescript (No Emit)
         run: |
-          npx tsc -b apps/api apps/web || true
-          npx tsc --noEmit --project apps/api/tsconfig.json || true
-          npx tsc --noEmit --project apps/web/tsconfig.json || true
+          npx tsc -b apps/api apps/web
+          npx tsc --noEmit --project apps/api/tsconfig.json
+          npx tsc --noEmit --project apps/web/tsconfig.json

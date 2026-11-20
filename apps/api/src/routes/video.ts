@@ -668,6 +668,9 @@ router.post('/upload', requireUserJWT, jobSubmissionRateLimit, upload.single('vi
   const intent = (req.body.intent as string) || 'viral';
   const avoidSimilarClips = (req.body.avoidSimilarClips as string) || 'balanced';
   const generationMode = (req.body.generationMode as 'draft' | 'quality') || 'draft';
+  const aspectRatio = (req.body.aspectRatio as '9:16' | '16:9') || '9:16';
+  const framingMode = (req.body.framingMode as string) || 'smart_crop';
+  const captionStyle = (req.body.captionStyle as string) || (req.body.captionPreset as string) || 'submagic';
   const filePath = req.file.path;
 
   try {
@@ -686,7 +689,10 @@ router.post('/upload', requireUserJWT, jobSubmissionRateLimit, upload.single('vi
       intent,
       avoidSimilarClips,
       generationMode,
-      userId: req.user.id
+      userId: req.user.id,
+      aspectRatio,
+      framingMode,
+      caption_style: captionStyle,
     });
 
     return res.status(202).json({ 
@@ -718,7 +724,22 @@ router.post(
       return res.status(400).json({ errors: errors.array() });
     }
 
-      const { videoUrl, numClips, purge, intent, avoidSimilarClips, generationMode, targetDuration, minDuration, maxDuration, durationPolicy: incomingPolicy } = req.body;
+      const {
+        videoUrl,
+        numClips,
+        purge,
+        intent,
+        avoidSimilarClips,
+        generationMode,
+        targetDuration,
+        minDuration,
+        maxDuration,
+        durationPolicy: incomingPolicy,
+        aspectRatio,
+        framingMode,
+        captionPreset,
+        captionStyle,
+      } = req.body;
       
       try {
         const db = new DatabaseService();
@@ -760,6 +781,9 @@ router.post(
           minDuration: durationPolicy.minSec,
           maxDuration: durationPolicy.maxSec,
           durationPolicy,
+          aspectRatio: aspectRatio || '9:16',
+          framingMode: framingMode || 'smart_crop',
+          caption_style: captionStyle || captionPreset || 'submagic',
         });
 
         // Fire-and-forget title extraction so the UI updates faster
@@ -1367,6 +1391,7 @@ async function handleCustomClipExport(
     trimOut?: number;
     cuts?: Array<{ start: number; end: number }>;
     cropOffset?: number;
+    framingMode?: string;
     aspectRatio?: '9:16' | '1:1' | '16:9';
     quality?: 'high' | 'medium';
     captionStyle?: string;
@@ -1634,6 +1659,7 @@ async function handleCustomClipExport(
       startSec: relStart,
       endSec: relEnd,
       cropOffsetPercent: params.cropOffset,
+      framingMode: params.framingMode,
       aspectRatio: params.aspectRatio,
       quality: params.quality,
       excludedIntervals: relativeCuts,
@@ -1757,6 +1783,7 @@ router.post('/export-clip/:clipId', requireUserJWT, async (req: Request, res: Re
       trimOut,
       cuts,
       cropOffset,
+      framingMode,
       aspectRatio,
       quality,
       captionStyle,
@@ -1789,6 +1816,7 @@ router.post('/export-clip/:clipId', requireUserJWT, async (req: Request, res: Re
       trimOut: typeof trimOut === 'number' ? trimOut : undefined,
       cuts: Array.isArray(cuts) ? cuts : undefined,
       cropOffset: typeof cropOffset === 'number' ? cropOffset : 0,
+      framingMode: typeof framingMode === 'string' ? framingMode : 'smart_crop',
       aspectRatio: aspectRatio || '9:16',
       quality: quality || 'high',
       captionStyle: captionStyle || 'Submagic',

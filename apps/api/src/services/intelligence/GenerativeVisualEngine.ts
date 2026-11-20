@@ -149,9 +149,18 @@ export class GenerativeVisualEngine {
 
     const ffmpeg = getBinaryPath('ffmpeg');
 
-    // Check for standard Windows font
-    const fontPath = 'C\\:/Windows/Fonts/arial.ttf';
-    const fontOption = fs.existsSync('C:/Windows/Fonts/arial.ttf') ? `:fontfile='${fontPath}'` : '';
+    // Cross-platform font discovery (Windows, Linux, macOS)
+    const candidateFonts = [
+      'C:/Windows/Fonts/arial.ttf',
+      'C:/Windows/Fonts/segoeui.ttf',
+      '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+      '/usr/share/fonts/TTF/DejaVuSans.ttf',
+      '/System/Library/Fonts/Helvetica.ttc',
+    ];
+    const existingFont = candidateFonts.find(p => fs.existsSync(p));
+    const fontOption = existingFont
+      ? `:fontfile='${existingFont.replace(/\\/g, '/').replace(':', '\\:')}'`
+      : '';
 
     // Generate procedural motion graphics based on style
     let filterGraph = '';

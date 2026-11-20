@@ -189,6 +189,9 @@ export class ZombieSweeperService {
       // 5. Sweep Orphaned Temp Files
       this.sweepTempDisk();
 
+      // 6. Enforce Local Disk Quota (15 GB ceiling)
+      this.sweepLocalDiskQuota();
+
     } catch (err) {
       console.error(`[ZombieSweeper]: Error sweeping zombies:`, err);
     } finally {
@@ -239,6 +242,94 @@ export class ZombieSweeperService {
       }
     } catch (e) {
       console.warn(`[ZombieSweeper]: sweepTempDisk error:`, e);
+    }
+  }
+
+  public sweepLocalDiskQuota(maxBytes: number = 15 * 1024 * 1024 * 1024) {
+    try {
+      const tempDirBase = path.join(process.cwd(), 'temp');
+      if (!fs.existsSync(tempDirBase)) return;
+
+      const protectedNames = new Set([
+        'uploads',
+        'cache',
+        'retention_sweep.lock',
+        'active_queue.json',
+        'jobs',
+        'local_db.json',
+        'consensus_active_learning_queue.json',
+      ]);
+
+      interface FileEntry {
+        filePath: string;
+        size: number;
+        mtime: number;
+        isDirectory: boolean;
+      }
+
+      const files: FileEntry[] = [];
+      let totalBytes = 0;
+
+      const getDirSize = (dir: string): number => {
+        let size = 0;
+        try {
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            const p = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+              size += getDirSize(p);
+            } else if (entry.isFile()) {
+              try {
+                size += fs.statSync(p).size;
+              } catch (_) {}
+            }
+          }
+        } catch (_) {}
+        return size;
+      };
+
+      const entries = fs.readdirSync(tempDirBase, { withFileTypes: true });
+      for (const entry of entries) {
+        if (protectedNames.has(entry.name)) continue;
+        const p = path.join(tempDirBase, entry.name);
+        try {
+          const stats = fs.statSync(p);
+          const size = entry.isDirectory() ? getDirSize(p) : stats.size;
+          totalBytes += size;
+          files.push({
+            filePath: p,
+            size,
+            mtime: stats.mtimeMs,
+            isDirectory: entry.isDirectory(),
+          });
+        } catch (_) {}
+      }
+
+      if (totalBytes <= maxBytes) return;
+
+      console.warn(`[ZombieSweeper]: Temp directory size (${(totalBytes / (1024 * 1024 * 1024)).toFixed(2)} GB) exceeds quota (${(maxBytes / (1024 * 1024 * 1024)).toFixed(2)} GB). Evicting oldest files.`);
+
+      // Sort oldest first
+      files.sort((a, b) => a.mtime - b.mtime);
+
+      let evictedBytes = 0;
+      for (const file of files) {
+        if (totalBytes - evictedBytes <= maxBytes) break;
+        try {
+          if (file.isDirectory) {
+            fs.rmSync(file.filePath, { recursive: true, force: true });
+          } else {
+            fs.unlinkSync(file.filePath);
+          }
+          evictedBytes += file.size;
+        } catch (e) {
+          console.warn(`[ZombieSweeper]: Failed to evict ${file.filePath}:`, e);
+        }
+      }
+
+      console.log(`[ZombieSweeper]: 🧹 Quota enforcement freed ${(evictedBytes / (1024 * 1024)).toFixed(1)} MB.`);
+    } catch (e) {
+      console.warn(`[ZombieSweeper]: sweepLocalDiskQuota error:`, e);
     }
   }
 }

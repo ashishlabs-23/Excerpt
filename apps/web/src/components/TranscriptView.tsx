@@ -69,48 +69,47 @@ const EditableWord: React.FC<{
       layout
       initial={false}
       animate={{
-        color: isExcluded ? 'rgba(255,255,255,0.20)' : isActive ? '#ffffff' : isCurrentMatch ? '#fbbf24' : isMatch ? '#a78bfa' : '#9ca3af',
+        color: isExcluded ? 'rgba(255,255,255,0.30)' : isActive ? '#ffffff' : isCurrentMatch ? '#fbbf24' : isMatch ? '#a78bfa' : '#cbd5e1',
         backgroundColor: isExcluded
           ? 'transparent'
           : isActive
-          ? 'rgba(200,119,64,0.30)'
+          ? '#c87741'
           : isCurrentMatch
-          ? 'rgba(251,191,36,0.18)'
+          ? 'rgba(251,191,36,0.22)'
           : 'transparent',
       }}
       transition={{ duration: 0.12 }}
-      onClick={(e) => {
-        // Prevent click if clicking the tiny delete button
-        if ((e.target as HTMLElement).closest('.delete-btn')) return;
-        onClick();
-      }}
-      onDoubleClick={() => setIsEditing(true)}
-      tabIndex={0}
-      role="button"
-      aria-label={`Word: ${word}. ${isExcluded ? 'Deleted' : 'Active'}. Click to seek, double-click to edit.`}
-      onKeyDown={e => {
-        if (e.key === 'Enter' || e.key === ' ') { setIsEditing(true); e.preventDefault(); }
-      }}
-      className={`inline-block px-1.5 py-0.5 rounded-md cursor-pointer text-sm relative group/word transition-all duration-200
-        focus:outline-none focus:ring-1 focus:ring-primary hover:bg-white/10 hover:text-white
-        ${isActive ? 'kinetic-word-active font-black shadow-md' : 'font-medium'}
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-sm relative group/word transition-all duration-200
+        hover:bg-white/10 hover:text-white
+        ${isActive ? 'kinetic-word-active font-black shadow-md ring-1 ring-white/30' : 'font-medium'}
         ${isCurrentMatch ? 'ring-1 ring-amber-400/80' : ''}
         ${isExcluded ? 'line-through decoration-white/25 decoration-2 opacity-40' : ''}
       `}
     >
-      <span className="flex items-center gap-1">
+      <button
+        type="button"
+        onClick={onClick}
+        onDoubleClick={() => setIsEditing(true)}
+        aria-label={`Word: ${word}. ${isExcluded ? 'Deleted' : 'Active'}. Click to seek, double-click to edit.`}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') { setIsEditing(true); e.preventDefault(); }
+        }}
+        className="focus:outline-none focus:ring-1 focus:ring-primary rounded px-0.5 text-inherit"
+      >
         {word}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleExclude();
-          }}
-          className="delete-btn opacity-0 group-hover/word:opacity-100 p-0.5 rounded-sm hover:bg-white/10 text-white/40 hover:text-white transition-all ml-0.5"
-          title={isExcluded ? "Restore word" : "Delete word"}
-        >
-          <X size={10} className={isExcluded ? "rotate-45 text-emerald-400" : ""} />
-        </button>
-      </span>
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleExclude();
+        }}
+        className="delete-btn opacity-0 group-hover/word:opacity-100 p-0.5 rounded-sm hover:bg-white/10 text-slate-300 hover:text-white transition-all ml-0.5 focus:opacity-100 focus:outline-none focus:ring-1 focus:ring-primary"
+        aria-label={isExcluded ? `Restore word: ${word}` : `Delete word: ${word}`}
+        title={isExcluded ? "Restore word" : "Delete word"}
+      >
+        <X size={10} className={isExcluded ? "rotate-45 text-emerald-400" : ""} aria-hidden="true" />
+      </button>
     </motion.span>
   );
 };
@@ -250,7 +249,7 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
                 ✂️ {cutDuration.toFixed(1)}s cut
               </span>
             )}
-            <span className="text-[10px] font-bold text-white/25 uppercase tracking-widest">
+            <span className="text-[10px] font-semibold text-slate-300 uppercase tracking-widest">
               {words.length - excludedWordIndices.size} / {words.length} words
             </span>
           </div>
@@ -283,25 +282,36 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
 
         {/* Search */}
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" size={13} />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={13} aria-hidden="true" />
           <input
             type="text"
             placeholder="Search transcript..."
+            aria-label="Search transcript"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-full h-9 pl-9 pr-20 rounded-xl bg-white/5 border border-white/5 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-primary/50 transition-colors"
+            className="w-full h-9 pl-9 pr-20 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder:text-slate-400 focus:outline-none focus:border-primary/50 transition-colors"
           />
           {/* Match nav */}
           {matchIndices.length > 0 && (
             <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
-              <span className="text-[9px] text-white/30 font-bold mr-1">
+              <span className="text-[9px] text-slate-300 font-bold mr-1">
                 {matchIdx + 1}/{matchIndices.length}
               </span>
-              <button onClick={() => goToMatch(-1)} className="p-0.5 text-white/40 hover:text-white transition-colors">
-                <ChevronUp size={12} />
+              <button
+                type="button"
+                onClick={() => goToMatch(-1)}
+                className="p-0.5 text-slate-300 hover:text-white transition-colors"
+                aria-label="Previous search match"
+              >
+                <ChevronUp size={12} aria-hidden="true" />
               </button>
-              <button onClick={() => goToMatch(1)} className="p-0.5 text-white/40 hover:text-white transition-colors">
-                <ChevronDown size={12} />
+              <button
+                type="button"
+                onClick={() => goToMatch(1)}
+                className="p-0.5 text-slate-300 hover:text-white transition-colors"
+                aria-label="Next search match"
+              >
+                <ChevronDown size={12} aria-hidden="true" />
               </button>
             </div>
           )}
@@ -310,11 +320,13 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
           )}
           {search && (
             <button
+              type="button"
               onClick={() => setSearch('')}
-              className="absolute right-8 top-1/2 -translate-y-1/2 text-white/20 hover:text-white transition-colors"
+              className="absolute right-8 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
               style={{ display: matchIndices.length > 0 ? 'none' : 'block' }}
+              aria-label="Clear search"
             >
-              <X size={12} />
+              <X size={12} aria-hidden="true" />
             </button>
           )}
         </div>
@@ -383,12 +395,12 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
 
       {/* Footer */}
       <div className="px-5 py-3 border-t border-[#1a2235] shrink-0 flex items-center justify-between bg-[#0d1425]/50">
-        <div className="flex items-center gap-2 text-[9px] text-white/20 font-bold uppercase tracking-widest">
-          <Clock size={9} />
+        <div className="flex items-center gap-2 text-[9px] text-slate-300 font-bold uppercase tracking-widest">
+          <Clock size={9} aria-hidden="true" />
           <span>Click → seek · Hover → X to cut</span>
         </div>
         {words.length > 0 && (
-          <span className="text-[9px] text-white/20 font-mono">
+          <span className="text-[9px] text-slate-300 font-mono">
             {formatTime(words[0]?.start || 0)}–{formatTime(words[words.length - 1]?.end || 0)}
           </span>
         )}

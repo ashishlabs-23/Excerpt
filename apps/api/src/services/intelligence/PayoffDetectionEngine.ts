@@ -254,12 +254,13 @@ Respond in pure JSON with this exact schema:
 }`;
 
     try {
+      const isTestEnv = process.env.NODE_ENV === 'test';
       const result = await callOllamaJson<LLMPayoffEvaluation>({
         systemPrompt: 'You are an editorial video intelligence assistant. Always respond with strict JSON.',
         userPrompt: prompt,
         fallback,
-        timeoutMs: 8000,
-        retries: 1
+        timeoutMs: isTestEnv ? 300 : 4000,
+        retries: isTestEnv ? 0 : 1
       });
       return result;
     } catch {

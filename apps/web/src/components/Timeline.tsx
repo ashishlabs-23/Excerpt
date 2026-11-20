@@ -237,24 +237,28 @@ export const Timeline: React.FC<TimelineProps> = ({
           {/* Zoom controls */}
           <div className="flex items-center gap-1 bg-[#1f2937] rounded-lg px-2 py-0.5">
             <button
+              type="button"
               onClick={() => setZoom(z => Math.max(1, +(z - 0.5).toFixed(1)))}
-              className="text-[#6b7280] hover:text-white transition-colors"
+              className="text-slate-300 hover:text-white transition-colors p-0.5 disabled:opacity-30"
               disabled={zoom <= 1}
+              aria-label="Zoom out timeline"
               title="Zoom out"
             >
-              <ZoomOut size={12} />
+              <ZoomOut size={12} aria-hidden="true" />
             </button>
             <span className="text-[9px] font-black text-[#e0e5f6] w-6 text-center">{zoom}×</span>
             <button
+              type="button"
               onClick={() => setZoom(z => Math.min(4, +(z + 0.5).toFixed(1)))}
-              className="text-[#6b7280] hover:text-white transition-colors"
+              className="text-slate-300 hover:text-white transition-colors p-0.5 disabled:opacity-30"
               disabled={zoom >= 4}
+              aria-label="Zoom in timeline"
               title="Zoom in"
             >
-              <ZoomIn size={12} />
+              <ZoomIn size={12} aria-hidden="true" />
             </button>
           </div>
-          <span className="text-[10px] font-black text-[#4b5563] uppercase tracking-widest font-mono hidden sm:inline">
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest font-mono hidden sm:inline">
             {formatTime(duration)}
           </span>
         </div>
@@ -277,7 +281,7 @@ export const Timeline: React.FC<TimelineProps> = ({
               >
                 <div className="w-px bg-[#2d3748]" style={{ height: i % 2 === 0 ? '10px' : '5px' }} />
                 {i % 2 === 0 && (
-                  <span className="absolute top-0.5 text-[8px] text-[#6b7280] font-mono -translate-x-1/2 whitespace-nowrap">
+                  <span className="absolute top-0.5 text-[8px] text-slate-400 font-mono -translate-x-1/2 whitespace-nowrap">
                     {formatTime(t * duration)}
                   </span>
                 )}
@@ -401,7 +405,7 @@ export const Timeline: React.FC<TimelineProps> = ({
               {/* Diamond top */}
               <div className="absolute -top-1.5 -left-1 w-2.5 h-2.5 bg-primary rotate-45 shadow-[0_0_12px_rgba(200,119,64,1)] ring-1 ring-white/70" />
               {/* Current time bubble */}
-              <div className="absolute top-4 -translate-x-1/2 px-2 py-0.5 bg-primary/95 border border-white/20 rounded-md text-[9px] font-black text-white whitespace-nowrap shadow-2xl backdrop-blur-md">
+              <div className="absolute top-4 -translate-x-1/2 px-2 py-0.5 bg-primary border border-white/30 rounded-md text-[9px] font-black text-neutral-950 whitespace-nowrap shadow-2xl backdrop-blur-md">
                 {formatTime(currentTime)}
               </div>
             </div>
@@ -409,7 +413,7 @@ export const Timeline: React.FC<TimelineProps> = ({
 
           {/* Audio track row */}
           <div className="h-7 bg-[#020409] border-t border-[#1f2937] flex items-center px-3 gap-2">
-            <Music size={10} className="text-[#374151]" />
+            <Music size={10} className="text-slate-400" aria-hidden="true" />
             <div className="flex-1 flex items-center gap-[2px] h-3">
               {waveformBars.slice(0, Math.min(waveformBars.length, 60 * zoom)).map((b, i) => (
                 <div
@@ -422,18 +426,18 @@ export const Timeline: React.FC<TimelineProps> = ({
                 />
               ))}
             </div>
-            <span className="text-[8px] text-[#4b5563] font-bold uppercase tracking-widest whitespace-nowrap">Speech Track</span>
+            <span className="text-[8px] text-slate-300 font-bold uppercase tracking-widest whitespace-nowrap">Speech Track</span>
           </div>
         </div>
       </div>
 
       {/* Footer info */}
       <div className="flex items-center justify-between px-5 py-2 border-t border-[#1f2937] bg-[#020409]">
-        <span className="text-[9px] font-bold text-[#4b5563] uppercase tracking-widest font-mono">
+        <span className="text-[9px] font-bold text-slate-300 uppercase tracking-widest font-mono">
           Trimmed: {formatTime((outPoint - inPoint) * duration)} / {formatTime(duration)}
         </span>
         <div className="flex items-center gap-4">
-          <span className="text-[9px] text-[#4b5563]">Drag handles to trim · Waveform indicates speech · Use ±1f for precision</span>
+          <span className="text-[9px] text-slate-400">Drag handles to trim · Waveform indicates speech · Use ±1f for precision</span>
         </div>
       </div>
     </div>

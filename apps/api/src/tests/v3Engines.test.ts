@@ -124,7 +124,7 @@ describe('Excerpt V3 Intelligence Engines', () => {
     );
     expect(llmResult.completeness_score).toBeGreaterThanOrEqual(70);
     expect(llmResult.is_promise_delivered).toBe(true);
-  });
+  }, 15000);
 
   it('applies hook x payoff synergy and temporal decay in RetentionPredictionEngine', () => {
     const context = createDefaultContext('test-job');

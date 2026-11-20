@@ -82,6 +82,8 @@ import { editorialPlanEvaluator } from '../services/intelligence/EditorialPlanEv
 import { boundaryPolicyLoader } from '../services/intelligence/BoundaryPolicyLoader';
 import { IntelligenceOrchestrator, OrchestrationContext } from '../services/nexus/IntelligenceOrchestrator';
 import { classifyPipelineError } from '../utils/errorClassifier';
+import { bRollDetector } from '../services/intelligence/BRollDetector';
+
 import {
   createRenderPlan,
   DeliveryValidator,
@@ -122,6 +124,7 @@ const coherenceGuard = new ContextCoherenceGuard();
 const sceneSnapper = new SceneCutSnapper();
 const storyEngine = new MultiScaleStoryEngine();
 const jumpCutter = new MicroJumpCutter(0.35, 0.25);
+
 
 function envNumber(name: string, fallback: number, min: number) {
   const parsed = Number(process.env[name]);
@@ -625,6 +628,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     let segments: any[] = [];
     let words: WordInfo[] = [];
     let pipelineContext: PipelineContext = createDefaultContext(jobId);
+    let perceptionSnapshot: PerceptionSnapshot | null = null;
 
     if (cacheHit.rawAnalysis && cacheHit.candidateMoments) {
       console.log(`[Worker]: Bypassing analysis stages due to cache hit.`);
@@ -1139,7 +1143,7 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
 
       // Construct PerceptionSnapshot from VideoIntelligenceGraph & AudioEvents
       const vigGraph = pipelineContext.vig;
-      const perceptionSnapshot: PerceptionSnapshot = {
+      perceptionSnapshot = {
         schemaVersion: '1.0',
         cacheKey: videoHash || jobId,
         source: {
@@ -1969,6 +1973,22 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         };
       }
 
+      // ── B-Roll Detection ────────────────────────────────────────────────────
+      // Uses only signals already in perceptionSnapshot — zero extra cost.
+      let detectedBRollSegments: import('../services/intelligence/BRollDetector').BRollSegment[] = [];
+      if (perceptionSnapshot) {
+        try {
+          detectedBRollSegments = bRollDetector.detect(perceptionSnapshot, renderStart, renderEnd);
+          if (!pipelineContext.bRollSegments) pipelineContext.bRollSegments = {};
+          pipelineContext.bRollSegments[clipId] = detectedBRollSegments;
+          if (detectedBRollSegments.length > 0) {
+            console.log(`[Worker]: BRollDetector found ${detectedBRollSegments.length} B-roll segment(s) in clip ${clipIndex + 1}.`);
+          }
+        } catch (brErr: any) {
+          console.warn(`[Worker]: BRollDetector skipped for clip ${clipIndex + 1}: ${brErr.message}`);
+        }
+      }
+
       // DB.1: Prepare Clip DB record
       const dbClip = {
         id: clipId,
@@ -2000,6 +2020,8 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           scene_cut_snapped: (clip as any).scene_cut_snapped,
           jump_cut_plan: jumpCutPlan,
           words: rawClipWords,
+          // B-Roll detected segments (empty array = no B-roll detected)
+          broll_segments: detectedBRollSegments,
           // Phase F: Performance Prediction
           performance_prediction: performancePredictionScore,
           performance_prediction_breakdown: performancePredictionBreakdown,
@@ -2188,10 +2210,12 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
 
     // ─── Step 4: Render Subsystem & RenderPlan Contract ────────────────────
     const requestedCaptionStyle = (data as any)?.caption_style || (data as any)?.caption_preset || 'submagic';
+    const requestedAspectRatio = (data as any)?.aspectRatio || '9:16';
     const renderPlan = createRenderPlan({
       jobId,
       requestedClips: data.numClips || data.num_clips || DEFAULT_PIPELINE_CONFIG.defaultClipCount,
       acceptedClips: dbClips,
+      aspectRatio: requestedAspectRatio,
       captionPolicy: {
         required: true,
         style: requestedCaptionStyle,

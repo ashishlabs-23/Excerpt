@@ -37,19 +37,41 @@ export const PairwiseReview: React.FC<PairwiseReviewProps> = ({ clipAUrl, clipBU
       <h2 className="text-2xl font-bold">Pairwise Preference: {storyArchetype}</h2>
       
       <div className="flex gap-4">
-        <div className="flex-1 bg-gray-800 p-4 rounded text-center">
-          <div className="h-48 bg-black mb-2 flex items-center justify-center">Clip A Placeholder</div>
+        <div className="flex-1 bg-gray-800 p-4 rounded text-center flex flex-col">
+          {clipAUrl ? (
+            <video 
+              src={clipAUrl} 
+              controls 
+              className="w-full h-48 object-cover rounded mb-2 bg-black"
+              preload="metadata"
+            />
+          ) : (
+            <div className="w-full h-48 bg-black mb-2 flex items-center justify-center text-gray-400 rounded">
+              Clip A Preview Unavailable
+            </div>
+          )}
           <button 
-            className={`px-6 py-2 rounded font-bold ${winner === 'A' ? 'bg-blue-600' : 'bg-gray-600'}`}
+            className={`px-6 py-2 rounded font-bold mt-auto ${winner === 'A' ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-700 hover:bg-gray-600'}`}
             onClick={() => setWinner('A')}
           >
             Select A
           </button>
         </div>
-        <div className="flex-1 bg-gray-800 p-4 rounded text-center">
-          <div className="h-48 bg-black mb-2 flex items-center justify-center">Clip B Placeholder</div>
+        <div className="flex-1 bg-gray-800 p-4 rounded text-center flex flex-col">
+          {clipBUrl ? (
+            <video 
+              src={clipBUrl} 
+              controls 
+              className="w-full h-48 object-cover rounded mb-2 bg-black"
+              preload="metadata"
+            />
+          ) : (
+            <div className="w-full h-48 bg-black mb-2 flex items-center justify-center text-gray-400 rounded">
+              Clip B Preview Unavailable
+            </div>
+          )}
           <button 
-            className={`px-6 py-2 rounded font-bold ${winner === 'B' ? 'bg-blue-600' : 'bg-gray-600'}`}
+            className={`px-6 py-2 rounded font-bold mt-auto ${winner === 'B' ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-700 hover:bg-gray-600'}`}
             onClick={() => setWinner('B')}
           >
             Select B

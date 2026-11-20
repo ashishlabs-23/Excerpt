@@ -179,6 +179,7 @@ export async function exportCustomClip(
     trimOut?: number;
     cuts?: Array<{ start: number; end: number }>;
     cropOffset?: number;
+    framingMode?: string;
     aspectRatio?: '9:16' | '1:1' | '16:9';
     quality?: 'high' | 'medium';
     captionStyle?: string;

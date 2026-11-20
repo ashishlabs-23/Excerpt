@@ -31,6 +31,7 @@ import voiceoverRoutes from './routes/voiceover';
 import systemRoutes from './routes/system';
 import diagnosticsRoutes from './routes/diagnostics';
 import tournamentRoutes from './routes/tournament';
+import peakcutRoutes from './routes/peakcut';
 import { requestLogger } from './middleware/logging';
 import { validateSystemOrExit } from './validation/systemValidator';
 import http from 'http';
@@ -214,6 +215,7 @@ async function bootstrap() {
   app.use('/api/system', systemRoutes);
   app.use('/api/diagnostics', diagnosticsRoutes);
   app.use('/api/tournament', tournamentRoutes);
+  app.use('/api/peakcut', peakcutRoutes);
 
   // Startup Version Metadata
   const buildTime = new Date().toISOString();

@@ -42,12 +42,42 @@ export class CrowdSurgeDetector implements EventDetector {
 export class OpticalFlowDetector implements EventDetector {
   readonly name = 'OpticalFlowDetector';
   async detect(videoPath: string, context: PipelineContext): Promise<DetectedEvent[]> {
-    // Stubbed for Phase 3
-    return [];
+    const events: DetectedEvent[] = [];
+    if (context.visualTimeline && context.visualTimeline.length > 0) {
+      let currentEvent: DetectedEvent | null = null;
+      for (const pt of context.visualTimeline) {
+        if (pt.motion_score >= 0.65) {
+          const confidence = Math.min(1.0, Number((pt.motion_score).toFixed(2)));
+          if (!currentEvent) {
+            currentEvent = {
+              type: 'action_event',
+              confidence,
+              start: pt.second,
+              end: pt.second + 1,
+              signals: { motion_score: pt.motion_score, gameplay_density: pt.gameplay_density },
+              adapter: 'sports',
+            };
+          } else {
+            currentEvent.end = pt.second + 1;
+            currentEvent.confidence = Math.max(currentEvent.confidence, confidence);
+            currentEvent.signals.motion_score = Math.max(currentEvent.signals.motion_score, pt.motion_score);
+          }
+        } else {
+          if (currentEvent) {
+            events.push(currentEvent);
+            currentEvent = null;
+          }
+        }
+      }
+      if (currentEvent) {
+        events.push(currentEvent);
+      }
+    }
+    return events;
   }
 }
 
-export class ReplayDetectorStub implements EventDetector {
+export class ReplayDetector implements EventDetector {
   readonly name = 'ReplayDetector';
   async detect(videoPath: string, context: PipelineContext): Promise<DetectedEvent[]> {
     const events: DetectedEvent[] = [];
@@ -67,12 +97,15 @@ export class ReplayDetectorStub implements EventDetector {
   }
 }
 
+/** Backward-compatibility alias */
+export const ReplayDetectorStub = ReplayDetector;
+
 export abstract class SportsAdapter extends CategoryAdapter {
   getDetectors(): EventDetector[] {
     return [
       new CrowdSurgeDetector(),
       new OpticalFlowDetector(),
-      new ReplayDetectorStub(),
+      new ReplayDetector(),
     ];
   }
 

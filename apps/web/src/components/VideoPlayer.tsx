@@ -533,7 +533,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         style={{ objectPosition: `${50 + cropOffset}% 50%` }}
         playsInline
         onClick={togglePlay}
-      />
+        aria-label="Video preview player"
+      >
+        <track kind="captions" src="" label="English Captions" default={showCaptions} />
+      </video>
 
       {/* ── Center Snapping Guideline ── */}
       {isDraggingCaption && (
@@ -585,8 +588,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               return (
                 <span
                   key={idx}
-                  className="font-black uppercase tracking-tight py-1"
-                  style={getWordStyle(isWordActive)}
+                  className="font-black uppercase tracking-tight py-1 drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)]"
+                  style={{
+                    ...getWordStyle(isWordActive),
+                    textShadow: '0 2px 4px rgba(0,0,0,0.95), 0 0 2px #000',
+                  }}
                 >
                   {formatted}
                 </span>
@@ -646,9 +652,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {faceCentering && socialPreviewMode === 'none' && (
         <>
           <div className="absolute top-5 left-0 right-0 flex justify-center z-30 pointer-events-none">
-            <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/20 border border-emerald-500/40 rounded-full backdrop-blur-sm">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">Face Tracking Active</span>
+            <div className="flex items-center gap-2 px-3 py-1 bg-[#064e3b] border border-emerald-500/40 rounded-full backdrop-blur-sm shadow-md">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" aria-hidden="true" />
+              <span className="text-[9px] font-black text-emerald-200 uppercase tracking-widest">Face Tracking Active</span>
             </div>
           </div>
           <div className="absolute pointer-events-none z-10" style={{ top: '18%', left: '22%', right: '22%', bottom: '20%', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 4 }}>
@@ -666,11 +672,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {/* ── Center Play/Pause Pulse ── */}
       {!isPlaying && (
         <button
+          type="button"
           onClick={togglePlay}
-          className="absolute inset-0 flex items-center justify-center z-20 pointer-events-auto bg-transparent"
+          aria-label={isPlaying ? "Pause video preview" : "Play video preview"}
+          className="absolute inset-0 flex items-center justify-center z-20 pointer-events-auto bg-transparent focus:outline-none"
         >
           <div className="w-20 h-20 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center border border-white/20 shadow-2xl hover:bg-black/80 transition-all">
-            <Play fill="white" size={32} className="translate-x-0.5 text-white" />
+            <Play fill="white" size={32} className="translate-x-0.5 text-white" aria-hidden="true" />
           </div>
         </button>
       )}
@@ -681,20 +689,30 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         style={{ opacity: showControls || !isPlaying ? 1 : 0, pointerEvents: showControls || !isPlaying ? 'auto' : 'none' }}
       >
         {/* Gradient scrim */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/80 to-transparent pointer-events-none" />
 
         <div className="relative px-5 pb-5 pt-12 space-y-3">
           {/* Title */}
           <div className="mb-1">
             <p className="text-white font-bold text-sm leading-tight truncate">{title}</p>
-            <p className="text-white/40 text-[9px] uppercase tracking-widest font-black">Excerpt AI Clip</p>
+            <p className="text-slate-300 text-[9px] uppercase tracking-widest font-black">Excerpt AI Clip</p>
           </div>
 
           {/* Progress bar */}
           <div
             ref={progressRef}
-            className="relative h-1.5 rounded-full bg-white/15 cursor-pointer group/prog overflow-visible"
+            role="slider"
+            tabIndex={0}
+            aria-label="Video playback progress"
+            aria-valuenow={Math.round(progress * 100)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            className="relative h-1.5 rounded-full bg-white/20 cursor-pointer group/prog overflow-visible focus:outline-none focus:ring-1 focus:ring-primary"
             onMouseDown={onProgressMouseDown}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowRight') seek(Math.min(endTime, (videoRef.current?.currentTime || startTime) + 2));
+              if (e.key === 'ArrowLeft') seek(Math.max(startTime, (videoRef.current?.currentTime || startTime) - 2));
+            }}
           >
             <div
               className="h-full rounded-full bg-primary transition-none"
@@ -708,11 +726,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </div>
 
           {/* Time + speed */}
-          <div className="flex items-center justify-between text-[10px] text-white/50 font-bold">
-            <span>{formatTime(currentTime - startTime)} / {formatTime(clipDuration)}</span>
+          <div className="flex items-center justify-between text-[10px] font-bold">
+            <span className="px-1.5 py-0.5 rounded bg-black/40 text-slate-200 font-mono">
+              {formatTime(currentTime - startTime)} / {formatTime(clipDuration)}
+            </span>
             <button
+              type="button"
               onClick={cycleSpeed}
-              className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-[9px] font-black tracking-wider transition-colors"
+              aria-label={`Playback speed: ${PLAYBACK_SPEEDS[speedIdx]}x. Click to change.`}
+              className="px-2 py-0.5 rounded bg-[#111827] hover:bg-[#1f2937] border border-white/15 text-white text-[9px] font-black tracking-wider transition-colors"
             >
               {PLAYBACK_SPEEDS[speedIdx]}×
             </button>
@@ -722,30 +744,36 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <div className="flex items-center justify-between gap-3">
             {/* Left: skip back */}
             <button
+              type="button"
               onClick={() => seek(startTime)}
-              className="text-white/60 hover:text-white transition-colors"
+              className="text-slate-300 hover:text-white transition-colors p-1"
+              aria-label="Restart video"
               title="Restart (↑)"
             >
-              <SkipBack size={20} />
+              <SkipBack size={20} aria-hidden="true" />
             </button>
 
             {/* Play/Pause */}
             <button
+              type="button"
               onClick={togglePlay}
+              aria-label={isPlaying ? "Pause video" : "Play video"}
               className="w-12 h-12 rounded-full bg-white flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 transition-all flex-shrink-0"
             >
               {isPlaying
-                ? <Pause fill="black" size={20} />
-                : <Play fill="black" size={20} className="translate-x-0.5" />}
+                ? <Pause fill="black" size={20} aria-hidden="true" />
+                : <Play fill="black" size={20} className="translate-x-0.5" aria-hidden="true" />}
             </button>
 
             {/* Skip fwd 5s */}
             <button
+              type="button"
               onClick={() => seek(Math.min(endTime, (videoRef.current?.currentTime || startTime) + 5))}
-              className="text-white/60 hover:text-white transition-colors"
+              className="text-slate-300 hover:text-white transition-colors p-1"
+              aria-label="Skip forward 5 seconds"
               title="Forward 5s"
             >
-              <SkipForward size={20} />
+              <SkipForward size={20} aria-hidden="true" />
             </button>
 
             {/* Volume */}
@@ -754,8 +782,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               onMouseEnter={() => setShowVolumeSlider(true)}
               onMouseLeave={() => setShowVolumeSlider(false)}
             >
-              <button onClick={toggleMute} className="text-white/60 hover:text-white transition-colors">
-                <VolumeIcon size={18} />
+              <button
+                type="button"
+                onClick={toggleMute}
+                aria-label={isMuted ? "Unmute audio" : "Mute audio"}
+                className="text-slate-300 hover:text-white transition-colors p-1"
+              >
+                <VolumeIcon size={18} aria-hidden="true" />
               </button>
               {showVolumeSlider && (
                 <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 bg-[#1f2937]/90 backdrop-blur-md rounded-xl px-2 py-3 shadow-xl border border-white/10">
@@ -764,22 +797,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     min={0}
                     max={1}
                     step={0.01}
+                    aria-label="Volume level"
                     value={isMuted ? 0 : volume}
                     onChange={e => changeVolume(Number(e.target.value))}
                     className="h-20 cursor-pointer accent-primary"
                     style={{ writingMode: 'vertical-lr', direction: 'rtl' }}
                   />
-                  <span className="text-[8px] text-white/40 font-bold">{Math.round((isMuted ? 0 : volume) * 100)}%</span>
+                  <span className="text-[8px] text-slate-300 font-bold">{Math.round((isMuted ? 0 : volume) * 100)}%</span>
                 </div>
               )}
             </div>
 
             {/* Fullscreen */}
             <button
+              type="button"
               onClick={toggleFullscreen}
-              className="text-white/60 hover:text-white transition-colors ml-auto"
+              aria-label="Toggle fullscreen"
+              className="text-slate-300 hover:text-white transition-colors ml-auto p-1"
             >
-              <Maximize2 size={16} />
+              <Maximize2 size={16} aria-hidden="true" />
             </button>
           </div>
         </div>
