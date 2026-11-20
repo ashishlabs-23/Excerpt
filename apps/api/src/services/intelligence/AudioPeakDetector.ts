@@ -6,7 +6,8 @@
  */
 
 export interface AudioEnergyPoint {
-  second: number;
+  second?: number;
+  timestamp?: number;
   energy: number; // 0.0 to 1.0 (or normalized RMS)
 }
 
@@ -46,8 +47,14 @@ export class AudioPeakDetector {
     const leadSec = options.prePeakLeadSec ?? 4.0;
     const threshold = options.energyThreshold ?? 0.60;
 
+    // Normalize timeline items so either 'second' or 'timestamp' is supported
+    const normalized = timeline.map((p, idx) => ({
+      second: Number(p.second ?? p.timestamp ?? idx),
+      energy: Number(p.energy ?? 0)
+    }));
+
     // 1. Calculate statistics (mean & standard deviation)
-    const energies = timeline.map(p => p.energy);
+    const energies = normalized.map(p => p.energy);
     const mean = energies.reduce((a, b) => a + b, 0) / energies.length;
     const variance = energies.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / energies.length;
     const stdDev = Math.sqrt(variance);
@@ -57,11 +64,11 @@ export class AudioPeakDetector {
 
     // 2. Identify local maxima above the cutoff
     const rawPeaks: { second: number; energy: number; prominence: number }[] = [];
-    for (let i = 0; i < timeline.length; i++) {
-      const curr = timeline[i];
+    for (let i = 0; i < normalized.length; i++) {
+      const curr = normalized[i];
       if (curr.energy >= peakCutoff) {
-        const prev = i > 0 ? timeline[i - 1].energy : 0;
-        const next = i < timeline.length - 1 ? timeline[i + 1].energy : 0;
+        const prev = i > 0 ? normalized[i - 1].energy : 0;
+        const next = i < normalized.length - 1 ? normalized[i + 1].energy : 0;
         // Check if local crest
         if (curr.energy >= prev && curr.energy >= next) {
           const prominence = curr.energy - mean;
@@ -72,7 +79,7 @@ export class AudioPeakDetector {
 
     if (rawPeaks.length === 0) {
       // Fallback: If no sharp peak exceeded cutoff, take highest energy window
-      const sortedByEnergy = [...timeline].sort((a, b) => b.energy - a.energy);
+      const sortedByEnergy = [...normalized].sort((a, b) => b.energy - a.energy);
       if (sortedByEnergy.length > 0) {
         const top = sortedByEnergy[0];
         rawPeaks.push({ second: top.second, energy: top.energy, prominence: top.energy - mean });

@@ -32,6 +32,7 @@ import systemRoutes from './routes/system';
 import diagnosticsRoutes from './routes/diagnostics';
 import tournamentRoutes from './routes/tournament';
 import peakcutRoutes from './routes/peakcut';
+import arenaRoutes from './routes/arena';
 import { requestLogger } from './middleware/logging';
 import { validateSystemOrExit } from './validation/systemValidator';
 import http from 'http';
@@ -216,6 +217,7 @@ async function bootstrap() {
   app.use('/api/diagnostics', diagnosticsRoutes);
   app.use('/api/tournament', tournamentRoutes);
   app.use('/api/peakcut', peakcutRoutes);
+  app.use('/api/system/arena', arenaRoutes);
 
   // Startup Version Metadata
   const buildTime = new Date().toISOString();
