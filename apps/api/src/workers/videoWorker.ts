@@ -2063,13 +2063,13 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           clipWords: rawClipWords,
           // Fix 7: Declare coordinate system explicitly so renderWorker never has to guess
           wordsAreAbsolute: true,
-          cropPlan: (data as any)?.aspectRatio === '16:9' ? null : cropPlan,
+          cropPlan: ((data as any)?.aspectRatio === '16:9' || (data as any)?.framingMode === 'fit_headline' || (data as any)?.framingMode === 'fit_letterbox') ? null : cropPlan,
           jumpCutPlan: jumpCutPlan,
-          hookText: hookText,
+          hookText: hookText || (clip as any)?.title || '',
           generationMode: userRequestedMode,
           generation_mode: userRequestedMode,
           aspectRatio: (data as any).aspectRatio || '9:16',
-          framingMode: (data as any).framingMode || ((data as any).aspectRatio === '16:9' ? 'widescreen' : 'smart_crop'),
+          framingMode: (data as any).framingMode || ((data as any).aspectRatio === '16:9' ? 'fit_headline' : 'smart_crop'),
           caption_preset: (data as any).captionPreset || (data as any).caption_preset || 'tiktok',
           caption_style: (data as any).captionPreset || (data as any).caption_style || 'tiktok',
         }
@@ -2243,16 +2243,16 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           (w: any) => typeof w.start === 'number' && typeof w.end === 'number' && w.end > (clip?.start_time ?? 0) && w.start < (clip?.end_time ?? 60)
         ),
         wordsAreAbsolute: true,
-        cropPlan: requestedAspectRatio === '16:9' ? null : ((clip as any)?.metadata?.nexus?.crop_plan || (rawClip as any)?.metadata?.nexus?.crop_plan || (clip as any)?.cropPlan || null),
+        cropPlan: (requestedAspectRatio === '16:9' || (data as any)?.framingMode === 'fit_headline' || (data as any)?.framingMode === 'fit_letterbox') ? null : ((clip as any)?.metadata?.nexus?.crop_plan || (rawClip as any)?.metadata?.nexus?.crop_plan || (clip as any)?.cropPlan || null),
         jumpCutPlan: (clip as any)?.metadata?.jump_cut_plan || (rawClip as any)?.jump_cut_plan || null,
         composition: rj.composition || null,
         aspectRatio: rj.aspectRatio || requestedAspectRatio,
-        framingMode: (data as any)?.framingMode || (requestedAspectRatio === '16:9' ? 'widescreen' : 'smart_crop'),
+        framingMode: (data as any)?.framingMode || (requestedAspectRatio === '16:9' ? 'fit_headline' : 'smart_crop'),
         quality: rj.quality,
         caption_style: (clip as any)?.metadata?.caption_style || requestedCaptionStyle,
         captionPolicy: renderPlan.captionPolicy,
         // Phase E: Hook text for editorial hook card
-        hookText: (clip as any)?.metadata?.hook || (rawClip as any)?.hook || '',
+        hookText: (clip as any)?.metadata?.hook || (rawClip as any)?.hook || clip?.title || rawClip?.title || '',
       };
 
       const renderJobData = {

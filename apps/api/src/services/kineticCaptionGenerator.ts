@@ -43,6 +43,8 @@ export class KineticCaptionGenerator {
             yPercent?: number;
             color?: string;
             aspectRatio?: '9:16' | '16:9';
+            framingMode?: string;
+            headlineText?: string;
         }
     ) {
         const normalizedPreset = (preset || 'submagic').toLowerCase();
@@ -101,13 +103,14 @@ export class KineticCaptionGenerator {
             fontSize = Math.round(Math.min(84, Math.max(32, options.fontSize * (52 / 28))));
         }
 
-        const isLandscape = options?.aspectRatio === '16:9';
+        const isFitHeadline = options?.framingMode === 'fit_headline' || options?.framingMode === 'fit_letterbox' || options?.framingMode === 'fit_card' || Boolean(options?.headlineText && options?.aspectRatio !== '16:9');
+        const isLandscape = options?.aspectRatio === '16:9' && !isFitHeadline;
         const resX = isLandscape ? 1920 : 1080;
         const resY = isLandscape ? 1080 : 1920;
 
         // Apply custom vertical alignment & margin
         let alignment = 2; // Bottom Center
-        let marginV = isLandscape ? 90 : 380;
+        let marginV = isLandscape ? 90 : (isFitHeadline ? 240 : 380);
         if (options?.yPercent !== undefined && typeof options.yPercent === 'number' && !isNaN(options.yPercent)) {
             const yClamped = Math.max(10, Math.min(90, options.yPercent));
             // yPercent is distance from top (0% at top, 100% at bottom).
@@ -122,7 +125,7 @@ export class KineticCaptionGenerator {
             marginV = 0;
         } else {
             alignment = 2; // Bottom Center
-            marginV = isLandscape ? 90 : 380;
+            marginV = isLandscape ? 90 : (isFitHeadline ? 240 : 380);
         }
 
         const fontName = process.env.EXCERPT_CAPTION_FONT || 'Montserrat';
@@ -137,10 +140,34 @@ PlayResY: ${resY}
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,${fontName},${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,${isItalic},0,0,100,100,0,0,1,${outlineThickness},${shadowThickness},${alignment},80,80,${marginV},1
+Style: TopHeadline,${fontName},48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,8,90,90,140,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
+
+        // Burn-in persistent viral hook headline if fit_headline layout is active
+        if (options?.headlineText && options.headlineText.trim().length > 0) {
+            const wrapHeadline = (text: string, maxChars = 34): string => {
+                const clean = text.replace(/[{}\\]/g, '').trim();
+                const wordsArr = clean.split(/\s+/);
+                const lines: string[] = [];
+                let cur = '';
+                for (const w of wordsArr) {
+                    if ((cur + ' ' + w).trim().length <= maxChars) {
+                        cur = (cur + ' ' + w).trim();
+                    } else {
+                        if (cur) lines.push(cur);
+                        cur = w;
+                    }
+                }
+                if (cur) lines.push(cur);
+                return lines.join('\\N');
+            };
+            const wrapped = wrapHeadline(options.headlineText);
+            const maxEnd = clipDurationSec || (words.length > 0 ? words[words.length - 1].end + 5 : 60);
+            assContent += `Dialogue: 0,0:00:00.00,${this.formatTime(maxEnd)},TopHeadline,,0,0,0,,{\\q2}${wrapped}\n`;
+        }
 
         // Sanitize and sort words chronologically
         words = [...words]

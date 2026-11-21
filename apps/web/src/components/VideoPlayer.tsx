@@ -24,6 +24,8 @@ interface VideoPlayerProps {
   cropOffset?: number;
   socialPreviewMode?: 'tiktok' | 'youtube' | 'instagram' | 'none';
   aspectRatio?: '9:16' | '1:1' | '16:9';
+  framingMode?: string;
+  headlineText?: string;
 }
 
 const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
@@ -78,6 +80,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   cropOffset = 0,
   socialPreviewMode = 'none',
   aspectRatio = '9:16',
+  framingMode,
+  headlineText,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
@@ -459,10 +463,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     if (captionPosition === 'top') return 15;
     if (captionPosition === 'middle') return 50;
+    if (framingMode === 'fit_headline') return 82;
     if (aspectRatio === '1:1') return 84;
     if (aspectRatio === '16:9') return 86;
     return 78;
-  }, [captionYPercent, captionPosition, aspectRatio]);
+  }, [captionYPercent, captionPosition, aspectRatio, framingMode]);
 
   const handleCaptionPointerDown = useCallback((e: React.PointerEvent) => {
     e.stopPropagation();
@@ -529,7 +534,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         ref={videoRef}
         src={currentSrc}
         onError={handleVideoError}
-        className="w-full h-full object-cover"
+        className={framingMode === 'fit_headline' ? "w-full h-full object-contain" : "w-full h-full object-cover"}
         style={{ objectPosition: `${50 + cropOffset}% 50%` }}
         playsInline
         onClick={togglePlay}
@@ -537,6 +542,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       >
         <track kind="captions" src="" label="English Captions" default={showCaptions} />
       </video>
+
+      {/* ── Top Hook Headline Overlay (for fit_headline Meme Card mode) ── */}
+      {framingMode === 'fit_headline' && headlineText && (
+        <div className="absolute top-[8%] left-0 right-0 px-6 text-center z-10 pointer-events-none">
+          <p className="text-white font-black text-sm sm:text-base leading-snug tracking-tight drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
+            {headlineText}
+          </p>
+        </div>
+      )}
 
       {/* ── Center Snapping Guideline ── */}
       {isDraggingCaption && (

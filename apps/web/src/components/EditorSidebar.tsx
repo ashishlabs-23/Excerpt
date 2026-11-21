@@ -11,7 +11,7 @@ import {
   Layers, ScanFace, Focus
 } from 'lucide-react';
 
-export type FramingMode = 'smart_crop' | 'split_stack' | 'ambient_blur' | 'face_focus';
+export type FramingMode = 'smart_crop' | 'split_stack' | 'ambient_blur' | 'face_focus' | 'fit_headline';
 
 export interface ExportOptions {
   aspectRatio: '9:16' | '1:1' | '16:9';
@@ -78,6 +78,15 @@ const FRAMING_PRESETS: {
   accentBg: string;
   preview: string;
 }[] = [
+  {
+    id: 'fit_headline',
+    name: '16:9 Fit + Headline',
+    tag: 'TikTok / Reels',
+    desc: 'Full 16:9 widescreen video centered with bold top viral headline and bottom subtitles.',
+    accent: 'text-emerald-400',
+    accentBg: 'bg-emerald-500/10 border-emerald-500/40',
+    preview: '📱',
+  },
   {
     id: 'smart_crop',
     name: 'Smart Crop',
@@ -588,6 +597,12 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({
             )}
 
             {/* Framing mode hint cards */}
+            {framingMode === 'fit_headline' && (
+              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[9px] text-emerald-300 leading-relaxed space-y-1">
+                <p className="font-black text-[10px] text-emerald-200">📱 16:9 Fit + Headline Card</p>
+                <p>Preserves your entire 16:9 widescreen video with zero side cropping. Adds a high-impact hook headline at the top and karaoke subtitles at the bottom.</p>
+              </div>
+            )}
             {framingMode === 'split_stack' && (
               <div className="p-3 rounded-xl bg-violet-500/10 border border-violet-500/20 text-[9px] text-violet-300 leading-relaxed space-y-1">
                 <p className="font-black text-[10px] text-violet-200">🎮 Split Stack Layout</p>

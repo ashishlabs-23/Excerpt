@@ -77,7 +77,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
   const [avoidSimilarClips, setAvoidSimilarClips] = useState<'strict' | 'balanced' | 'explore'>("balanced");
   const [generationMode, setGenerationMode] = useState<'draft' | 'quality'>("draft");
   const [aspectRatio, setAspectRatio] = useState<'9:16' | '16:9'>('9:16');
-  const [framingMode, setFramingMode] = useState<'smart_crop' | 'fit_blur' | 'face_focus' | 'split_stack'>('smart_crop');
+  const [framingMode, setFramingMode] = useState<'fit_headline' | 'smart_crop' | 'fit_blur' | 'face_focus' | 'split_stack' | 'widescreen'>('fit_headline');
   const [captionPreset, setCaptionPreset] = useState<'tiktok' | 'submagic' | 'hormozi' | 'minimal'>('tiktok');
   const [isDragging, setIsDragging] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<{
@@ -142,7 +142,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
           avoidSimilarClips,
           generationMode,
           aspectRatio,
-          framingMode: aspectRatio === '9:16' ? framingMode : 'smart_crop',
+          framingMode: aspectRatio === '16:9' ? (framingMode === 'widescreen' ? 'widescreen' : 'fit_headline') : framingMode,
           captionPreset: captionPreset,
           captionStyle: captionPreset,
         }),
@@ -188,7 +188,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
     formData.append("avoidSimilarClips", avoidSimilarClips);
     formData.append("generationMode", generationMode);
     formData.append("aspectRatio", aspectRatio);
-    formData.append("framingMode", aspectRatio === '9:16' ? framingMode : 'smart_crop');
+    formData.append("framingMode", aspectRatio === '16:9' ? (framingMode === 'widescreen' ? 'widescreen' : 'fit_headline') : framingMode);
     formData.append("captionPreset", captionPreset);
     formData.append("captionStyle", captionPreset);
     const xhr = new XMLHttpRequest();
@@ -456,6 +456,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
                               onChange={(e) => setFramingMode(e.target.value as any)}
                               className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-primary"
                             >
+                              <option value="fit_headline">16:9 Fit + Headline (Meme Card)</option>
                               <option value="smart_crop">Smart Pan & Scan</option>
                               <option value="fit_blur">Ambient Blur (Stream VODs)</option>
                               <option value="face_focus">Face Punch-in (1.35x)</option>
@@ -515,26 +516,30 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
                         <div className="mt-4 pt-3 border-t border-white/5 grid grid-cols-2 gap-3" onClick={(e) => e.stopPropagation()}>
                           <div>
                             <span className="text-[9px] font-bold uppercase tracking-wider text-white/40 block mb-1">
-                              Highlight Strategy
+                              16:9 Output Framing
                             </span>
-                            <div className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-emerald-400 flex items-center gap-1.5">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                              <span className="truncate">Audio Peaks + AI Hook</span>
-                            </div>
+                            <select
+                              value={framingMode === 'widescreen' ? 'widescreen' : 'fit_headline'}
+                              onChange={(e) => setFramingMode(e.target.value as any)}
+                              className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-primary"
+                            >
+                              <option value="fit_headline">Shorts Meme Card (1080x1920)</option>
+                              <option value="widescreen">Desktop Landscape (1920x1080)</option>
+                            </select>
                           </div>
                           <div>
                             <span className="text-[9px] font-bold uppercase tracking-wider text-white/40 block mb-1">
-                              Widescreen Subtitles
+                              Caption Preset
                             </span>
                             <select
                               value={captionPreset}
                               onChange={(e) => setCaptionPreset(e.target.value as any)}
                               className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-primary"
                             >
-                              <option value="minimal">Minimal Clean (Bottom 16:9)</option>
-                              <option value="tiktok">High-Contrast Pop</option>
-                              <option value="submagic">Submagic Vibrant</option>
+                              <option value="tiktok">TikTok Pop (Yellow)</option>
+                              <option value="submagic">Submagic Vibrant (Pink)</option>
                               <option value="hormozi">Alex Hormozi Gold</option>
+                              <option value="minimal">Minimal Clean (White)</option>
                             </select>
                           </div>
                         </div>

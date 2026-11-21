@@ -762,6 +762,8 @@ function ClipEditorContent() {
                   cropOffset={cropOffset}
                   socialPreviewMode={socialPreviewMode}
                   aspectRatio={aspectRatio}
+                  framingMode={framingMode}
+                  headlineText={(videoData as any).hook || videoData.title || ''}
                 />
               ) : (
                 <div className="text-center opacity-30 space-y-3">

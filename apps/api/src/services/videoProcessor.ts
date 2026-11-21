@@ -198,7 +198,7 @@ interface SmartCropPoint {
 }
 
 export interface SmartCropPlan {
-  mode: 'center' | 'static' | 'dynamic' | 'split_stack' | 'widescreen_preserve' | 'widescreen_ambient_blur' | 'fit_blur';
+  mode: 'center' | 'static' | 'dynamic' | 'split_stack' | 'widescreen_preserve' | 'widescreen_ambient_blur' | 'fit_blur' | 'fit_headline';
   xExpression: string;
   yExpression: string;
   debug: string;
@@ -628,6 +628,25 @@ export class VideoProcessor {
     // ────────────────────────────────────────────────────────────────────────
     // 1. WIDESCREEN 16:9 RESOLUTION LOGIC
     // ────────────────────────────────────────────────────────────────────────
+    // 1. 16:9 FIT LETTERBOX WITH TOP HEADLINE (Meme / Hook Card for Shorts & Reels)
+    // ────────────────────────────────────────────────────────────────────────
+    if (framingMode === 'fit_headline' || framingMode === 'fit_letterbox' || framingMode === 'fit_card') {
+      console.log(`[VideoProcessor]: 16:9 fit_headline requested -> Centering 16:9 video inside 9:16 canvas with black padding.`);
+      const cropFilter = `scale=1080:608:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`;
+      return {
+        cropFilter,
+        cropPlan: {
+          mode: 'fit_headline',
+          xExpression: '0',
+          yExpression: '0',
+          debug: '16:9 fit letterbox (1080x608 inside 1080x1920 black canvas for top headline & bottom subtitles)',
+        }
+      };
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // 2. WIDESCREEN 16:9 OUTPUT (Desktop / YouTube or Fit Card)
+    // ────────────────────────────────────────────────────────────────────────
     if (targetAspect === '16:9') {
       if (isInputVertical) {
         console.log(`[VideoProcessor]: 16:9 output requested for vertical video -> Applying ambient blurred backdrop.`);
@@ -1055,8 +1074,8 @@ export class VideoProcessor {
           currentV = nextV;
         }
 
-        // 3. Editorial Hook Card + Animated Progress Bar
-        if (hookText && hookText.length > 0) {
+        // 3. Editorial Hook Card + Animated Progress Bar (bypassed in fit_headline which renders native ASS TopHeadline)
+        if (hookText && hookText.length > 0 && framingMode !== 'fit_headline' && framingMode !== 'fit_letterbox') {
           const safeHook = hookText.replace(/'/g, '').replace(/:/g, ' - ');
           const fontPath = 'C\\:/Windows/Fonts/arial.ttf';
           const fontOption = fs.existsSync('C:/Windows/Fonts/arial.ttf') ? `:fontfile='${fontPath}'` : '';

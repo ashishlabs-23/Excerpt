@@ -247,12 +247,19 @@ export async function processRenderJob(renderJob: any) {
               || (renderJob.payload as any)?.caption_preset
               || captionPolicy.style
               || 'submagic';
+            const effectiveFraming = (payload.framingMode as string) || (payload.aspectRatio === '16:9' ? 'fit_headline' : 'smart_crop');
+            const headline = (renderJob.payload as any)?.hookText || (renderJob.payload as any)?.title || '';
+
             captionService.generateASS(
               relativeWords,
               assFilePath,
               requestedStyle,
               clipDurationSec,
-              { aspectRatio: (payload.aspectRatio as '9:16' | '16:9') || '9:16' }
+              {
+                aspectRatio: (payload.aspectRatio as '9:16' | '16:9') || '9:16',
+                framingMode: effectiveFraming,
+                headlineText: (effectiveFraming === 'fit_headline' || effectiveFraming === 'fit_letterbox' || effectiveFraming === 'fit_card') ? headline : undefined,
+              }
             );
             hasCaptions = true;
           }
@@ -316,14 +323,14 @@ export async function processRenderJob(renderJob: any) {
         cleanOutputPath: cleanOutputPath,
         start: clipStart,
         duration: clipDurationSec,
-        cropPlan: payload.aspectRatio === '16:9' ? null : cropPlan,
+        cropPlan: (payload.aspectRatio === '16:9' || payload.framingMode === 'fit_headline' || payload.framingMode === 'fit_letterbox') ? null : cropPlan,
         subtitlePath: subtitleToBurn,
         bRollClips: renderedClips.length > 0 ? renderedClips : undefined,
         hookText: (PHASE_E_BROLL_ENABLED && hookText) ? hookText : undefined,
         totalDurationSec: actualRenderedDurationSec,
         generationMode,
         aspectRatio: (payload.aspectRatio as '9:16' | '1:1' | '16:9') || '9:16',
-        framingMode: (payload.framingMode as string) || (payload.aspectRatio === '16:9' ? 'widescreen' : 'smart_crop'),
+        framingMode: (payload.framingMode as string) || (payload.aspectRatio === '16:9' ? 'fit_headline' : 'smart_crop'),
       });
       cropMs = Date.now() - renderStart;
       captionMs = 0; // Unified into single pass

@@ -242,6 +242,42 @@ describe('QA Full Subsystem & Invariant Verification Suite', () => {
         if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
       }
     });
+
+    it('VIS-03: 16:9 Fit Headline (Meme Card) renders letterbox canvas with TopHeadline ASS style and wrapped title', async () => {
+      const { VideoProcessor } = require('../services/videoProcessor');
+      const processor = new VideoProcessor();
+      jest.spyOn(processor, 'getVideoDimensions').mockResolvedValue({ width: 1920, height: 1080 });
+
+      const res = await processor.buildCropFilter('/dummy/video.mp4', 0, 30, null, '9:16', 'fit_headline');
+      expect(res.cropPlan.mode).toBe('fit_headline');
+      expect(res.cropFilter).toContain('scale=1080:608');
+      expect(res.cropFilter).toContain('pad=1080:1920');
+
+      const { KineticCaptionGenerator } = require('../services/kineticCaptionGenerator');
+      const generator = new KineticCaptionGenerator();
+      const tmpFile = path.join(process.cwd(), 'temp', `test-caps-headline-${Date.now()}.ass`);
+
+      try {
+        generator.generateASS(
+          [{ start: 0, end: 1, word: 'Test' }],
+          tmpFile,
+          'tiktok',
+          10,
+          {
+            aspectRatio: '9:16',
+            framingMode: 'fit_headline',
+            headlineText: 'now i understand why they wiped out the air nation 🙏😭 they were always a problem',
+          }
+        );
+        const content = fs.readFileSync(tmpFile, 'utf-8');
+        expect(content).toContain('PlayResX: 1080');
+        expect(content).toContain('PlayResY: 1920');
+        expect(content).toContain('Style: TopHeadline');
+        expect(content).toContain('air nation');
+      } finally {
+        if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+      }
+    });
   });
 
   // =========================================================================

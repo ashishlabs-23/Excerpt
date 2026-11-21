@@ -14,6 +14,13 @@ router.get('/presets', (req: Request, res: Response) => {
     targetDimensions: { width: 1080, height: 1920 },
     framingModes: [
       {
+        id: 'fit_headline',
+        label: '16:9 Fit + Top Headline (Meme Card)',
+        description: 'Uncropped 16:9 video centered inside 9:16 frame with bold top viral hook and bottom subtitles (TikTok / Reels layout).',
+        icon: 'layout',
+        idealFor: 'Podcasts, presentations, memes, anime, tech slides',
+      },
+      {
         id: 'smart_crop',
         label: 'Smart Pan & Scan',
         description: 'Dynamically centers on the active speaker or action.',
