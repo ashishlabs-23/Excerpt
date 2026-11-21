@@ -419,10 +419,13 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
                   {/* Option 9:16 */}
                   <button
                     type="button"
-                    onClick={() => setAspectRatio('9:16')}
+                    onClick={() => {
+                      setAspectRatio('9:16');
+                      if (framingMode === 'widescreen') setFramingMode('smart_crop');
+                    }}
                     className={`flex items-start gap-4 p-5 rounded-2xl border text-left transition-all duration-300 relative overflow-hidden group ${
                       aspectRatio === '9:16'
-                        ? "border-primary bg-primary/[0.08] shadow-[0_0_30px_rgba(200,119,64,0.18)]"
+                        ? "border-primary bg-primary/[0.08] shadow-[0_0_30px_rgba(200,119,64,0.18)] ring-1 ring-primary/40"
                         : "border-white/5 bg-black/25 hover:border-white/15 hover:bg-black/35"
                     }`}
                   >
@@ -432,7 +435,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
                       <Smartphone size={22} />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-black text-white uppercase italic tracking-wider">
                           9:16 Vertical Shorts
                         </span>
@@ -441,55 +444,21 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
                         </span>
                       </div>
                       <p className="text-xs text-white/40 mt-1.5 leading-relaxed">
-                        Reframes video into vertical mobile format with speaker centering and word-synced karaoke captions.
+                        Optimized for vertical mobile feeds with active speaker tracking or meme hook cards.
                       </p>
-
-                      {/* Sub-controls when 9:16 is active */}
-                      {aspectRatio === '9:16' && (
-                        <div className="mt-4 pt-3 border-t border-white/5 grid grid-cols-2 gap-3" onClick={(e) => e.stopPropagation()}>
-                          <div>
-                            <span className="text-[9px] font-bold uppercase tracking-wider text-white/40 block mb-1">
-                              Reframing Mode
-                            </span>
-                            <select
-                              value={framingMode}
-                              onChange={(e) => setFramingMode(e.target.value as any)}
-                              className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-primary"
-                            >
-                              <option value="fit_headline">16:9 Fit + Headline (Meme Card)</option>
-                              <option value="smart_crop">Smart Pan & Scan</option>
-                              <option value="fit_blur">Ambient Blur (Stream VODs)</option>
-                              <option value="face_focus">Face Punch-in (1.35x)</option>
-                              <option value="split_stack">Split-Screen Stack</option>
-                            </select>
-                          </div>
-                          <div>
-                            <span className="text-[9px] font-bold uppercase tracking-wider text-white/40 block mb-1">
-                              Caption Style
-                            </span>
-                            <select
-                              value={captionPreset}
-                              onChange={(e) => setCaptionPreset(e.target.value as any)}
-                              className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-primary"
-                            >
-                              <option value="tiktok">TikTok Pop (Yellow)</option>
-                              <option value="submagic">Submagic (Pink)</option>
-                              <option value="hormozi">Alex Hormozi (Gold)</option>
-                              <option value="minimal">Minimal Clean (White)</option>
-                            </select>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   </button>
 
                   {/* Option 16:9 */}
                   <button
                     type="button"
-                    onClick={() => setAspectRatio('16:9')}
+                    onClick={() => {
+                      setAspectRatio('16:9');
+                      if (framingMode !== 'widescreen' && framingMode !== 'fit_headline') setFramingMode('fit_headline');
+                    }}
                     className={`flex items-start gap-4 p-5 rounded-2xl border text-left transition-all duration-300 relative overflow-hidden group ${
                       aspectRatio === '16:9'
-                        ? "border-primary bg-primary/[0.08] shadow-[0_0_30px_rgba(200,119,64,0.18)]"
+                        ? "border-primary bg-primary/[0.08] shadow-[0_0_30px_rgba(200,119,64,0.18)] ring-1 ring-primary/40"
                         : "border-white/5 bg-black/25 hover:border-white/15 hover:bg-black/35"
                     }`}
                   >
@@ -499,7 +468,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
                       <Monitor size={22} />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-black text-white uppercase italic tracking-wider">
                           16:9 Landscape Video
                         </span>
@@ -508,44 +477,83 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadComplete, initia
                         </span>
                       </div>
                       <p className="text-xs text-white/40 mt-1.5 leading-relaxed">
-                        Preserves original full-width widescreen canvas. No vertical cropping or pillarboxing.
+                        Preserves original full-width widescreen canvas with zero vertical cropping.
                       </p>
-
-                      {/* Sub-controls when 16:9 is active */}
-                      {aspectRatio === '16:9' && (
-                        <div className="mt-4 pt-3 border-t border-white/5 grid grid-cols-2 gap-3" onClick={(e) => e.stopPropagation()}>
-                          <div>
-                            <span className="text-[9px] font-bold uppercase tracking-wider text-white/40 block mb-1">
-                              16:9 Output Framing
-                            </span>
-                            <select
-                              value={framingMode === 'widescreen' ? 'widescreen' : 'fit_headline'}
-                              onChange={(e) => setFramingMode(e.target.value as any)}
-                              className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-primary"
-                            >
-                              <option value="fit_headline">Shorts Meme Card (1080x1920)</option>
-                              <option value="widescreen">Desktop Landscape (1920x1080)</option>
-                            </select>
-                          </div>
-                          <div>
-                            <span className="text-[9px] font-bold uppercase tracking-wider text-white/40 block mb-1">
-                              Caption Preset
-                            </span>
-                            <select
-                              value={captionPreset}
-                              onChange={(e) => setCaptionPreset(e.target.value as any)}
-                              className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-primary"
-                            >
-                              <option value="tiktok">TikTok Pop (Yellow)</option>
-                              <option value="submagic">Submagic Vibrant (Pink)</option>
-                              <option value="hormozi">Alex Hormozi Gold</option>
-                              <option value="minimal">Minimal Clean (White)</option>
-                            </select>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   </button>
+                </div>
+
+                {/* Contextual Format & Caption Settings Shelf (Full-Width, Uncramped) */}
+                <div className="mt-4 p-5 rounded-2xl border border-white/10 bg-black/40 backdrop-blur-md grid grid-cols-1 sm:grid-cols-2 gap-5 shadow-inner">
+                  {/* Left: Framing & Reframing Mode */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-white/60 flex items-center gap-1.5">
+                        <Layers size={13} className="text-primary" />
+                        {aspectRatio === '9:16' ? '9:16 Reframing & Framing Mode' : '16:9 Presentation Format'}
+                      </span>
+                      <span className="text-[9px] font-bold text-primary uppercase">
+                        {aspectRatio === '9:16' ? 'Mobile Layout' : 'Widescreen Choice'}
+                      </span>
+                    </div>
+                    <select
+                      value={framingMode}
+                      onChange={(e) => setFramingMode(e.target.value as any)}
+                      className="w-full bg-black/70 border border-white/15 hover:border-primary/50 focus:border-primary rounded-xl px-3.5 py-2.5 text-xs text-white font-medium focus:outline-none transition-colors"
+                    >
+                      {aspectRatio === '9:16' ? (
+                        <>
+                          <option value="smart_crop">🎯 Smart Pan & Scan (Active Speaker Centered)</option>
+                          <option value="fit_headline">📱 16:9 Fit + Headline (Meme Card with Top Hook)</option>
+                          <option value="fit_blur">🌫️ Ambient Blur (Stream VODs & Gaming)</option>
+                          <option value="face_focus">🔍 Face Focus Punch-in (1.35x Zoom)</option>
+                          <option value="split_stack">🎮 Split-Screen Stack (Facecam + Screen)</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="fit_headline">📱 Shorts Meme Card (1080x1920 with Top Hook Headline)</option>
+                          <option value="widescreen">🖥️ Native Desktop Widescreen (1920x1080 Horizontal)</option>
+                        </>
+                      )}
+                    </select>
+                    <p className="text-[10px] text-white/40 mt-1.5 leading-relaxed">
+                      {aspectRatio === '9:16'
+                        ? framingMode === 'fit_headline'
+                          ? 'Centers uncropped 16:9 video with bold hook headline on top and subtitles below.'
+                          : framingMode === 'fit_blur'
+                          ? 'Centers crisp video over dynamic blurred background.'
+                          : 'Dynamically tracks the speaker to fill the vertical mobile screen.'
+                        : framingMode === 'fit_headline'
+                        ? 'Fits uncropped 16:9 video inside 9:16 vertical short with bold top headline (TikTok/Reels style).'
+                        : 'Exports original 1920x1080 horizontal landscape video for YouTube or desktop.'}
+                    </p>
+                  </div>
+
+                  {/* Right: Caption Style */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-white/60 flex items-center gap-1.5">
+                        <Sparkles size={13} className="text-primary" />
+                        Word-Level Caption Preset
+                      </span>
+                      <span className="text-[9px] font-bold text-primary uppercase">
+                        Burned-in ASS
+                      </span>
+                    </div>
+                    <select
+                      value={captionPreset}
+                      onChange={(e) => setCaptionPreset(e.target.value as any)}
+                      className="w-full bg-black/70 border border-white/15 hover:border-primary/50 focus:border-primary rounded-xl px-3.5 py-2.5 text-xs text-white font-medium focus:outline-none transition-colors"
+                    >
+                      <option value="tiktok">✨ TikTok Pop (High-Contrast Yellow & Emojis)</option>
+                      <option value="submagic">💖 Submagic Vibrant (Hot Pink & Bold Stroke)</option>
+                      <option value="hormozi">👑 Alex Hormozi (Gold Italic Punch)</option>
+                      <option value="minimal">⚪ Minimal Clean (White Lower-Third)</option>
+                    </select>
+                    <p className="text-[10px] text-white/40 mt-1.5 leading-relaxed">
+                      Kinetic karaoke subtitles aligned to platform safe zones.
+                    </p>
+                  </div>
                 </div>
               </div>
 
