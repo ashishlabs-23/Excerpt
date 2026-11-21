@@ -2051,6 +2051,12 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
       
       dbClips.push(dbClip);
 
+      const effectiveFraming1 = (data as any).framingMode || ((data as any).aspectRatio === '16:9' ? 'fit_headline' : 'smart_crop');
+      const rawHook1 = hookText || (clip as any)?.title || '';
+      const finalHook1 = (effectiveFraming1 === 'fit_headline' || effectiveFraming1 === 'fit_letterbox')
+        ? aiService.formatViralMemeHeadline(rawHook1)
+        : rawHook1;
+
       const renderJobData = {
         job_id: jobId,
         clip_id: dbClip.id,
@@ -2065,11 +2071,11 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
           wordsAreAbsolute: true,
           cropPlan: ((data as any)?.aspectRatio === '16:9' || (data as any)?.framingMode === 'fit_headline' || (data as any)?.framingMode === 'fit_letterbox') ? null : cropPlan,
           jumpCutPlan: jumpCutPlan,
-          hookText: hookText || (clip as any)?.title || '',
+          hookText: finalHook1,
           generationMode: userRequestedMode,
           generation_mode: userRequestedMode,
           aspectRatio: (data as any).aspectRatio || '9:16',
-          framingMode: (data as any).framingMode || ((data as any).aspectRatio === '16:9' ? 'fit_headline' : 'smart_crop'),
+          framingMode: effectiveFraming1,
           caption_preset: (data as any).captionPreset || (data as any).caption_preset || 'tiktok',
           caption_style: (data as any).captionPreset || (data as any).caption_style || 'tiktok',
         }
@@ -2232,6 +2238,12 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
     for (const rj of renderPlan.renderJobs) {
       const clip = dbClips.find((c: any) => c.id === rj.clipId);
       const rawClip = clips.find((c: any) => c.id === rj.clipId || c.metadata?.id === rj.clipId);
+      const effectiveFraming2 = (data as any)?.framingMode || (requestedAspectRatio === '16:9' ? 'fit_headline' : 'smart_crop');
+      const rawHook2 = (clip as any)?.metadata?.hook || (rawClip as any)?.hook || clip?.title || rawClip?.title || '';
+      const finalHook2 = (effectiveFraming2 === 'fit_headline' || effectiveFraming2 === 'fit_letterbox')
+        ? aiService.formatViralMemeHeadline(rawHook2)
+        : rawHook2;
+
       const renderPayload = {
         videoUrl: videoUrl,
         sourceStorageKey: sourceManifest?.storageKey,
@@ -2247,12 +2259,12 @@ export const processVideoJob = async (jobId: string, data: any) => withLogContex
         jumpCutPlan: (clip as any)?.metadata?.jump_cut_plan || (rawClip as any)?.jump_cut_plan || null,
         composition: rj.composition || null,
         aspectRatio: rj.aspectRatio || requestedAspectRatio,
-        framingMode: (data as any)?.framingMode || (requestedAspectRatio === '16:9' ? 'fit_headline' : 'smart_crop'),
+        framingMode: effectiveFraming2,
         quality: rj.quality,
         caption_style: (clip as any)?.metadata?.caption_style || requestedCaptionStyle,
         captionPolicy: renderPlan.captionPolicy,
         // Phase E: Hook text for editorial hook card
-        hookText: (clip as any)?.metadata?.hook || (rawClip as any)?.hook || clip?.title || rawClip?.title || '',
+        hookText: finalHook2,
       };
 
       const renderJobData = {

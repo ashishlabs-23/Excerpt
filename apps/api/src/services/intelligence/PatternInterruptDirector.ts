@@ -28,9 +28,11 @@ export class PatternInterruptDirector {
       cropHeight: number;
       targetCropX: number;
       targetCropY: number;
+      targetXExpression?: string;
       speakerNormX?: number;
       speakerNormY?: number;
       enabled?: boolean;
+      punchInIntervals?: { startSec: number; endSec: number; scale?: number }[];
     }
   ): PatternInterruptPlan {
     const {
@@ -40,14 +42,20 @@ export class PatternInterruptDirector {
       cropHeight,
       targetCropX,
       targetCropY,
+      targetXExpression,
       speakerNormX = 0.5,
       speakerNormY = 0.35,
       enabled = true,
+      punchInIntervals,
     } = options;
+
+    const xParam = targetXExpression && targetXExpression !== String(targetCropX)
+      ? `'${targetXExpression}'`
+      : targetCropX;
 
     if (!enabled || durationSec < 7.0) {
       // For very short clips, keep single framing
-      const baseFilter = `scale=${scaledWidth}:${scaledHeight}:flags=bicubic,crop=${cropWidth}:${cropHeight}:${targetCropX}:${targetCropY},setsar=1`;
+      const baseFilter = `scale=${scaledWidth}:${scaledHeight}:flags=bicubic,crop=${cropWidth}:${cropHeight}:${xParam}:${targetCropY},setsar=1`;
       return {
         enabled: false,
         windows: [],
@@ -56,41 +64,56 @@ export class PatternInterruptDirector {
     }
 
     // Human editorial pacing:
-    // Every 3.5 - 5 seconds, toggle between 1.0x (context) and 1.18x (punch-in emphasis).
+    // If explicit punch-in intervals are provided, respect them directly.
+    // Otherwise, every 3.5 - 5 seconds, toggle between 1.0x (context) and 1.18x (punch-in emphasis).
     const windows: PatternInterruptWindow[] = [];
-    let currentTime = 3.5; // Start clip on 1.0x hook, punch in after ~3.5s
 
-    while (currentTime + 2.5 < durationSec) {
-      let punchStart = currentTime;
-      let punchEnd = Math.min(durationSec - 1.0, punchStart + 3.5);
-
-      // Snap punch-in start to nearest word start for rhythmic impact
-      if (words.length > 0) {
-        const nearestStartWord = words.find(w => Math.abs(w.start - punchStart) < 0.8);
-        if (nearestStartWord && nearestStartWord.start < durationSec - 2.0) {
-          punchStart = nearestStartWord.start;
-        }
-        const nearestEndWord = words.find(w => Math.abs(w.end - punchEnd) < 0.8);
-        if (nearestEndWord && nearestEndWord.end > punchStart + 1.5) {
-          punchEnd = nearestEndWord.end;
+    if (Array.isArray(punchInIntervals) && punchInIntervals.length > 0) {
+      for (const p of punchInIntervals) {
+        if (p.endSec > p.startSec && p.startSec < durationSec) {
+          windows.push({
+            startSec: Number(Math.max(0, p.startSec).toFixed(2)),
+            endSec: Number(Math.min(durationSec, p.endSec).toFixed(2)),
+            scale: p.scale || this.defaultPunchScale,
+            reason: 'explicit-punch-in-interval',
+          });
         }
       }
+    } else {
+      let currentTime = 3.5; // Start clip on 1.0x hook, punch in after ~3.5s
 
-      if (punchEnd - punchStart >= 2.0) {
-        windows.push({
-          startSec: Number(punchStart.toFixed(2)),
-          endSec: Number(punchEnd.toFixed(2)),
-          scale: this.defaultPunchScale,
-          reason: '3s-pattern-interrupt-punch-in',
-        });
+      while (currentTime + 2.5 < durationSec) {
+        let punchStart = currentTime;
+        let punchEnd = Math.min(durationSec - 1.0, punchStart + 3.5);
+
+        // Snap punch-in start to nearest word start for rhythmic impact
+        if (words.length > 0) {
+          const nearestStartWord = words.find(w => Math.abs(w.start - punchStart) < 0.8);
+          if (nearestStartWord && nearestStartWord.start < durationSec - 2.0) {
+            punchStart = nearestStartWord.start;
+          }
+          const nearestEndWord = words.find(w => Math.abs(w.end - punchEnd) < 0.8);
+          if (nearestEndWord && nearestEndWord.end > punchStart + 1.5) {
+            punchEnd = nearestEndWord.end;
+          }
+        }
+
+        if (punchEnd - punchStart >= 2.0) {
+          windows.push({
+            startSec: Number(punchStart.toFixed(2)),
+            endSec: Number(punchEnd.toFixed(2)),
+            scale: this.defaultPunchScale,
+            reason: '3s-pattern-interrupt-punch-in',
+          });
+        }
+
+        // Rest period (1.0x wide) for 4.0 - 5.0 seconds before next punch
+        currentTime = punchEnd + 4.5;
       }
-
-      // Rest period (1.0x wide) for 4.0 - 5.0 seconds before next punch
-      currentTime = punchEnd + 4.5;
     }
 
     if (windows.length === 0) {
-      const baseFilter = `scale=${scaledWidth}:${scaledHeight}:flags=bicubic,crop=${cropWidth}:${cropHeight}:${targetCropX}:${targetCropY},setsar=1`;
+      const baseFilter = `scale=${scaledWidth}:${scaledHeight}:flags=bicubic,crop=${cropWidth}:${cropHeight}:${xParam}:${targetCropY},setsar=1`;
       return {
         enabled: false,
         windows: [],
@@ -109,7 +132,7 @@ export class PatternInterruptDirector {
     const idealPunchY = Math.round(speakerNormY * punchH - cropHeight * 0.35);
     const punchCropY = Math.round(Math.max(0, Math.min(maxOffsetPunchY, idealPunchY)));
 
-    const baseFilter = `scale=${scaledWidth}:${scaledHeight}:flags=bicubic,crop=${cropWidth}:${cropHeight}:${targetCropX}:${targetCropY},setsar=1`;
+    const baseFilter = `scale=${scaledWidth}:${scaledHeight}:flags=bicubic,crop=${cropWidth}:${cropHeight}:${xParam}:${targetCropY},setsar=1`;
     const tightFilter = `scale=${punchW}:${punchH}:flags=bicubic,crop=${cropWidth}:${cropHeight}:${punchCropX}:${punchCropY},setsar=1`;
 
     // Construct overlay enable expression: between(t, s1, e1)+between(t, s2, e2)...

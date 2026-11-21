@@ -25,7 +25,45 @@ export class KineticCaptionGenerator {
         'crazy': '🤯',
         'stop': '🛑',
         'fast': '🚀',
+        'cheap': '💸',
+        'cost': '💸',
+        'save': '💸',
+        'rag': '⚡',
+        'ai': '🤖',
+        'code': '💻',
+        'died': '💀',
+        'dead': '💀',
+        'kill': '💀',
+        'cry': '😭',
+        'crying': '😭',
+        'god': '🙏',
+        'pray': '🙏',
+        'problem': '⚠️',
+        'danger': '⚠️',
+        'rich': '🤑',
+        'truth': '🎯',
+        'hack': '💡',
+        'air': '💨',
     };
+
+    private static readonly POWER_WORDS_FINANCIAL = new Set([
+        'money', 'cash', 'dollars', 'dollar', 'rag', 'cost', 'cheap', 'cheaper', 'cheapest',
+        'expensive', 'revenue', 'profit', 'free', 'save', 'saving', 'growth', 'scale', 'scaling',
+        'rich', 'wealth', 'pay', 'paid', 'roi', 'billion', 'million', 'thousand', '10x', '100x',
+        '5x', '2x', 'pricing', 'discount'
+    ]);
+
+    private static readonly POWER_WORDS_WARNING = new Set([
+        'stop', 'never', 'worst', 'danger', 'deadly', 'destroy', 'kill', 'killed', 'disaster',
+        'fail', 'failure', 'failed', 'scam', 'fake', 'lie', 'lies', 'warning', 'bad', 'toxic',
+        'hate', 'ruin', 'ruined', 'mistake', 'wrong', 'problem', 'problems', 'ban', 'banned'
+    ]);
+
+    private static readonly POWER_WORDS_EMPHASIS = new Set([
+        'secret', 'insane', 'crazy', 'huge', 'always', 'truth', 'proven', 'hack', 'genius',
+        'unbelievable', 'shocking', 'epic', 'wild', 'massive', 'magic', 'gamechanger',
+        'best', 'must', 'crucial', 'essential', 'ultimate'
+    ]);
 
     private getEmojiForWord(word: string): string {
         const clean = word.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "");
@@ -261,7 +299,22 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     const formatted = emoji ? `${cleanWord} ${emoji}` : cleanWord;
                     
                     if (idx === activeIdx) {
-                        return `{\\1c${highlightColor}\\t(0,70,\\fscx108\\fscy108)\\t(70,140,\\fscx100\\fscy100)}${formatted}{\\fscx100\\fscy100\\1c&HFFFFFF&}`;
+                        const rawClean = w.word.toLowerCase().replace(/[^a-z0-9$%]/g, '');
+                        let wordHighlightColor = highlightColor;
+                        let scalePop = 108;
+
+                        if (KineticCaptionGenerator.POWER_WORDS_FINANCIAL.has(rawClean) || /^(\$|\d+x|\d+%)|(\d+k|\d+m|\d+b)$/i.test(rawClean)) {
+                            wordHighlightColor = '&H005EC522&'; // Neon Emerald Green (#22c55e)
+                            scalePop = 118;
+                        } else if (KineticCaptionGenerator.POWER_WORDS_WARNING.has(rawClean)) {
+                            wordHighlightColor = '&H003333EF&'; // Vibrant Coral Red (#ef4444)
+                            scalePop = 118;
+                        } else if (KineticCaptionGenerator.POWER_WORDS_EMPHASIS.has(rawClean)) {
+                            wordHighlightColor = '&H0008D9FA&'; // Electric Gold (#fad908)
+                            scalePop = 118;
+                        }
+
+                        return `{\\1c${wordHighlightColor}\\t(0,70,\\fscx${scalePop}\\fscy${scalePop})\\t(70,140,\\fscx100\\fscy100)}${formatted}{\\fscx100\\fscy100\\1c&HFFFFFF&}`;
                     }
                     return formatted;
                 }).join(" ");

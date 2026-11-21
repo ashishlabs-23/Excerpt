@@ -703,6 +703,55 @@ Return only JSON.`;
     });
   }
 
+  /**
+   * Generates a punchy, authentic short-form meme card headline for 16:9 Fit Letterbox layout.
+   * Transforms raw titles/filenames/hooks into lower-case viral hooks with contextual emojis.
+   */
+  formatViralMemeHeadline(rawText?: string): string {
+    if (!rawText) return 'wait until you see this 👀🔥';
+
+    // Strip file extensions and hash suffixes (e.g. _e45809f7.mp4)
+    let cleaned = rawText
+      .replace(/\.(mp4|mov|mkv|webm|avi)$/i, '')
+      .replace(/_[a-f0-9]{6,12}$/i, '')
+      .replace(/[_\-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // If starts with generic fallback like "Clip 1" or "High-retention", replace with punchy hook
+    if (/^(clip\s*\d+|high-retention\s*clip|moment\s*\d+)/i.test(cleaned)) {
+      return 'watch until the end 🤯🔥';
+    }
+
+    // Preserve existing emojis if already present
+    const hasEmoji = /[\u{1F300}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/u.test(cleaned);
+
+    // Contextual viral emoji selector
+    let emojiSuffix = '';
+    if (!hasEmoji) {
+      const lower = cleaned.toLowerCase();
+      if (/cheap|cost|money|save|expensive|rag|dollar|profit|wealth|rich/.test(lower)) {
+        emojiSuffix = ' 🤯💸';
+      } else if (/problem|wipe|kill|crazy|insane|died|disaster|stop|never/.test(lower)) {
+        emojiSuffix = ' 🙏😭';
+      } else if (/secret|truth|hack|trick|ai|tech|code|model/.test(lower)) {
+        emojiSuffix = ' 🤫💡';
+      } else if (/why|how|what|bro|wait|realize/.test(lower)) {
+        emojiSuffix = ' 👀🔥';
+      } else {
+        emojiSuffix = ' 🔥';
+      }
+    }
+
+    // Keep it lowercase or natural casual conversational tone, max 60 chars
+    let headline = cleaned;
+    if (headline.length > 55) {
+      headline = headline.substring(0, 52).trim() + '...';
+    }
+
+    return `${headline.toLowerCase()}${emojiSuffix}`.trim();
+  }
+
   private normalizeDetectedClip(
     rawClip: any,
     videoUrl: string,

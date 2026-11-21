@@ -2,10 +2,17 @@ import { WordUnit, ClauseUnit, SentenceUnit } from './types';
 
 export class SemanticUnitTokenizer {
   private static readonly PREAMBLE_PATTERNS = [
+    ['yeah'],
+    ['well'],
+    ['okay'],
+    ['ok'],
     ['so', 'basically'],
     ['and', 'so'],
     ['i', 'mean'],
+    ['i', 'mean', 'like'],
     ['you', 'know'],
+    ['you', 'know', 'what', 'i', 'mean'],
+    ['you', 'know', 'what', 'im', 'saying'],
     ['to', 'be', 'honest'],
     ['honestly'],
     ['well', 'basically'],
@@ -18,6 +25,13 @@ export class SemanticUnitTokenizer {
     ['you', 'see'],
     ['i', 'think', 'that'],
     ['right', 'now'],
+    ['yeah', 'so'],
+    ['so', 'like'],
+    ['and', 'like'],
+    ['anyway'],
+    ['so', 'anyway'],
+    ['at', 'the', 'end', 'of', 'the', 'day'],
+    ['as', 'i', 'was', 'saying'],
   ];
 
   private static readonly CLAUSE_CONJUNCTIONS = new Set([

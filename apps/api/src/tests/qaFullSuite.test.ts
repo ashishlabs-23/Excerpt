@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 
 describe('QA Full Subsystem & Invariant Verification Suite', () => {
-  const API_BASE = 'http://localhost:8010';
+  const API_BASE = process.env.API_BASE || 'http://127.0.0.1:8010';
 
   // =========================================================================
   // TIER 1: SECURITY & INPUT FUZZING
@@ -277,6 +277,89 @@ describe('QA Full Subsystem & Invariant Verification Suite', () => {
       } finally {
         if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
       }
+    });
+
+    it('VIS-04: Dynamic camera punch-in interrupts generate multi-cam overlay for 9:16 vertical clips', async () => {
+      const { VideoProcessor } = require('../services/videoProcessor');
+      const processor = new VideoProcessor();
+      jest.spyOn(processor, 'getVideoDimensions').mockResolvedValue({ width: 1920, height: 1080 });
+
+      // Build crop filter for a 12-second 9:16 smart_crop clip
+      const res = await processor.buildCropFilter('/dummy/video.mp4', 0, 12, null, '9:16', 'smart_crop', {
+        enablePatternInterrupts: true,
+      });
+
+      // Must produce a simulated multi-cam filtergraph with punch-in overlay
+      expect(res.cropFilter).toContain('v_punch');
+      expect(res.cropFilter).toContain('overlay=0:0:enable=');
+      expect(res.cropFilter).toContain('between(t,');
+    });
+
+    it('VIS-05: Subtitles apply dynamic power-word kinetic pop and emphatic color switches', () => {
+      const { KineticCaptionGenerator } = require('../services/kineticCaptionGenerator');
+      const generator = new KineticCaptionGenerator();
+      const tmpFile = path.join(process.cwd(), 'temp', `test-caps-powerwords-${Date.now()}.ass`);
+
+      try {
+        generator.generateASS(
+          [
+            { start: 0.0, end: 0.5, word: 'how' },
+            { start: 0.5, end: 1.0, word: 'cheap' },      // Financial power word -> &H005EC522&
+            { start: 1.0, end: 1.5, word: 'cost' },       // Financial power word -> &H005EC522&
+            { start: 1.5, end: 2.0, word: 'problem' },    // Warning power word -> &H003333EF&
+            { start: 2.0, end: 2.5, word: 'insane' },     // Emphasis power word -> &H0008D9FA&
+          ],
+          tmpFile,
+          'tiktok',
+          5
+        );
+
+        const content = fs.readFileSync(tmpFile, 'utf-8');
+        // Financial words must have green highlight (&H005EC522&) and 118% kinetic scale pop
+        expect(content).toContain('\\1c&H005EC522&\\t(0,70,\\fscx118\\fscy118)');
+        // Warning words must have coral red highlight (&H003333EF&)
+        expect(content).toContain('\\1c&H003333EF&\\t(0,70,\\fscx118\\fscy118)');
+        // Superlative emphasis words must have gold highlight (&H0008D9FA&)
+        expect(content).toContain('\\1c&H0008D9FA&\\t(0,70,\\fscx118\\fscy118)');
+      } finally {
+        if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+      }
+    });
+
+    it('VIS-06: AIService transforms raw video filenames and titles into authentic viral meme headlines with emojis', () => {
+      const { AIService } = require('../services/aiService');
+      const ai = new AIService();
+
+      const headline1 = ai.formatViralMemeHeadline('how_bi-encoders_keep_rag_cheap_e45809f7.mp4');
+      expect(headline1).toContain('how bi encoders keep rag cheap');
+      expect(headline1).toContain('🤯💸');
+
+      const headline2 = ai.formatViralMemeHeadline('why they wiped out the air nation problem');
+      expect(headline2).toContain('air nation problem');
+      expect(headline2).toContain('🙏😭');
+
+      const headline3 = ai.formatViralMemeHeadline('the secret ai prompt hack');
+      expect(headline3).toContain('secret ai prompt hack');
+      expect(headline3).toContain('🤫💡');
+    });
+
+    it('VIS-07: BoundaryPlanner and SemanticUnitTokenizer strip conversational preambles and avoid dangling pronouns', () => {
+      const { SemanticUnitTokenizer } = require('../../../../packages/clipping-core/src/planning/SemanticUnitTokenizer');
+      const words = [
+        { word: 'Yeah,', start: 0.0, end: 0.3 },
+        { word: 'so', start: 0.31, end: 0.5 },
+        { word: 'basically,', start: 0.51, end: 0.9 },
+        { word: 'bi-encoders', start: 1.0, end: 1.6 },
+        { word: 'keep', start: 1.61, end: 1.9 },
+        { word: 'RAG', start: 1.91, end: 2.3 },
+        { word: 'cheap.', start: 2.31, end: 2.8 },
+      ];
+
+      const sentences = SemanticUnitTokenizer.tokenize(words);
+      expect(sentences.length).toBeGreaterThan(0);
+      expect(sentences[0].clauses.length).toBeGreaterThan(1);
+      // The first clause 'Yeah so basically' must be flagged as introductory preamble
+      expect(sentences[0].clauses[0].isIntroductoryPreamble).toBe(true);
     });
   });
 

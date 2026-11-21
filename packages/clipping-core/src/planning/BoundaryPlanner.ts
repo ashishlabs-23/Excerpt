@@ -136,7 +136,7 @@ export class BoundaryPlanner {
       || semanticUnits[0];
 
     // ─── Evidence-based residue suppression ────────────────────────────────────
-    const RESIDUE_PATTERNS = /^(see you( then| later| soon)?|see ya( then| later| soon)?|see then|talk to you later|talk soon|catch you later|have a good one|take care|thank you|thanks|bye|goodbye|yeah|yes|yep|okay|ok|alright|right|sure|cool|cheers|got it|makes sense|so yeah|no problem|and yeah)[.!?,\s]*$/i;
+    const RESIDUE_PATTERNS = /^(see you( then| later| soon)?|see ya( then| later| soon)?|see then|talk to you later|talk soon|catch you later|have a good one|take care|thank you|thanks|bye|goodbye|yeah|yes|yep|okay|ok|alright|right|sure|cool|cheers|got it|makes sense|so yeah|no problem|and yeah|yeah so|so like|and like|anyway|so anyway|like i said|you know what i mean|i mean like)[.!?,\s]*$/i;
     const HOOK_PATTERNS = /^(watch|look|listen|here|check|notice|remember|imagine|that's why|that is why|this is why|the thing is|the truth is|what if)/i;
 
     const evaluateResidue = (candidate: SentenceUnit): { isResidue: boolean; score: number } => {
@@ -192,6 +192,17 @@ export class BoundaryPlanner {
       }
     }
 
+    // ─── Pronoun Dependency Resolution: Avoid starting with unanchored pronouns ──
+    const startsWithUnresolvedPronoun = /^(he|she|they|him|her|them)\b/i.test(startSentence?.text?.trim() || '');
+    if (startsWithUnresolvedPronoun) {
+      const prevSentence = [...semanticUnits]
+        .reverse()
+        .find(s => s.endSec <= startSentence.startSec && (startSentence.startSec - s.endSec) <= 3.5);
+      if (prevSentence && (rawEnd - prevSentence.startSec) <= softMaxDur) {
+        startSentence = prevSentence;
+      }
+    }
+
     // ─── Opening Relevance Gap Evaluator ──────────────────────────────────────
     const evaluateOpeningRelevanceGap = (startSec: number, sentence: SentenceUnit): { gapMs: number; deadAirPenalty: number } => {
       const speechStart = sentence?.startSec ?? startSec;
@@ -208,6 +219,12 @@ export class BoundaryPlanner {
 
       if (isDangling && (!sentence.words || sentence.words.length <= 3)) {
         return { contextDebtScore: 0.70, contextSufficiencyScore: 0.30 };
+      }
+
+      // Check for dangling 3rd-person pronoun subject at sentence start
+      const hasDanglingPronoun = /^(he|she|they|him|her|them)\b/i.test(text);
+      if (hasDanglingPronoun && (!sentence.words || sentence.words.length <= 6)) {
+        return { contextDebtScore: 0.65, contextSufficiencyScore: 0.35 };
       }
 
       if (sentence.words && sentence.words.length >= 5) {

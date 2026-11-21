@@ -219,6 +219,8 @@ export interface SinglePassRenderOptions {
   generationMode?: GenerationMode;
   aspectRatio?: '9:16' | '1:1' | '16:9';
   framingMode?: string;
+  enablePatternInterrupts?: boolean;
+  punchInIntervals?: { startSec: number; endSec: number; scale?: number }[];
 }
 
 
@@ -611,7 +613,11 @@ export class VideoProcessor {
     duration: number,
     nexusCropPlan?: any,
     targetAspect: '9:16' | '1:1' | '16:9' = '9:16',
-    framingMode: string = 'smart_crop'
+    framingMode: string = 'smart_crop',
+    options?: {
+      enablePatternInterrupts?: boolean;
+      punchInIntervals?: { startSec: number; endSec: number; scale?: number }[];
+    }
   ): Promise<{ cropFilter: string; cropPlan: SmartCropPlan }> {
     let inputWidth = 1920;
     let inputHeight = 1080;
@@ -947,8 +953,10 @@ export class VideoProcessor {
 
       cropFilter = `scale=${scaledWidth}:${scaledHeight}:flags=bicubic,crop=w=${cropWidth}:h=${cropHeight}:x='${targetXExpression}':y='${targetCropY}',setsar=1`;
 
-      const enablePatternInterrupts = process.env.EXCERPT_PATTERN_INTERRUPTS === 'true' && duration >= 8.0;
-      if (enablePatternInterrupts) {
+      const shouldEnableInterrupts = options?.enablePatternInterrupts !== false &&
+        process.env.EXCERPT_PATTERN_INTERRUPTS !== 'false' &&
+        duration >= 7.0;
+      if (shouldEnableInterrupts) {
         try {
           const { PatternInterruptDirector } = require('./intelligence/PatternInterruptDirector');
           const interruptDirector = new PatternInterruptDirector();
@@ -960,9 +968,11 @@ export class VideoProcessor {
             cropHeight,
             targetCropX,
             targetCropY,
+            targetXExpression,
             speakerNormX,
             speakerNormY,
             enabled: true,
+            punchInIntervals: options?.punchInIntervals,
           });
           if (interruptPlan.enabled) {
             cropFilter = interruptPlan.filtergraph;
@@ -1016,7 +1026,18 @@ export class VideoProcessor {
 
         const targetAspect = options.aspectRatio || '9:16';
         const framingMode = options.framingMode || 'smart_crop';
-        const { cropFilter } = await this.buildCropFilter(inputPath, start, duration, nexusCropPlan, targetAspect, framingMode);
+        const { cropFilter } = await this.buildCropFilter(
+          inputPath,
+          start,
+          duration,
+          nexusCropPlan,
+          targetAspect,
+          framingMode,
+          {
+            enablePatternInterrupts: options.enablePatternInterrupts,
+            punchInIntervals: options.punchInIntervals,
+          }
+        );
 
         const is169 = targetAspect === '16:9';
         const targetW = is169 ? 1920 : 1080;
