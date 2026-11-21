@@ -213,7 +213,7 @@ export class FirebaseDatabaseService {
       this.writeQueue(queue);
     }
 
-    if (updates.status && ['completed', 'failed', 'dead_letter', 'cancelled'].includes(updates.status)) {
+    if (updates.status && ['completed', 'failed', 'dead_letter', 'cancelled', 'queued'].includes(updates.status)) {
       this.inFlightClaims.delete(jobId);
     }
 

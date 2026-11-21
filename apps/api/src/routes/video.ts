@@ -1920,19 +1920,24 @@ router.post('/jobs/:jobId/retry', requireUserJWT, async (req: Request, res: Resp
     if (payload.retry) {
       delete payload.retry;
     }
+    payload.attempts = [];
 
     await db.updateJob(jobId, {
       status: 'queued',
       progress: 0,
       failed_reason: null,
+      failedReason: null,
       payload
     });
     await queueService.updateJobStatus(jobId, {
       status: 'queued',
       progress: 0,
       failedReason: null,
-      retryAttempt: 0
+      failed_reason: null,
+      retryAttempt: 0,
+      payload
     });
+    firebaseDb.releaseJobClaim(jobId);
 
     console.log(`[VideoRoute]: Job ${jobId} retry requested by user ${req.user.id}`);
     return res.json({ message: 'Job retry scheduled successfully.' });
@@ -1963,6 +1968,7 @@ router.post('/jobs/:jobId/restart', requireUserJWT, async (req: Request, res: Re
     if (payload.retry) {
       delete payload.retry;
     }
+    payload.attempts = [];
 
     // Delete any existing clips for this job
     await db.getSupabase().from('clips').delete().eq('job_id', jobId);
@@ -1971,15 +1977,19 @@ router.post('/jobs/:jobId/restart', requireUserJWT, async (req: Request, res: Re
       status: 'queued',
       progress: 0,
       failed_reason: null,
+      failedReason: null,
       payload
     });
     await queueService.updateJobStatus(jobId, {
       status: 'queued',
       progress: 0,
       failedReason: null,
+      failed_reason: null,
       retryAttempt: 0,
+      payload,
       clips: []
     });
+    firebaseDb.releaseJobClaim(jobId);
 
     console.log(`[VideoRoute]: Job ${jobId} restart requested by user ${req.user.id}`);
     return res.json({ message: 'Job restart scheduled successfully.' });
